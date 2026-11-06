@@ -1,0 +1,49 @@
+name: Vision tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: vision/requirements-dev.txt
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt -e './vision[dev]'
+      - name: Unit and backend boundary tests
+        run: python -m pytest -q -c vision/pyproject.toml vision/tests -m 'not real and not browser'
+      - name: Download demo and run real inference
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: vision
+        run: |
+          python examples/download_demo.py
+          python -m examples.validate_real
+      - name: Real inference tests
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SC_CV_REAL_TESTS: '1'
+        run: python -m pytest -q -c vision/pyproject.toml vision/tests -m real
+      - name: Browser test
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SC_CV_BROWSER_TESTS: '1'
+        run: |
+          python -m playwright install --with-deps chromium
+          python -m pytest -q -c vision/pyproject.toml vision/tests -m browser
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && always()
+        with:
+          name: vision-validation
+          path: |
+            vision/outputs/validation_report.json
+            vision/outputs/real_yolo/annotated.mp4
+            vision/outputs/real_yolo/viewer.png
+            vision/outputs/real_seg/masked_preview.jpg
+          retention-days: 7

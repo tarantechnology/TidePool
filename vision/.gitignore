@@ -1,0 +1,10 @@
+*.pt
+*.pyc
+.DS_Store
+.research/
+outputs/
+examples/media/
+examples/synthetic_input.avi
+
+*.egg-info/
+build/

@@ -16,6 +16,8 @@ jobs:
           cache: pip
           cache-dependency-path: vision/requirements-dev.txt
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install CPU PyTorch
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -r requirements.txt -e './vision[dev]'
       - name: Unit and backend boundary tests
         run: python -m pytest -q -c vision/pyproject.toml vision/tests -m 'not real and not browser'

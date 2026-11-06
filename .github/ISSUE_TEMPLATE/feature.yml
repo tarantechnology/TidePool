@@ -1,0 +1,13 @@
+name: Feature or integration task
+description: Propose work for a SoundCanvas workstream
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria and dependencies

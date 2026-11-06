@@ -1,0 +1,68 @@
+import base64
+import json
+import os
+from pathlib import Path
+import httpx
+from .core import run, probe, uid
+
+def separate(audio, directory, payload):
+    directory.mkdir(parents=True, exist_ok=True)
+    mode = os.getenv('INFERENCE_ADAPTER', 'fake')
+    if mode == 'fake':
+        # Deterministic fixtures, not source separation: each stem is a copy.
+        results = []
+        for name in (payload.get('prompts') or ['Audio']):
+            path = directory / (uid() + '.wav')
+            run('ffmpeg','-v','error','-y','-i',str(audio),'-c:a','pcm_s16le',str(path))
+            results.append((name, path))
+        return results
+    if mode != 'http': raise RuntimeError('Unknown inference adapter')
+    url = os.getenv('SAM_AUDIO_SERVICE_URL')
+    if not url: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
+    with open(audio, 'rb') as f:
+        response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','600')))
+    response.raise_for_status()
+    result = response.json()
+    if not isinstance(result.get('stems'), list) or not result['stems']: raise ValueError('Inference returned no stems')
+    stems = []
+    for item in result['stems']:
+        name = item['name']
+        raw = base64.b64decode(item['audio_base64'], validate=True)
+        if len(raw) > int(os.getenv('MAX_STEM_BYTES',str(500*1024*1024))): raise ValueError('Inference stem too large')
+        path = directory / (uid()+'.wav')
+        path.write_bytes(raw)
+        probe(path)
+        stems.append((name,path))
+    return stems
+
+def export(stems, original, destination, fmt, include_video):
+    active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
+    # A silent source maintains duration for an all-muted mix.
+    duration = probe(original)['duration']
+    args = ['ffmpeg','-v','error','-y']
+    if include_video: args += ['-i',str(original)]
+    for s in active: args += ['-i',s['path']]
+    args += ['-f','lavfi','-t',str(duration),'-i','anullsrc=r=48000:cl=stereo']
+    filters=[]; labels=[]; base = 1 if include_video else 0
+    for i,s in enumerate(active):
+        points=json.loads(s['automation']); ranges=json.loads(s['mute_ranges'])
+        expr=str(float(s['volume']))
+        # Keyframes are linear, in project timeline seconds.
+        if points:
+            expr=str(float(points[-1]['value']))
+            for j in range(len(points)-2,-1,-1):
+                a,b=points[j],points[j+1]; t1=float(a['time']); t2=float(b['time']); v1=float(a['value']); v2=float(b['value'])
+                expr=f'if(lt(t,{t2}),{v1}+({v2}-{v1})*(t-{t1})/({t2}-{t1}),{expr})'
+            expr=f"({s['volume']})*if(lt(t,{float(points[0]['time'])}),{float(points[0]['value'])},{expr})"
+        for rg in ranges: expr=f'({expr})*if(between(t,{float(rg[0])},{float(rg[1])}),0,1)'
+        delay=round(float(s['start_offset'])*1000)
+        filters.append(f"[{base+i}:a]adelay={delay}:all=1,volume='{expr}':eval=frame[a{i}]")
+        labels.append(f'[a{i}]')
+    silent=base+len(active)
+    labels.append(f'[{silent}:a]')
+    filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0[mix]')
+    args += ['-filter_complex',';'.join(filters),'-map','[mix]']
+    if include_video: args += ['-map','0:v:0','-c:v','copy','-c:a','aac','-t',str(duration),'-movflags','+faststart']
+    elif fmt=='mp3': args += ['-c:a','libmp3lame']
+    else: args += ['-c:a','pcm_s16le']
+    run(*args,str(destination))

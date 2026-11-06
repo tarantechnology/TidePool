@@ -1,0 +1,13 @@
+services:
+  soundcanvas:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      STORAGE_ROOT: /data
+      INFERENCE_ADAPTER: ${INFERENCE_ADAPTER:-fake}
+      SAM_AUDIO_SERVICE_URL: ${SAM_AUDIO_SERVICE_URL:-}
+      INFERENCE_TIMEOUT_SECONDS: ${INFERENCE_TIMEOUT_SECONDS:-600}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-524288000}
+    volumes:
+      - ./storage:/data

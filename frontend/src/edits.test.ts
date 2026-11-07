@@ -7,6 +7,7 @@ import {
   isAudible,
   MAX_GAIN,
   MAX_KEYFRAMES,
+  normalizeKeyframes,
   parsePrompt,
   spliceAutomation,
 } from './edits'
@@ -608,5 +609,157 @@ describe('parsePrompt timed edits', () => {
     const prompt = 'make the siren louder whenever the argument gets intense'
     expect(parsePrompt(prompt, STEMS, withCurve).message).toContain("replaces Siren's existing curve")
     expect(parsePrompt(prompt, STEMS, TRACKS).message).not.toContain('replaces')
+  })
+})
+
+describe('normalizeKeyframes', () => {
+  it('turns a step into a 1ms ramp', () => {
+    expect(
+      normalizeKeyframes([
+        { t: 5, value: 1 },
+        { t: 5, value: 0 },
+      ]),
+    ).toEqual([
+      { t: 5, value: 1 },
+      { t: 5.001, value: 0 },
+    ])
+  })
+
+  it('keeps both sides of a step when more points share the time', () => {
+    const out = normalizeKeyframes([
+      { t: 5, value: 1 },
+      { t: 5, value: 0.4 },
+      { t: 5, value: 0 },
+    ])
+    expect(out.map((k) => k.value)).toEqual([1, 0])
+  })
+
+  it('drops a repeated point instead of ramping to the same value', () => {
+    expect(
+      normalizeKeyframes([
+        { t: 5, value: 1 },
+        { t: 5, value: 1 },
+      ]),
+    ).toEqual([{ t: 5, value: 1 }])
+  })
+
+  it('moves a step at the end back inside the duration', () => {
+    const out = normalizeKeyframes(
+      [
+        { t: 20, value: 0 },
+        { t: 20, value: 1 },
+      ],
+      20,
+    )
+    expect(out).toEqual([
+      { t: 19.999, value: 0 },
+      { t: 20, value: 1 },
+    ])
+  })
+
+  it('sorts, and clamps times and values', () => {
+    expect(
+      normalizeKeyframes(
+        [
+          { t: 30, value: 5 },
+          { t: -1, value: -1 },
+        ],
+        20,
+      ),
+    ).toEqual([
+      { t: 0, value: 0 },
+      { t: 20, value: MAX_GAIN },
+    ])
+  })
+
+  it('leaves an already valid curve alone and is idempotent', () => {
+    const curve = [
+      { t: 0, value: 1 },
+      { t: 12, value: 1 },
+      { t: 12.001, value: 0 },
+      { t: 20, value: 0.5 },
+    ]
+    expect(normalizeKeyframes(curve, 20)).toEqual(curve)
+    const once = normalizeKeyframes([{ t: 5, value: 1 }, { t: 5, value: 0 }, { t: 5.0005, value: 2 }], 20)
+    expect(normalizeKeyframes(once, 20)).toEqual(once)
+    expect(once.every((k, i) => i === 0 || k.t - once[i - 1].t > 0.0009)).toBe(true)
+  })
+
+  it('drops non-finite points', () => {
+    expect(normalizeKeyframes([{ t: Number.NaN, value: 1 }, { t: 1, value: Number.POSITIVE_INFINITY }])).toEqual([])
+  })
+
+  it('is applied by set_automation, so the preview gets the stored curve', () => {
+    const next = applyAction([track({ stemId: 'x' })], {
+      type: 'set_automation',
+      stemId: 'x',
+      keyframes: [
+        { t: 3, value: 1 },
+        { t: 3, value: 0 },
+      ],
+    })
+    expect(next[0].automation).toEqual([
+      { t: 3, value: 1 },
+      { t: 3.001, value: 0 },
+    ])
+  })
+})
+
+describe('timed edits on the stem boundaries', () => {
+  const curveFor = (prompt: string, tracks = TRACKS) =>
+    parsePrompt(prompt, STEMS, tracks).actions.reduce(applyAction, tracks).find((t) => t.stemId === 's')!.automation
+  const increasing = (kfs: Keyframe[]) => kfs.every((k, i) => i === 0 || k.t > kfs[i - 1].t)
+
+  it('a range from 0 has no lead-in point and starts silent', () => {
+    const curve = curveFor('mute the siren from 0 to 5 seconds')
+    expect(increasing(curve)).toBe(true)
+    expect(curve[0]).toEqual({ t: 0, value: 0 })
+    expect(curve.at(-1)).toEqual({ t: 5, value: 1 })
+    expect(curve.filter((k) => k.t === 0)).toHaveLength(1)
+    expect(envelopeAt(curve, 4.9)).toBe(0)
+    expect(envelopeAt(curve, 6)).toBe(1)
+  })
+
+  it('a range to the stem end has no point after it and stays silent', () => {
+    const curve = curveFor('mute the siren from 15 to 20 seconds')
+    expect(increasing(curve)).toBe(true)
+    expect(curve[0]).toEqual({ t: 15, value: 1 })
+    expect(curve.at(-1)).toEqual({ t: 20, value: 0 })
+    expect(curve.filter((k) => k.t === 20)).toHaveLength(1)
+    expect(envelopeAt(curve, 14)).toBe(1)
+    expect(envelopeAt(curve, 20)).toBe(0)
+  })
+
+  it('at N ends on the boundary too', () => {
+    const curve = curveFor('mute the siren at 12 seconds')
+    expect(increasing(curve)).toBe(true)
+    expect(curve.at(-1)).toEqual({ t: 20, value: 0 })
+  })
+
+  it('a range past the stem end is cut at the end', () => {
+    expect(curveFor('mute the siren from 15 to 99 seconds')).toEqual(curveFor('mute the siren from 15 to 20 seconds'))
+  })
+
+  it('a range over the whole stem is two silent points', () => {
+    expect(curveFor('mute the siren from 0 to 20 seconds')).toEqual([
+      { t: 0, value: 0 },
+      { t: 20, value: 0 },
+    ])
+  })
+
+  it('keeps a curve under a boundary edit', () => {
+    const start = TRACKS.map((t) =>
+      t.stemId === 's'
+        ? { ...t, automation: [{ t: 2, value: 0.5 }, { t: 18, value: 1.5 }] }
+        : t,
+    )
+    const fromZero = curveFor('mute the siren from 0 to 5 seconds', start)
+    expect(increasing(fromZero)).toBe(true)
+    expect(fromZero[0]).toEqual({ t: 0, value: 0 })
+    expect(envelopeAt(fromZero, 10)).toBeCloseTo(envelopeAt(start[2].automation, 10), 9)
+    const toEnd = curveFor('mute the siren from 15 to 20 seconds', start)
+    expect(increasing(toEnd)).toBe(true)
+    expect(toEnd.at(-1)).toEqual({ t: 20, value: 0 })
+    expect(envelopeAt(toEnd, 10)).toBeCloseTo(envelopeAt(start[2].automation, 10), 9)
   })
 })

@@ -87,29 +87,26 @@ export interface StemPatch {
 /** The body editor sync sends. See toSyncPatch for when automation is left out. */
 export type StemSyncPatch = Omit<StemPatch, 'automation'> & Partial<Pick<StemPatch, 'automation'>>
 
-/**
- * The body for PATCH /api/projects/{id}/stems/{stem_id}. The backend requires
- * strictly increasing times, so for an equal-time step the later keyframe wins.
- * That reshapes the curve (a hard step becomes a ramp from the keyframe before
- * it), so editor sync uses toSyncPatch instead.
- */
+/** The body for PATCH /api/projects/{id}/stems/{stem_id}. Times pass through unchanged. */
 export function trackToStemPatch(track: TrackState): StemPatch {
-  const automation: StemPatch['automation'] = []
-  for (const { t, value } of track.automation) {
-    if (automation.at(-1)?.time === t) automation[automation.length - 1].value = value
-    else automation.push({ time: t, value })
+  return {
+    volume: track.gain,
+    muted: track.muted,
+    solo: track.solo,
+    automation: track.automation.map(({ t, value }) => ({ time: t, value })),
   }
-  return { volume: track.gain, muted: track.muted, solo: track.solo, automation }
 }
 
-/** A hard step, which the backend's strictly increasing times cannot hold. */
+/** Times that do not strictly increase, which the backend rejects. */
 export function hasStepKeyframes(keyframes: Keyframe[]): boolean {
   return keyframes.some((k, i) => i > 0 && k.t <= keyframes[i - 1].t)
 }
 
 /**
- * What editor sync sends. A curve the backend cannot hold exactly is left out
- * rather than reshaped, so the backend keeps its previous curve for that stem.
+ * What editor sync sends. Every edit goes through normalizeKeyframes, so the
+ * curve here is the one the preview plays. The guard is defensive: nothing in
+ * the editor can reach it (see stemSync.test.ts), but a curve the backend would
+ * reject must not fail the whole write and take volume and mute down with it.
  */
 export function toSyncPatch(track: TrackState): StemSyncPatch {
   const { automation, ...rest } = trackToStemPatch(track)
@@ -130,5 +127,5 @@ export async function sendStemPatch(
 }
 
 export async function patchStem(config: BackendConfig, projectId: string, track: TrackState): Promise<void> {
-  await sendStemPatch({ config, projectId }, track.stemId, trackToStemPatch(track))
+  await sendStemPatch({ config, projectId }, track.stemId, toSyncPatch(track))
 }

@@ -1,3 +1,4 @@
+import { normalizeKeyframes } from '../edits'
 import type { EditAction } from '../types'
 import {
   combineEnvelopes,
@@ -50,11 +51,14 @@ export function resolveActions(actions: EditAction[], source: SampleSource, dura
     resolved.push({
       type: 'set_automation',
       stemId: action.stemId,
-      keyframes: intensityToKeyframes(env, DEFAULT_WINDOW_SEC, {
-        minValue: action.minValue,
-        maxValue: action.maxValue,
+      keyframes: normalizeKeyframes(
+        intensityToKeyframes(env, DEFAULT_WINDOW_SEC, {
+          minValue: action.minValue,
+          maxValue: action.maxValue,
+          duration,
+        }),
         duration,
-      }),
+      ),
     })
   }
   return { actions: resolved, warnings }

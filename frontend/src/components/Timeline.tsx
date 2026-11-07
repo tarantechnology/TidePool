@@ -19,7 +19,7 @@ interface Props {
   duration: number
   onAction: (a: EditAction, coalesceKey?: string) => void
   onKindChange: (stemId: string, kind: StemKind) => void
-  /** Edits are going to a backend, which cannot hold every curve. */
+  /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
 }
 

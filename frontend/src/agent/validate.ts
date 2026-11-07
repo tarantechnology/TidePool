@@ -1,4 +1,4 @@
-import { MAX_GAIN, MAX_KEYFRAMES } from '../edits'
+import { MAX_GAIN, MAX_KEYFRAMES, normalizeKeyframes } from '../edits'
 import type { EditAction, Keyframe, Stem } from '../types'
 
 // Agent output is untrusted input: nothing from it reaches the edit pipeline
@@ -32,7 +32,7 @@ function checkKeyframes(raw: unknown, duration: number, at: string, errors: stri
       out.push({ t: kf.t, value: kf.value })
     }
   })
-  return out
+  return normalizeKeyframes(out, duration)
 }
 
 function checkAction(raw: unknown, ids: Set<string>, duration: number, at: string, errors: string[]): EditAction | null {

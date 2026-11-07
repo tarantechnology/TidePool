@@ -20,8 +20,36 @@ export function toEditList(tracks: TrackState[]): EditList {
   return { version: 1, tracks }
 }
 
-function sortKeyframes(kfs: Keyframe[]): Keyframe[] {
-  return [...kfs].sort((a, b) => a.t - b.t)
+/** Smallest gap between keyframes in a stored curve, so a step becomes a 1ms ramp. */
+export const MIN_KEYFRAME_GAP = 0.001
+/** Keeps a gap that is only short by floating point error from moving again. */
+const GAP_TOLERANCE = 1e-9
+
+/**
+ * The curve as the backend can hold it: sorted, in range, and strictly
+ * increasing in time. Every curve an edit produces goes through this, so the
+ * preview plays exactly what is sent. A run of equal times keeps its first and
+ * last point, which are the values on each side of the step. Points move later,
+ * and earlier only when they would pass the end.
+ */
+export function normalizeKeyframes(keyframes: Keyframe[], duration = Infinity): Keyframe[] {
+  const sorted = keyframes
+    .filter((k) => Number.isFinite(k.t) && Number.isFinite(k.value))
+    .map((k) => ({ t: clamp(k.t, 0, duration), value: clamp(k.value, 0, MAX_GAIN) }))
+    .sort((a, b) => a.t - b.t)
+  const out: Keyframe[] = []
+  sorted.forEach((k, i) => {
+    if (i > 0 && i < sorted.length - 1 && sorted[i - 1].t === k.t && sorted[i + 1].t === k.t) return
+    const prev = out.at(-1)
+    if (!prev) out.push(k)
+    else if (k.t - prev.t >= MIN_KEYFRAME_GAP - GAP_TOLERANCE) out.push(k)
+    else if (k.value !== prev.value) out.push({ t: prev.t + MIN_KEYFRAME_GAP, value: k.value })
+  })
+  for (let i = out.length - 1; i >= 0; i--) {
+    const limit = i === out.length - 1 ? duration : out[i + 1].t - MIN_KEYFRAME_GAP
+    if (out[i].t > limit + GAP_TOLERANCE) out[i] = { ...out[i], t: limit }
+  }
+  return out.filter((k) => k.t >= 0)
 }
 
 export function applyAction(tracks: TrackState[], action: EditAction): TrackState[] {
@@ -35,7 +63,7 @@ export function applyAction(tracks: TrackState[], action: EditAction): TrackStat
       case 'set_solo':
         return { ...t, solo: action.solo }
       case 'set_automation':
-        return { ...t, automation: sortKeyframes(action.keyframes) }
+        return { ...t, automation: normalizeKeyframes(action.keyframes) }
       case 'clear_automation':
         return { ...t, automation: [] }
       case 'follow_intensity':
@@ -128,7 +156,7 @@ export function spliceAutomation(
   const before = curve.filter((k) => k.t < from)
   if (from > 0) before.push({ t: from, value: envelopeAt(curve, from) })
   const after = opensAfter ? [{ t: to, value: envelopeAt(curve, to) }, ...later] : []
-  return [...before, ...times.map((t) => ({ t, value: inside(t) })), ...after]
+  return normalizeKeyframes([...before, ...times.map((t) => ({ t, value: inside(t) })), ...after])
 }
 
 export function isAudible(tracks: TrackState[], track: TrackState): boolean {

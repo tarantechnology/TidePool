@@ -51,15 +51,19 @@ The upstream backend does not take an edit list. It stores the same data per ste
 | `automation[].value` | `automation[].value` |
 | `stemId` | stem `id` in the path |
 
-The backend stores automation and app/media.py renders it the way `envelopeAt` does: linear segments, holding both ends, multiplied by volume. So a curve maps across exactly, with one exception.
+The backend stores automation and app/media.py renders it the way `envelopeAt` does: linear segments, holding both ends, multiplied by volume. So a curve maps across exactly.
+
+### Steps
+
+The backend requires strictly increasing keyframe times, so it cannot hold an exact step. `normalizeKeyframes` in `src/edits.ts` makes every curve storable: sorted, values clamped to 0 to 2, and at least 1ms between keyframes, so a step becomes a 1ms ramp. Set_automation applies it, and so do the parser, agent validation and intensity output, so the preview plays exactly the curve that is sent. Curves restored from the backend are not rewritten: they already pass its validation.
+
+Timed edits on a stem boundary do not produce a step at all. A mute from 0 starts with `{0,0}` and a mute to the end of the stem ends with `{end,0}`, with no extra point at either boundary. A mute over the whole stem is `{0,0},{end,0}`.
+
+`toSyncPatch` keeps one defensive guard: a curve that still does not strictly increase is left out of the PATCH and the track header shows "not synced". `stemSync.test.ts` shows the parser, drag edits, intensity output and agent output cannot reach it.
+
+Timed edits keep the existing curve. `spliceAutomation` changes only the requested interval, with its ramps inside the interval: 50ms for a level (mute, "to 30%"), up to 500ms for a scale (louder, quieter, "by 20%"), and a quarter of the range if that is shorter. So a mute reaches silence up to 50ms after the start of the range. An edit that would pass 64 keyframes is refused. Follow-intensity still replaces the curve, and says so.
 
 ### What does not reach the backend
-
-The backend requires strictly increasing keyframe times, so it cannot hold an exact step: two keyframes at the same time. The editor produces these. "Mute Speaker B at 12 seconds" ends the stem with `{20,0},{20,1}`, a mute from 0 starts with `{0,1},{0,0}`, a mute that runs to the end of the stem ends with one, and the agent can send them.
-
-Collapsing a step is not a safe fallback. It keeps only the later keyframe, so the segment before it becomes a ramp: that mute would fade back in over 8 seconds on export. So editor sync never collapses. `toSyncPatch` leaves `automation` out of the PATCH for that stem. Volume, mute and solo still go, the backend keeps whatever curve it last had for that stem, and the track header shows "not synced" while a job is loaded.
-
-`trackToStemPatch` still collapses, because `server/backend-contract.test.ts` pins that behaviour through `patchStem`. Editor sync does not use either.
 
 Also not sent, because the backend has no field for them: stem kinds. `start_offset` is left out of every PATCH, so the backend keeps its value.
 
@@ -143,7 +147,7 @@ The preview also applies a 0.7 master gain that neither exporter applies, so pre
 4. Stored stem state is not loaded into the editor. It starts every job at unity gain with no automation, so a first edit overwrites a stem's stored volume, mute, solo and automation with the editor's.
 5. The agent ownership question above.
 6. Whether `project_id` on `GET /api/jobs/{id}` is part of the contract. Editor sync depends on it.
-7. Exact steps in automation (see "What does not reach the backend"). Either the backend accepts equal times, which `app/media.py` would need to guard against because each segment divides by its length, or the team agrees that the editor sends a step as a very short ramp.
+7. Exact steps: resolved in the editor with a 1ms ramp (see "Steps"). `app/media.py` needs no change for this. Nothing has been confirmed against a running backend from this repo, but `server/backend-contract.test.ts` covers both boundary cases through export. It needs `BACKEND_URL`.
 8. Long curves. `app/media.py` builds automation as nested `if()`. An expression of that shape, built by a local script from the code in `app/media.py`, rendered in ffmpeg 8.1 at 64 keyframes and failed to parse at 99. `app/media.py` itself was not run. Prompts stay under that (intensity at most 40, the agent at most 64), but keyframes added by hand can pass it, and sync sends them.
 
 ### Person 1 (audio)

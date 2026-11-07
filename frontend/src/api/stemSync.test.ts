@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TrackState } from '../types'
+import { validateActions } from '../agent/validate'
+import { resolveActions } from '../audio/resolve'
+import { applyAction, initialTracks, parsePrompt } from '../edits'
+import { addKeyframe, moveKeyframe, removeKeyframe } from '../keyframes'
+import type { Stem, TrackState } from '../types'
 import { hasStepKeyframes, toSyncPatch } from './backend'
 import { FileStemSource, HttpStemSource, MockStemSource } from './stemSources'
 import type { StemSource } from './stemSources'
@@ -90,8 +94,84 @@ describe('payload', () => {
   })
 })
 
-describe('steps the backend cannot hold', () => {
-  // What "Mute Speaker B at 12 seconds" produces on a 20s stem.
+describe('no edit can reach that guard', () => {
+  const STEMS: Stem[] = [
+    { id: 'a', label: 'Speaker A', kind: 'dialogue', url: 'blob:a', duration: 20 },
+    { id: 's', label: 'Siren', kind: 'sfx', url: 'blob:s', duration: 20 },
+  ]
+  const expectSendable = (tracks: TrackState[]) => {
+    for (const t of tracks) {
+      expect(hasStepKeyframes(t.automation), JSON.stringify(t.automation)).toBe(false)
+      expect(toSyncPatch(t).automation).toEqual(t.automation.map((k) => ({ time: k.t, value: k.value })))
+    }
+  }
+
+  it('holds for parser output on every boundary, alone and in sequence', () => {
+    const prompts = [
+      'mute the siren from 0 to 5 seconds',
+      'mute the siren from 15 to 20 seconds',
+      'mute the siren from 15 to 99 seconds',
+      'mute the siren at 12 seconds',
+      'mute the siren from 0 to 20 seconds',
+      'make the siren louder from 0 to 4 seconds',
+      'make the siren quieter from 16 to 20 seconds',
+      'set the siren to 30% from 0 to 20 seconds',
+      'lower the siren by 20% at 18 seconds',
+    ]
+    let tracks = initialTracks(STEMS)
+    for (const prompt of prompts) {
+      const alone = parsePrompt(prompt, STEMS, initialTracks(STEMS)).actions
+      expect(alone.length, prompt).toBe(1)
+      expectSendable(alone.reduce(applyAction, initialTracks(STEMS)))
+      tracks = parsePrompt(prompt, STEMS, tracks).actions.reduce(applyAction, tracks)
+      expectSendable(tracks)
+    }
+  })
+
+  it('holds for random drag edits', () => {
+    // A fixed seed, so a failure reproduces.
+    let seed = 12345
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    let tracks = initialTracks(STEMS)
+    for (let i = 0; i < 2000; i++) {
+      const curve = tracks[0].automation
+      const point = { t: Math.round(random() * 40) / 2, value: random() * 2 }
+      const index = Math.floor(random() * Math.max(1, curve.length))
+      const op = random()
+      const keyframes =
+        op < 0.5 ? addKeyframe(curve, point, 20) : op < 0.9 ? moveKeyframe(curve, index, point, 20) : removeKeyframe(curve, index)
+      tracks = applyAction(tracks, { type: 'set_automation', stemId: 'a', keyframes })
+      expectSendable(tracks)
+    }
+  })
+
+  it('holds for intensity output', () => {
+    const data = Float32Array.from({ length: 48000 * 20 }, (_, i) => (i % 96000 < 48000 ? Math.sin(i / 8) : 0))
+    const source = { getSamples: () => ({ data, sampleRate: 48000 }) }
+    const action = { type: 'follow_intensity' as const, stemId: 's', sourceStemIds: ['a'] }
+    const { actions } = resolveActions([action], source, 20)
+    expect(actions[0].type).toBe('set_automation')
+    expectSendable(actions.reduce(applyAction, initialTracks(STEMS)))
+  })
+
+  it('holds for agent output that contains a step', () => {
+    const keyframes = [
+      { t: 5, value: 1 },
+      { t: 5, value: 0 },
+      { t: 20, value: 0 },
+      { t: 20, value: 1 },
+    ]
+    const res = validateActions([{ type: 'set_automation', stemId: 'a', keyframes }], STEMS, 20)
+    expect(res.ok).toBe(true)
+    if (res.ok) expectSendable(res.actions.reduce(applyAction, initialTracks(STEMS)))
+  })
+})
+
+describe('the guard against curves the backend would reject', () => {
+  // Nothing in the editor builds this any more. See the test after this block.
   const stepped = [
     { t: 11.95, value: 1 },
     { t: 12, value: 0 },

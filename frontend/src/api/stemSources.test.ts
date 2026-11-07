@@ -191,23 +191,17 @@ describe('backend client', () => {
 })
 
 describe('trackToStemPatch', () => {
-  it('collapses equal-time keyframes, since the backend rejects them', () => {
-    const patch = trackToStemPatch({
-      stemId: 's',
-      gain: 1,
-      muted: false,
-      solo: false,
-      automation: [
-        { t: 1, value: 1 },
-        { t: 5, value: 1 },
-        { t: 5, value: 0 },
-        { t: 9, value: 0 },
-      ],
-    })
+  it('passes times through unchanged', () => {
+    const automation = [
+      { t: 1, value: 1 },
+      { t: 5, value: 1 },
+      { t: 5.0005, value: 0 },
+    ]
+    const patch = trackToStemPatch({ stemId: 's', gain: 1, muted: false, solo: false, automation })
     expect(patch.automation).toEqual([
       { time: 1, value: 1 },
-      { time: 5, value: 0 },
-      { time: 9, value: 0 },
+      { time: 5, value: 1 },
+      { time: 5.0005, value: 0 },
     ])
   })
 })

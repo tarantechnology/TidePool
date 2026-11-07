@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { envelopeAt } from '../src/edits'
+import { applyAction, envelopeAt, initialTracks, parsePrompt } from '../src/edits'
 import { buildFilterGraph } from '../src/export/ffmpeg'
 import type { Keyframe, Stem, TrackState } from '../src/types'
 
@@ -137,4 +137,58 @@ describe.skipIf(!hasFfmpeg)('filter graph rendered by ffmpeg', () => {
     expect(out.length).toBeGreaterThan(0)
     expect(rmsAround(out, 3)).toBe(0)
   })
+})
+
+/** The automation expression of app/media.py, copied by hand. That file is not run here. */
+function mediaPyExpression(volume: number, points: Keyframe[]): string {
+  let expr = String(points[points.length - 1].value)
+  for (let j = points.length - 2; j >= 0; j--) {
+    const a = points[j]
+    const b = points[j + 1]
+    expr = `if(lt(t,${b.t}),${a.value}+(${b.value}-${a.value})*(t-${a.t})/(${b.t}-${a.t}),${expr})`
+  }
+  return `(${volume})*if(lt(t,${points[0].t}),${points[0].value},${expr})`
+}
+
+function renderMediaPyShape(points: Keyframe[]): Float32Array {
+  const out = join(dir, 'media.f32')
+  execFileSync('ffmpeg', [
+    '-v', 'error', '-y', '-i', join(dir, 'a.wav'),
+    '-filter_complex', `[0:a]adelay=0:all=1,volume='${mediaPyExpression(1, points)}':eval=frame[a]`,
+    '-map', '[a]', '-ac', '1', '-f', 'f32le', out,
+  ])
+  const bytes = readFileSync(out)
+  return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.length / 4))
+}
+
+describe.skipIf(!hasFfmpeg)('timed edits on the stem boundaries, rendered by ffmpeg', () => {
+  const stems = [stem('a', 'a.wav')]
+  const curveFor = (prompt: string) =>
+    parsePrompt(prompt, [{ ...stems[0], label: 'tone' }], initialTracks(stems))
+      .actions.reduce(applyAction, initialTracks(stems))[0].automation
+
+  const cases: Array<{ prompt: string; silent: number[]; loud: number[] }> = [
+    { prompt: 'mute the tone from 0 to 2 seconds', silent: [0.1, 1, 1.8], loud: [2.2, 4, 5.8] },
+    { prompt: 'mute the tone from 4 to 6 seconds', silent: [4.2, 5, 5.9], loud: [0.2, 2, 3.8] },
+    { prompt: 'mute the tone at 3 seconds', silent: [3.2, 4.5, 5.9], loud: [0.2, 1.5, 2.8] },
+    { prompt: 'mute the tone from 0 to 6 seconds', silent: [0.1, 3, 5.9], loud: [] },
+  ]
+
+  for (const { prompt, silent, loud } of cases) {
+    it(`reference expression: ${prompt}`, () => {
+      sine('a.wav', 440)
+      const base = rmsAround(render([track('a')], stems), 3)
+      const out = render([track('a', { automation: curveFor(prompt) })], stems)
+      for (const t of silent) expect(rmsAround(out, t), `t=${t}`).toBeLessThan(0.001)
+      for (const t of loud) expect(Math.abs(rmsAround(out, t) - base), `t=${t}`).toBeLessThan(0.03 * base)
+    })
+
+    it(`expression shaped like app/media.py: ${prompt}`, () => {
+      sine('a.wav', 440)
+      const base = rmsAround(render([track('a')], stems), 3)
+      const out = renderMediaPyShape(curveFor(prompt))
+      for (const t of silent) expect(rmsAround(out, t), `t=${t}`).toBeLessThan(0.001)
+      for (const t of loud) expect(Math.abs(rmsAround(out, t) - base), `t=${t}`).toBeLessThan(0.03 * base)
+    })
+  }
 })

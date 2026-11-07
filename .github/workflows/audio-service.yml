@@ -1,0 +1,28 @@
+name: Audio service tests
+on:
+  push:
+    paths: ["audio-service/**", ".github/workflows/audio-service.yml"]
+  pull_request:
+    paths: ["audio-service/**", ".github/workflows/audio-service.yml"]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: audio-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Run tests (mock backend)
+        env:
+          AUDIO_BACKEND: mock
+        run: pytest -q

@@ -17,19 +17,28 @@ Anchor = tuple[str, float, float]  # ("+" | "-", start_seconds, end_seconds) rel
 
 @dataclass
 class VisualInput:
-    """Resolved, model-ready visual guidance for the *segment* being separated.
+    """Resolved, model-ready visual guidance for the audio handed to the backend.
 
-    ``video_path`` and ``mask_video_path`` are local files (already resolved by media.py).
-    ``segment_start``/``segment_end`` are seconds on the source timeline covered by the
-    audio handed to the backend, so it can slice frames to match.
+    The engine crops the mixture to ``interval`` (seconds on the source timeline) before
+    calling the backend, so the frames the backend decodes for that interval line up with
+    the audio it receives. Masks come from exactly one of:
+
+    * ``mask_video_path``: a losslessly encoded video aligned frame-for-frame with
+      ``video_path`` where pixel values > 127 are the selected object (generic contract), or
+    * ``frame_masks``: Person 2's per-frame instance masks, ``frame_index -> HxW`` array with
+      1 = object (decoded from their RLE); frames missing from the dict mean "object absent"
+      and get an all-zero mask (never reuse a previous mask).
     """
 
     video_path: str
-    mask_video_path: str
-    segment_start: float
-    segment_end: float
+    interval: tuple[float, float]
+    mask_video_path: str | None = None
+    frame_masks: dict[int, np.ndarray] | None = None
+    frame_rate: float | None = None  # native frame rate of video_path, if known
+    frame_size: tuple[int, int] | None = None  # (width, height) the masks were produced at
     object_id: str | None = None
     label: str | None = None
+    source_sha256: str | None = None  # when set, the backend/visual loader verifies video bytes
 
 
 @dataclass

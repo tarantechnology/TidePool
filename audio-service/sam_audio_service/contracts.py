@@ -129,11 +129,29 @@ def normalise_description(value: str) -> str:
     return text
 
 
+class SourceRef(BaseModel):
+    """Where the ORIGINAL uploaded media lives (Contract A subset, proposed).
+
+    Person 4 sends only extracted audio bytes today. Visual prompting additionally needs
+    the original video, so this optional block lets the caller point at it: a ``file://``
+    path under ``AUDIO_MEDIA_ROOT`` (shared volume) or an allow-listed http(s) URL. ``sha256``
+    lets the service confirm Person 2's masks were computed on the same bytes.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    asset_id: str | None = None
+    original_ref: str | None = None
+    sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    duration: float | None = Field(default=None, ge=0)
+    frame_rate: float | None = Field(default=None, gt=0)
+
+
 class SeparationMetadata(BaseModel):
     """Contract B (proposed): what arrives in the ``metadata`` form field / JSON body."""
 
     model_config = ConfigDict(extra="allow")
     prompts: list[str | PromptSpec] = Field(default_factory=list)
+    source: SourceRef | None = None
     # Legacy/shared visual prompt applied to every prompt (Person 4 forwards the project's
     # visual metadata here unchanged). Accepted as free-form JSON and translated leniently.
     visual_prompt: dict[str, Any] | None = None

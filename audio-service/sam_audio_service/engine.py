@@ -20,7 +20,7 @@ from .audio_io import DecodedAudio, sanitise, to_mono
 from .backends import Backend, create_backend
 from .backends.base import Anchor, BackendOptions, BackendPrompt, BackendResult, VisualInput
 from .config import Settings
-from .contracts import InferenceOptions, PromptSpec, SeparationMetadata, VisualPrompt
+from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
 from .errors import (
     AudioServiceError,
     InferenceFailure,
@@ -29,7 +29,7 @@ from .errors import (
     MissingModel,
     UnsupportedOperation,
 )
-from .media import resolve_ref
+from .visual_prompts import translate_visual_prompt
 
 log = logging.getLogger("sam_audio_service")
 
@@ -89,33 +89,17 @@ class Engine:
         return {"backend": self.backend.name, "is_mock": self.backend.is_mock, "loaded": self.backend.loaded, "load_error": self._load_error, **self.backend.info()}
 
     # ------------------------------------------------------------------ translation
-    def translate_visual(self, prompt: PromptSpec, shared: dict[str, Any] | None, source_duration: float, warnings: list[str]) -> tuple[VisualInput | None, list[Anchor]]:
+    def translate_visual(self, prompt: PromptSpec, shared: dict[str, Any] | None, metadata: SeparationMetadata, source_duration: float, warnings: list[str]) -> tuple[VisualInput | None, list[Anchor]]:
         """Translate Person 2's visual guidance into what the model actually consumes.
 
-        Time ranges become ``+`` span anchors. A video + mask video pair becomes a
-        VisualInput. Anything else (bboxes, track ids without masks) is accepted but
-        cannot steer the model, so it is reported as a warning rather than an error.
+        Time ranges / selection intervals become ``+`` span anchors. Per-frame masks plus a
+        reference to the original video become a VisualInput. Anything else is accepted
+        but cannot steer the model, so it is reported as a warning rather than an error.
         """
-        raw = prompt.visual_prompt.model_dump() if prompt.visual_prompt else (shared or None)
-        if not raw:
-            return None, []
-        try:
-            visual = VisualPrompt.model_validate(raw)
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"visual_prompt ignored: {exc}")
-            return None, []
-        anchors: list[Anchor] = [("+", tr.start, min(tr.end, source_duration)) for tr in visual.all_time_ranges() if tr.start < source_duration]
-        if not visual.has_model_input():
-            ignored = sorted(k for k in raw if k not in {"time_range", "time_ranges"})
-            if ignored:
-                warnings.append("visual_prompt has no video_ref+mask_video_ref pair; fields " + ", ".join(ignored) + " cannot steer SAM Audio and were ignored" + (" (time ranges were used as span anchors)" if anchors else ""))
-            return None, anchors
-        if not self.backend.supports_visual:
-            warnings.append("backend does not support visual prompting; using text and span anchors only")
-            return None, anchors
-        video = resolve_ref(visual.video_ref, self.settings)
-        mask = resolve_ref(visual.mask_video_ref, self.settings)
-        return VisualInput(str(video), str(mask), 0.0, source_duration, visual.object_id, visual.label), anchors
+        raw = prompt.visual_prompt.model_dump(exclude_none=True) if prompt.visual_prompt else shared
+        translation = translate_visual_prompt(raw, source=metadata.source, source_duration=source_duration, settings=self.settings, backend_supports_visual=self.backend.supports_visual)
+        warnings.extend(translation.warnings)
+        return translation.visual, translation.anchors
 
     def _resolve_options(self, options: InferenceOptions) -> tuple[BackendOptions, str, float]:
         if options.model_id and options.model_id != self.settings.model_id:
@@ -153,7 +137,7 @@ class Engine:
         chunked = False
         with self._lock:
             for spec in prompts:
-                visual, visual_anchors = self.translate_visual(spec, metadata.visual_prompt, audio.duration, warnings)
+                visual, visual_anchors = self.translate_visual(spec, metadata.visual_prompt, metadata, audio.duration, warnings)
                 anchors: list[Anchor] = [(a.token, a.start, min(a.end, audio.duration)) for a in spec.anchors if a.start < audio.duration] + visual_anchors
                 if anchors and not self.backend.supports_spans:
                     warnings.append("backend ignores span anchors")
@@ -164,7 +148,10 @@ class Engine:
                 channel_inputs = [mixture[c] for c in range(mixture.shape[0])] if stereo_mode == "per_channel" else [to_mono(mixture)]
                 outs: list[BackendResult] = []
                 for signal in channel_inputs:
-                    result, was_chunked = self._separate_signal(signal, prompt, backend_options, 0.0 if visual is not None else chunk_seconds, audio.duration)
+                    if visual is not None:
+                        result, was_chunked = self._separate_interval(signal, prompt, backend_options, visual.interval), False
+                    else:
+                        result, was_chunked = self._separate_signal(signal, prompt, backend_options, chunk_seconds, audio.duration)
                     chunked = chunked or was_chunked
                     outs.append(result)
                 target = np.stack([sanitise(o.target) for o in outs]) if stereo_mode == "per_channel" else np.repeat(sanitise(outs[0].target)[None, :], mixture.shape[0], axis=0)
@@ -227,6 +214,29 @@ class Engine:
                 res[:m] = result.residual[:m]
                 result.residual = res
         return result
+
+    def _separate_interval(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, interval: tuple[float, float]) -> BackendResult:
+        """Visual prompting: separate only the interval the masks cover, then place the
+        result back on the full timeline so stems keep ``start_time = 0``."""
+        sr = self.backend.sample_rate
+        n = len(signal)
+        s0 = min(n, max(0, int(round(interval[0] * sr))))
+        s1 = min(n, max(s0, int(round(interval[1] * sr))))
+        if s1 - s0 < sr // 10:
+            raise InvalidRequest("visual prompt interval is shorter than 100 ms or outside the audio", details={"interval": list(interval)})
+        local_anchors = None
+        if prompt.anchors:
+            local_anchors = [(t, max(a - s0 / sr, 0.0), min(b - s0 / sr, (s1 - s0) / sr)) for t, a, b in prompt.anchors]
+            local_anchors = [a for a in local_anchors if a[2] > a[1]] or None
+        out = self._call_backend(signal[s0:s1], BackendPrompt(prompt.text, local_anchors, prompt.visual), options)
+        target = np.zeros(n, dtype=np.float32)
+        target[s0:s1] = out.target
+        residual = None
+        if out.residual is not None:
+            residual = signal.astype(np.float32).copy()
+            residual[s0:s1] = out.residual
+        spans = [(a + s0 / sr, b + s0 / sr) for a, b in out.spans] if out.spans else [(s0 / sr, s1 / sr)]
+        return BackendResult(target=target, residual=residual, spans=[(round(a, 3), round(b, 3)) for a, b in spans], extra=out.extra)
 
     def _separate_signal(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, chunk_seconds: float, duration: float) -> tuple[BackendResult, bool]:
         sr = self.backend.sample_rate

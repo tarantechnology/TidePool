@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.browser, pytest.mark.skipif(os.getenv('SC_CV_BROWSER_T
 
 def test_real_video_click_export_and_mismatch(tmp_path):
     from playwright.sync_api import sync_playwright
-    metadata = json.loads((ROOT/'outputs/real_yolo/detections.json').read_text())
+    metadata = json.loads((ROOT/'outputs/real_seg/detections.json').read_text())
     obj = next(o for o in metadata['frames'][0]['objects'] if o['label'] == 'person')
     x1,y1,x2,y2 = obj['bbox_normalized']; x,y = (x1+x2)/2,(y1+y2)/2
     expected = select_at_point(metadata, 0, x, y)
@@ -21,7 +21,7 @@ def test_real_video_click_export_and_mismatch(tmp_path):
         errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto((ROOT/'viewer.html').as_uri())
         page.locator('#videoFile').set_input_files(ROOT/'examples/media/pedestrians.mp4')
-        page.locator('#jsonFile').set_input_files(ROOT/'outputs/real_yolo/detections.json')
+        page.locator('#jsonFile').set_input_files(ROOT/'outputs/real_seg/detections.json')
         page.wait_for_function("document.querySelector('#status').textContent.includes('Click a box')")
         page.wait_for_function("document.querySelector('video').readyState>=2 && !document.querySelector('video').seeking")
         pos = page.evaluate('''([x,y]) => { const v=document.querySelector('video'),r=v.getBoundingClientRect();
@@ -31,12 +31,16 @@ def test_real_video_click_export_and_mismatch(tmp_path):
         page.wait_for_function("!document.querySelector('#export').disabled")
         actual = json.loads(page.locator('#selectionJson').text_content())
         assert actual == expected
+        page.locator('#intervalEnd').fill('0.01')
+        assert page.locator('#export').is_disabled()
+        page.locator('#intervalEnd').fill(str(expected['interval']['end_seconds']))
+        assert page.locator('#export').is_enabled()
         page.evaluate("document.querySelector('video').currentTime=3")
         page.wait_for_function("document.querySelector('video').currentTime===3 && !document.querySelector('video').seeking && document.querySelector('video').readyState>=2")
         with page.expect_download() as event: page.locator('#export').click()
         path = tmp_path/'selection.json'; event.value.save_as(path)
         assert json.loads(path.read_text()) == expected  # export remains frozen after seek
-        page.screenshot(path=str(ROOT/'outputs/real_yolo/viewer.png'), full_page=True)
+        page.screenshot(path=str(ROOT/'outputs/real_seg/viewer.png'), full_page=True)
         assert page.evaluate('SoundCanvasCV.frameAtTime('+json.dumps(metadata)+',12)') is None
         # Invalid JSON clears the prior selection and metadata.
         bad = tmp_path/'bad.json'; bad.write_text('{}')

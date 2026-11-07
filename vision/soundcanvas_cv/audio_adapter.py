@@ -45,6 +45,8 @@ def prepare_visual_inputs(video_path, metadata, selection, *, allow_box_masks=Fa
     start, end = selection['interval']['start_seconds'], selection['interval']['end_seconds']
     if not all(isinstance(t, (float, int)) and math.isfinite(t) for t in (start, end)) or not 0 <= start < end <= metadata['processed_duration_seconds']:
         raise ValueError('Invalid selection interval')
+    if end - start < .1 - 1e-8 or end - start > 30 + 1e-8:
+        raise ValueError('Visual interval must be between 0.1 and 30 seconds')
     if not start <= selection['timestamp_seconds'] < end:
         raise ValueError('Selected observation lies outside requested interval')
     first, stop = round(start*fps), round(end*fps)

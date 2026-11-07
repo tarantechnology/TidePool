@@ -86,3 +86,9 @@ GitHub runs deterministic vision tests separately from backend CI. Manually disp
 - [ ] Natural occlusion identity accuracy benchmark, automatic sound association and similar-speaker separation.
 
 Only visible objects are detected. Track IDs can change, predicted classes can be wrong, and a detection does not establish a sound source. CFR timing is supported; normalize variable frame rate, edit lists, nonzero audio/video offsets and rotation before processing/upload so all workstreams share the same timeline. OpenCV's decoded orientation/dimensions are authoritative; no explicit VFR/PTS reconciliation is implemented. Masks are model estimates, not ground truth. License terms for Ultralytics and any future SAM deployment require the team's own review.
+
+## Choosing a visual isolation interval
+
+Generate tracking and segmentation metadata at the video’s native frame rate (for example, use `--sample-fps` at least as high as the source FPS). Open the original video and that `detections.json` in the viewer, select an object, and edit the start and end seconds if needed. The default covers approximately two seconds around the selected observation. Boundaries must be native-frame aligned, contain the observation, stay inside the processed footage and span 0.1–30 seconds. Export is disabled with an explanation if the interval is invalid, frames are missing, the selected object is untracked, or an observed object lacks an instance mask. A frame with no observation of the selected track is treated as absence only when that frame was actually analyzed. The range does not assert that the object makes a sound.
+
+These limits match the audio service’s current defaults; a separately configured service may impose a lower maximum. The selection is only one part of the cross-team handoff: original video and matching detections still need to be supplied to the audio service as described in [the contract](docs/CONTRACT.md).

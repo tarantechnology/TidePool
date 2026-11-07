@@ -39,9 +39,14 @@
   </section>
   <section class="panel">
     <p id="selected">Nothing selected yet.</p>
+    <div class="inputs">
+      <label>Isolation start (seconds, frame-aligned) <input id="intervalStart" type="number" min="0" step="any" disabled></label>
+      <label>Isolation end (seconds, frame-aligned) <input id="intervalEnd" type="number" min="0" step="any" disabled></label>
+    </div>
+    <p id="intervalStatus" role="status">Select an object to choose an isolation interval.</p>
     <pre id="selectionJson" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto"></pre>
-    <button id="export" disabled>Export selected object JSON</button>
-    <p class="footer">Green = detected objects • Blue = selected object. Bounding boxes approximate object locations, not audio source masks. Track IDs can change after occlusion.</p>
+    <button id="export" disabled>Export visual selection JSON</button>
+    <p class="footer">Export requires native-FPS segmentation metadata and a tracked object. The interval identifies the desired visual processing window; it does not prove that the object produces sound. Green = detected objects • Blue = selected object. Bounding boxes approximate object locations, not audio source masks. Track IDs can change after occlusion.</p>
   </section>
 </main>
 <script src="viewer-core.js"></script>

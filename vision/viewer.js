@@ -3,7 +3,7 @@
   const $=id=>document.getElementById(id), core=window.SoundCanvasCV;
   const video=$('video'),canvas=$('overlay'),ctx=canvas.getContext('2d');
   let metadata=null,selection=null,mediaUrl=null,sourceHash=null,loadId=0,animation=null;
-  function clearSelection() {selection=null;$('export').disabled=true;$('selected').textContent='Nothing selected yet.';$('selectionJson').textContent='';}
+  function clearSelection() {selection=null;$('export').disabled=true;$('intervalStart').disabled=true;$('intervalEnd').disabled=true;$('intervalStart').value='';$('intervalEnd').value='';$('intervalStatus').textContent='Select an object to choose an isolation interval.';$('selected').textContent='Nothing selected yet.';$('selectionJson').textContent='';}
   function compatible() {return metadata && sourceHash===metadata.source_sha256 &&
     video.videoWidth===metadata.width && video.videoHeight===metadata.height &&
     video.duration+0.05>=metadata.processed_duration_seconds;}
@@ -52,6 +52,21 @@
     try {metadata=core.validateMetadata(JSON.parse(await file.text()));status();draw();}
     catch(e){metadata=null;$('status').textContent=`Invalid JSON: ${e.message}`;}
   });
+  function updateInterval() {
+    if(!selection)return;
+    try {
+      const start=$('intervalStart').value, end=$('intervalEnd').value;
+      if(start===''||end==='') throw Error('Enter both interval boundaries.');
+      selection.interval=core.validateVisualInterval(metadata,selection,Number(start),Number(end));
+      $('intervalStatus').textContent='Visual interval ready.';
+      $('export').disabled=false;
+    } catch(e) {
+      $('intervalStatus').textContent=e.message;
+      $('export').disabled=true;
+    }
+    $('selectionJson').textContent=JSON.stringify(selection,null,2);
+  }
+  for(const id of ['intervalStart','intervalEnd']) $(id).addEventListener('input',updateInterval);
   $('stage').addEventListener('click',event=>{
     const bounds=video.getBoundingClientRect();
     if(event.clientY>bounds.bottom-42||!compatible())return;
@@ -59,7 +74,11 @@
     const x=(event.clientX-boundsCanvas.left-r.x)/r.w,y=(event.clientY-boundsCanvas.top-r.y)/r.h;
     selection=core.selectAtPoint(metadata,video.currentTime,x,y);
     if(selection)video.pause();
-    $('export').disabled=!selection;
+    if(selection) {
+      $('intervalStart').disabled=false;$('intervalEnd').disabled=false;
+      $('intervalStart').value=selection.interval.start_seconds;$('intervalEnd').value=selection.interval.end_seconds;
+      updateInterval();
+    } else clearSelection();
     $('selected').textContent=selection?`Selected ${selection.label} (${selection.object_id}), observed at ${selection.timestamp_seconds.toFixed(3)}s`:'No detected object at this point.';
     $('selectionJson').textContent=selection?JSON.stringify(selection,null,2):'';draw();
   });

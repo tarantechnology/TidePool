@@ -357,3 +357,128 @@ describe('parsePrompt duck', () => {
     expect(run('duck the music')).toEqual({ type: 'set_gain', stemId: 'm', value: 0.5 })
   })
 })
+
+describe('parsePrompt percentages', () => {
+  const siren = (gain: number) => TRACKS.map((t) => (t.stemId === 's' ? { ...t, gain } : t))
+  const run = (text: string, gain = 1) => parsePrompt(text, STEMS, siren(gain))
+  const faderOf = (text: string, gain = 1) => {
+    const [action] = run(text, gain).actions
+    return action?.type === 'set_gain' ? action.value : null
+  }
+  const inRange = (text: string, gain = 1) => {
+    const [action] = run(text, gain).actions
+    return action?.type === 'set_automation' ? action.keyframes.map((k) => k.value) : null
+  }
+
+  it('sets the fader for the case in the review', () => {
+    expect(faderOf('Lower the siren volume to 30%', 0.8)).toBe(0.3)
+  })
+
+  it('accepts every spelling of an absolute level', () => {
+    for (const text of ['set the siren to 30 percent', 'siren 30%', 'siren 30% volume', 'lower the siren to 30% volume']) {
+      expect(faderOf(text), text).toBe(0.3)
+    }
+  })
+
+  it('accepts both ends of the range and rejects past them', () => {
+    expect(faderOf('set the siren to 0%')).toBe(0)
+    expect(faderOf('set the siren to 200%')).toBe(2)
+    const over = run('set the siren to 250%')
+    expect(over.actions).toEqual([])
+    expect(over.message).toContain('between 0 and 200')
+    expect(run('set the siren to -20%').actions).toEqual([])
+    expect(run('raise the siren by 250%').actions).toEqual([])
+  })
+
+  it('reads decimals', () => {
+    expect(faderOf('set the siren to 12.5%')).toBe(0.125)
+    expect(faderOf('set the siren to .5%')).toBe(0.005)
+  })
+
+  it('reads by N% as relative, clamped to the fader range', () => {
+    expect(faderOf('lower the siren by 20%')).toBeCloseTo(0.8)
+    expect(faderOf('reduce the siren by 20%', 0.5)).toBeCloseTo(0.4)
+    expect(faderOf('make the siren quieter by 20%')).toBeCloseTo(0.8)
+    expect(faderOf('raise the siren by 50%')).toBeCloseTo(1.5)
+    expect(faderOf('make the siren louder by 50%', 0.5)).toBeCloseTo(0.75)
+    expect(faderOf('increase the siren by 50%', 1.8)).toBe(MAX_GAIN)
+    expect(faderOf('make the siren 50% louder')).toBeCloseTo(1.5)
+    expect(faderOf('make the siren 20% quieter')).toBeCloseTo(0.8)
+  })
+
+  it('asks when a percentage has no clear meaning', () => {
+    for (const text of [
+      'lower the siren 30%',
+      'siren by 30%',
+      'set the siren from 10% to 30%',
+      'raise then lower the siren by 30%',
+      'mute the siren to 30%',
+      'make the siren 20% louder whenever the argument gets intense',
+    ]) {
+      expect(run(text).actions, text).toEqual([])
+    }
+  })
+
+  it('reaches the exact level inside a range through the fader', () => {
+    const values = inRange('set the siren to 30% from 8 to 16 seconds', 0.6)
+    expect(values).toEqual([1, 0.5, 0.5, 1])
+    expect(0.6 * values![1]).toBeCloseTo(0.3)
+  })
+
+  it('treats at as the start of a range running to the stem end', () => {
+    expect(inRange('set the siren to 30% at 12 seconds', 0.6)).toEqual([1, 0.5, 0.5, 1])
+  })
+
+  it('applies a relative percentage to a range', () => {
+    expect(inRange('lower the siren by 20% from 8 to 16 seconds')).toEqual([1, 0.8, 0.8, 1])
+  })
+
+  it('asks rather than guess when a range cannot reach the level', () => {
+    const silent = run('set the siren to 30% from 8 to 16 seconds', 0)
+    expect(silent.actions).toEqual([])
+    expect(silent.message).toContain('fader is at 0')
+    const tooLow = run('set the siren to 200% from 8 to 16 seconds', 0.5)
+    expect(tooLow.actions).toEqual([])
+    expect(tooLow.message).toContain('too low')
+    expect(inRange('set the siren to 200% from 8 to 16 seconds', 1)).toEqual([1, 2, 2, 1])
+  })
+
+  it('asks about quantities it cannot read exactly', () => {
+    for (const text of [
+      'make the siren 6 dB louder',
+      'lower the siren by 3db',
+      'make the siren 2x louder',
+      'make the siren 3 times louder',
+      'make the siren two times louder',
+      'make the siren twice as loud',
+      'double the siren',
+      'cut the siren in half',
+      'set the siren lower to 30',
+      'make the siren louder at 12 seconds',
+      'lower the siren for 5 seconds',
+    ]) {
+      const res = run(text)
+      expect(res.actions, text).toEqual([])
+    }
+    expect(run('make the siren 6 dB louder').message).toContain('"6 db"')
+  })
+
+  it('does not read time numbers as percentages', () => {
+    expect(inRange('make the siren louder from 8 to 16 seconds')).toEqual([1, 2, 2, 1])
+    expect(run('mute the siren at 12 seconds').actions[0].type).toBe('set_automation')
+    expect(inRange('set the siren to 50% from 30 to 40 seconds')).toBeNull()
+    expect(run('set the siren to 50% from 30 to 40 seconds').message).toContain('End time')
+  })
+
+  it('does not read digits in a stem label as an amount', () => {
+    const stems = [stem('t', 'Take 2')]
+    const res = parsePrompt('make take 2 quieter', stems, initialTracks(stems))
+    expect(res.actions).toEqual([{ type: 'set_gain', stemId: 't', value: 0.5 }])
+  })
+
+  it('leaves the generic commands alone', () => {
+    expect(faderOf('make the siren quieter')).toBe(0.5)
+    expect(faderOf('make the siren louder')).toBe(1.5)
+    expect(faderOf('make the siren quieter', 0.5)).toBe(0.25)
+  })
+})

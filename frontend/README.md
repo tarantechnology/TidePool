@@ -24,7 +24,7 @@ Open http://localhost:5173/#/app for the editor. The landing page is at `#/`.
 - **Timeline:** double-click a lane to add a keyframe, drag a marker to move it, and Alt-click a marker to delete it.
 - **Undo:** Cmd/Ctrl+Z, and Cmd/Ctrl+Shift+Z to redo.
 - **Media:** drop audio files or use **Import audio** to replace the stems. Load a video from the video panel, or drop it. The video is muted and follows the audio clock.
-- **Prompts:** try "Make the siren louder whenever the argument gets intense". That follows how loud the dialogue is. It measures loudness, it does not detect emotion, and it needs stems of kind `dialogue`. Real stems start as SFX, so pick the kind from the dropdown in the track header first.
+- **Prompts:** "Lower the siren volume to 30%" sets the fader, "Lower the siren by 20%" is relative, and adding "from 8 to 16 seconds" limits either to that range. Amounts it cannot read exactly (dB, "twice") get a question, not a guess. Also try "Make the siren louder whenever the argument gets intense". That follows how loud the dialogue is. It measures loudness, it does not detect emotion, and it needs stems of kind `dialogue`. Real stems start as SFX, so pick the kind from the dropdown in the track header first.
 
 ## Environment variables
 

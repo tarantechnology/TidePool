@@ -12,7 +12,14 @@ export interface Stem {
   url: string
   /** Length in seconds. */
   duration: number
+  /** Timeline position of the first sample, in seconds. Absent means 0. */
+  startOffset?: number
+  /** Timeline spans where the stem is silent, inclusive at both ends. Read-only here. */
+  muteRanges?: MuteRange[]
 }
+
+/** [start, end] in timeline seconds, as the backend stores them. */
+export type MuteRange = [number, number]
 
 /** Gain multiplier at a point on the timeline. 1 = unchanged, 0 = silent. */
 export interface Keyframe {

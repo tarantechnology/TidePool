@@ -64,4 +64,16 @@ describe('resolveActions', () => {
     expect(res.actions).toEqual([])
     expect(res.warnings.at(-1)).toContain('no source audio')
   })
+
+  it('lines the curve up with a source placed later on the timeline', () => {
+    const loud = new Float32Array(SR * 2).fill(0.5)
+    const placed = (startOffset: number): SampleSource => ({
+      getSamples: () => ({ data: loud, sampleRate: SR, startOffset }),
+    })
+    const action: EditAction = { type: 'follow_intensity', stemId: 'siren', sourceStemIds: ['a'] }
+    const curve = keyframesOf(resolveActions([action], placed(4), 8).actions[0])
+    expect(envelopeAt(curve, 2)).toBeCloseTo(1, 1)
+    expect(envelopeAt(curve, 5)).toBeCloseTo(2, 1)
+    expect(envelopeAt(curve, 7.5)).toBeCloseTo(1, 1)
+  })
 })

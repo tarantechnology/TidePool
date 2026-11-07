@@ -203,6 +203,33 @@ describe.skipIf(!reachable)(`backend contract${skipReason}`, () => {
     expect(source.syncTarget).toEqual({ config, projectId: id })
   }, 30_000)
 
+  it('previews an offset and a webhook mute range the way the export renders them', async () => {
+    const { id, config, auth, stem, jobId } = await project3s()
+    const patched = await fetch(`${url}/api/projects/${id}/stems/${stem.id}`, {
+      method: 'PATCH',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_offset: 1 }),
+    })
+    expect(patched.status).toBe(200)
+    const hook = await fetch(`${url}/api/webhooks/local`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: id, token: config.token, text: 'Mute the tone from 2 to 3 seconds' }),
+    })
+    expect((await hook.json()).status).toBe('applied')
+
+    const source = new HttpStemSource(config, jobId)
+    const [loaded] = await source.load()
+    source.dispose()
+    expect(loaded).toMatchObject({ startOffset: 1, muteRanges: [[2, 3]] })
+
+    const out = await exportWav(id, auth)
+    expect(rmsAt(out, 0.5)).toBeLessThan(0.001)
+    expect(rmsAt(out, 1.5)).toBeGreaterThan(0.01)
+    expect(rmsAt(out, 2.5)).toBeLessThan(0.001)
+    expect(rmsAt(out, 3.5)).toBeGreaterThan(0.01)
+  }, 30_000)
+
   it('reports a missing job through the client error path', async () => {
     await expect(getJob({ baseUrl: url, token: 'wrong' }, 'missing')).rejects.toThrow(
       'Backend returned 404: Job not found',

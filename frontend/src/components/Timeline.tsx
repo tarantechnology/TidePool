@@ -2,7 +2,7 @@ import { useRef } from 'react'
 import type { MouseEvent, PointerEvent } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
-import { isAudible, MAX_GAIN } from '../edits'
+import { isAudible, MAX_GAIN, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
@@ -187,7 +187,27 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                     style={{ left: `${(t / duration) * 100}%` }}
                   />
                 ))}
-                <Waveform peaks={peaks} color={ACCENT} dimmed={!audible} />
+                <div
+                  className="absolute inset-y-0"
+                  style={{
+                    left: `${(stemStart(stem) / duration) * 100}%`,
+                    width: `${(stem.duration / duration) * 100}%`,
+                  }}
+                >
+                  <Waveform peaks={peaks} color={ACCENT} dimmed={!audible} />
+                </div>
+                {/* Read-only: only the backend writes these. */}
+                {stem.muteRanges?.map(([a, b]) => (
+                  <div
+                    key={`${a}-${b}`}
+                    data-mute-range
+                    className="absolute inset-y-0 border-x border-line-strong bg-black/50"
+                    style={{
+                      left: `${(Math.max(a, 0) / duration) * 100}%`,
+                      width: `${((Math.min(b, duration) - Math.max(a, 0)) / duration) * 100}%`,
+                    }}
+                  />
+                ))}
                 {track.automation.length > 0 && (
                   <>
                     <div

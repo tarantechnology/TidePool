@@ -15,7 +15,9 @@ Defined in `src/types.ts`.
 ```ts
 type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience'
 
-interface Stem { id: string; label: string; kind: StemKind; url: string; duration: number }
+type MuteRange = [number, number]
+
+interface Stem { id: string; label: string; kind: StemKind; url: string; duration: number; startOffset?: number; muteRanges?: MuteRange[] }
 interface Keyframe { t: number; value: number }
 interface TrackState { stemId: string; gain: number; muted: boolean; solo: boolean; automation: Keyframe[] }
 interface EditList { version: 1; tracks: TrackState[] }
@@ -35,6 +37,7 @@ Gains are multipliers from 0 to 2. Automation is piecewise linear in timeline se
 
 All additive. No existing field or union member changed.
 
+- `Stem` gained optional `startOffset` and `muteRanges`, and there is a new `MuteRange` type (see "Offsets and mute ranges"). Both come from the backend and are read-only in the editor.
 - `EditAction` gained `follow_intensity`. It makes a stem's gain follow how loud the source stems are. That is a loudness proxy, not emotion detection. It is resolved to `set_automation` in the browser (`src/audio/resolve.ts`) because that needs decoded audio, so it never reaches an edit list or an exporter. `applyAction` treats an unresolved one as a no-op. `minValue` is the gain at low loudness and `maxValue` at high loudness. `maxValue` below `minValue` ducks.
 
 ## Edit list
@@ -63,6 +66,18 @@ If the read fails, the job has no `project_id`, the job's stems are no longer th
 
 Saved state is read once, when stems load. A webhook edit made while the editor is open is not seen, and the next PATCH for that stem overwrites its volume, mute, solo and automation with the editor's.
 
+### Offsets and mute ranges
+
+`Stem.startOffset` and `Stem.muteRanges` carry `start_offset` and `mute_ranges`. Both types are additive and optional, so mock and file stems need neither. The preview follows `app/media.py`, read from that file:
+
+- A stem is delayed by `start_offset`, rounded to whole milliseconds (`adelay`). Automation and ranges are evaluated after the delay, so both are in timeline seconds, not stem seconds. A keyframe at 3s is 3s on the timeline wherever the stem sits.
+- A range silences `between(t,a,b)`, inclusive at both ends, on top of automation, volume and everything else. Ranges are not clamped.
+- Timeline length is the latest `start_offset + duration`. The exporter also adds the original media's duration, and an MP4 export is cut to it, which the preview cannot know.
+
+Timed prompts treat `start_offset + duration` as the end of the stem, and intensity analysis shifts its curve by the offset.
+
+Both stay out of PATCH. `StemUpdate` has no `mute_ranges`, and the only writer is the webhook. `start_offset` is accepted there, but the editor has no control for it, so it leaves it alone. Ranges show as read-only bands on the timeline, and the waveform sits at its offset. There is no way to remove a range from the editor.
+
 ### Steps
 
 The backend requires strictly increasing keyframe times, so it cannot hold an exact step. `normalizeKeyframes` in `src/edits.ts` makes every curve storable: sorted, values clamped to 0 to 2, and at least 1ms between keyframes, so a step becomes a 1ms ramp. Set_automation applies it, and so do the parser, agent validation and intensity output, so the preview plays exactly the curve that is sent. Curves restored from the backend are not rewritten: they already pass its validation.
@@ -75,7 +90,7 @@ Timed edits keep the existing curve. `spliceAutomation` changes only the request
 
 ### What does not reach the backend
 
-Also not sent, because the backend has no field for them: stem kinds. `start_offset` is left out of every PATCH, so the backend keeps its value.
+Also not sent, because the backend has no field for them: stem kinds and mute ranges. `start_offset` is left out of every PATCH, so the backend keeps its value.
 
 ## Agent request and response (ASSUMED between browser and agent server)
 
@@ -153,7 +168,7 @@ The preview also applies a 0.7 master gain that neither exporter applies, so pre
 
 1. CORS. `app/main.py` has no CORS middleware, so browser calls with an Authorization header from `http://localhost:5173` should fail preflight (read from the code, not tested). In development the Vite proxy avoids this: set `VITE_API_BASE_URL=/api`. Without the proxy, and for any deployed build, Person 4 must add `CORSMiddleware` allowing the editor's origin.
 2. Whether the `volume=...:eval=frame` lag above should be fixed in `app/media.py`.
-3. `start_offset` and `mute_ranges` exist on backend stems. The editor has no equivalent, so it neither shows nor preserves their effect. `mute_ranges` set through the webhook will not appear in the preview.
+3. `start_offset` and `mute_ranges` are shown and played, read-only (see "Offsets and mute ranges"). Nothing in the API removes a mute range. Whether the editor should be able to.
 4. Saved stem state is restored on load (see "Restoring saved state"), but only once. Whether the editor should notice webhook edits made while it is open.
 5. The agent ownership question above.
 6. Whether `project_id` on `GET /api/jobs/{id}` is part of the contract. Editor sync depends on it.

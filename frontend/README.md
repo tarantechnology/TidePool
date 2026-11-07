@@ -52,7 +52,7 @@ To reach the backend from the browser, use one of these:
 - **Dev proxy:** set `VITE_API_BASE_URL=/api`. The dev server forwards `/api` to `BACKEND_URL`, unchanged. `BACKEND_URL` has to be in the shell, since Vite does not put `.env` values into its own config. This works on the dev server only, not for a deployed build.
 - **Direct:** set `VITE_API_BASE_URL` to the backend URL. Person 4 must add `CORSMiddleware` allowing http://localhost:5173 first, because the backend has none and browser calls with an Authorization header fail preflight without it.
 
-With a job loaded, edits are sent to the backend as you make them. See "What does not reach the backend" in [docs/CONTRACTS.md](docs/CONTRACTS.md).
+With a job loaded, the editor starts from the project's saved state and sends edits to the backend as you make them. If saved state cannot be read, the stems play but nothing is sent, and the status chip says why. Stem offsets and mute ranges from the backend play back as they export, and show on the timeline as read-only. See [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
 ## Documentation
 

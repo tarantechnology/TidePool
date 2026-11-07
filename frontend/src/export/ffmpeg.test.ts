@@ -219,3 +219,36 @@ describe('buildFilterGraph', () => {
     expect(graph.filter).toBe('anullsrc=r=48000:cl=stereo:d=20[mix]')
   })
 })
+
+describe('offsets and mute ranges', () => {
+  it('delays a stem before its gain, so curves stay in timeline time', () => {
+    const graph = buildFilterGraph({ version: 1, tracks: [track({ gain: 0.5 })] }, [{ ...stem('a'), startOffset: 2.5 }])
+    expect(graph.filter).toContain('[0:a]adelay=2500:all=1,volume=0.5')
+  })
+
+  it('adds no delay without an offset', () => {
+    expect(buildFilterGraph({ version: 1, tracks: [track()] }, [stem('a')]).filter).not.toContain('adelay')
+  })
+
+  it('measures the timeline from the placed stems', () => {
+    const late = { ...stem('a'), duration: 4, startOffset: 3 }
+    const curve = [{ t: 1, value: 0.5 }]
+    const tracks = [track({ automation: curve })]
+    expect(buildFilterGraph({ version: 1, tracks }, [late]).filter).toContain('volume=0.5:eval=frame')
+    const silent = buildFilterGraph({ version: 1, tracks: [track({ muted: true })] }, [late])
+    expect(silent.filter).toContain('d=7')
+  })
+
+  it('gates mute ranges with between(), like app/media.py', () => {
+    const expr = gainExpressionForTrack(track(), DUR, [
+      [2, 3],
+      [5, 6],
+    ])
+    expect(expr).toBe('((1)*if(between(t\\,2\\,3)\\,0\\,1))*if(between(t\\,5\\,6)\\,0\\,1)')
+  })
+
+  it('applies a range to a track with no automation', () => {
+    const graph = buildFilterGraph({ version: 1, tracks: [track()] }, [{ ...stem('a'), muteRanges: [[2, 3]] }])
+    expect(graph.filter).toContain('between(t\\,2\\,3)')
+  })
+})

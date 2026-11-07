@@ -1,5 +1,5 @@
-import { isAudible } from '../edits'
-import type { EditList, Keyframe, Stem, TrackState } from '../types'
+import { isAudible, stemEnd, stemStart } from '../edits'
+import type { EditList, Keyframe, MuteRange, Stem, TrackState } from '../types'
 
 // Reference implementation only: Person 4 owns the real export. This exists so
 // preview and export can be compared against the same math (see ffmpeg.test.ts
@@ -62,8 +62,7 @@ function balancedSum(terms: string[]): string {
   return `(${balancedSum(terms.slice(0, mid))})+(${balancedSum(terms.slice(mid))})`
 }
 
-/** FFmpeg `volume` expression for a track's automation, commas escaped for a filtergraph. */
-export function gainExpressionForTrack(track: TrackState, duration: number): string {
+function curveExpression(track: TrackState, duration: number): string {
   const segments = automationSegments(track.automation, duration)
   if (segments.length === 0) return '1'
   const first = segments[0]
@@ -76,7 +75,17 @@ export function gainExpressionForTrack(track: TrackState, duration: number): str
     ...segments.map((s) => `gt(t,${num(s.t0)})*lte(t,${num(s.t1)})*${rampValue(s)}`),
     `gt(t,${num(last.t1)})*${num(last.v1)}`,
   ]
-  return balancedSum(terms).replaceAll(',', '\\,')
+  return balancedSum(terms)
+}
+
+/**
+ * FFmpeg `volume` expression for a track's automation and mute ranges, commas
+ * escaped for a filtergraph. Ranges use between(), as app/media.py does.
+ */
+export function gainExpressionForTrack(track: TrackState, duration: number, ranges: MuteRange[] = []): string {
+  const curve = curveExpression(track, duration)
+  const gated = ranges.reduce((expr, [a, b]) => `(${expr})*if(between(t,${num(a)},${num(b)}),0,1)`, curve)
+  return gated.replaceAll(',', '\\,')
 }
 
 export interface FilterGraph {
@@ -97,7 +106,7 @@ const AUTOMATION_FRAME_SAMPLES = 256
 
 /** Filter graph applying fader gain, mute/solo and automation per stem, then mixing. */
 export function buildFilterGraph(editList: EditList, stems: Stem[]): FilterGraph {
-  const duration = stems.reduce((d, s) => Math.max(d, s.duration), 0)
+  const duration = stems.reduce((d, s) => Math.max(d, stemEnd(s)), 0)
   const audible = editList.tracks.flatMap((track) => {
     const stem = stems.find((s) => s.id === track.stemId)
     return stem && isAudible(editList.tracks, track) ? [{ track, stem }] : []
@@ -105,11 +114,14 @@ export function buildFilterGraph(editList: EditList, stems: Stem[]): FilterGraph
   if (audible.length === 0) {
     return { filter: `anullsrc=r=48000:cl=stereo:d=${num(duration)}${OUTPUT}`, inputs: [], output: OUTPUT }
   }
-  const chains = audible.map(({ track }, i) => {
+  const chains = audible.map(({ track, stem }, i) => {
+    // Delayed first, so t in the expressions below is timeline time.
+    const delayMs = Math.round(stemStart(stem) * 1000)
+    const delay = delayMs > 0 ? `adelay=${delayMs}:all=1,` : ''
     const fader = `volume=${num(track.gain)}`
-    const expr = gainExpressionForTrack(track, duration)
+    const expr = gainExpressionForTrack(track, duration, stem.muteRanges)
     const envelope = expr === '1' ? '' : `,asetnsamples=n=${AUTOMATION_FRAME_SAMPLES},volume=${expr}:eval=frame`
-    return `[${i}:a]${fader}${envelope}[a${i}]`
+    return `[${i}:a]${delay}${fader}${envelope}[a${i}]`
   })
   const pads = audible.map((_, i) => `[a${i}]`).join('')
   const mix = `${pads}amix=inputs=${audible.length}:duration=longest:normalize=0${OUTPUT}`

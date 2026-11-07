@@ -553,7 +553,7 @@ describe('only job stems sync', () => {
   it('syncs to the project named by the loaded job', async () => {
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }))
     const row = { id: 's1', name: 'dog', duration: 2, audio_url: '/a' }
-    const saved = { ...row, volume: 1, muted: false, solo: false, automation: [] }
+    const saved = { ...row, volume: 1, muted: false, solo: false, automation: [], start_offset: 0, mute_ranges: [] }
     fetchMock.mockImplementation(async (input) => {
       if (String(input).endsWith('/api/jobs/j1')) {
         return new Response(JSON.stringify({ status: 'completed', project_id: 'p9', stems: [row] }))

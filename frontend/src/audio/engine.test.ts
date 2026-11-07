@@ -1,16 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Stem, TrackState } from '../types'
-import { AudioEngine } from './engine'
+import { AudioEngine, sourceStart } from './engine'
 import type { EngineEvent } from './engine'
 
 // Just enough of Web Audio to drive the engine's bookkeeping in Node. Sound
 // itself cannot be observed here.
 class FakeParam {
   value = 1
-  cancelScheduledValues() {}
+  events: Array<[string, number, number]> = []
+  cancelScheduledValues() {
+    this.events = []
+  }
   setTargetAtTime() {}
-  setValueAtTime() {}
-  linearRampToValueAtTime() {}
+  setValueAtTime(value: number, time: number) {
+    this.events.push(['set', value, time])
+  }
+  linearRampToValueAtTime(value: number, time: number) {
+    this.events.push(['ramp', value, time])
+  }
 }
 
 class FakeNode {
@@ -27,8 +34,10 @@ class FakeSource extends FakeNode {
   onended: (() => void) | null = null
   started = false
   stopped = false
-  start() {
+  startArgs: number[] = []
+  start(...args: number[]) {
     this.started = true
+    this.startArgs = args
   }
   stop() {
     this.stopped = true
@@ -78,6 +87,30 @@ const stem = (id: string, seconds: number): Stem => ({
 })
 
 const track = (stemId: string): TrackState => ({ stemId, gain: 1, muted: false, solo: false, automation: [] })
+
+describe('sourceStart', () => {
+  it('waits for a position before the offset', () => {
+    expect(sourceStart(0, 2, 5)).toEqual({ delay: 2, bufferOffset: 0 })
+    expect(sourceStart(1.5, 2, 5)).toEqual({ delay: 0.5, bufferOffset: 0 })
+  })
+
+  it('starts at once exactly at the offset', () => {
+    expect(sourceStart(2, 2, 5)).toEqual({ delay: 0, bufferOffset: 0 })
+  })
+
+  it('starts inside the buffer past the offset', () => {
+    expect(sourceStart(3.5, 2, 5)).toEqual({ delay: 0, bufferOffset: 1.5 })
+  })
+
+  it('has nothing to start at or past the end', () => {
+    expect(sourceStart(7, 2, 5)).toBeNull()
+    expect(sourceStart(9, 2, 5)).toBeNull()
+  })
+
+  it('matches the old behaviour with no offset', () => {
+    expect(sourceStart(4, 0, 5)).toEqual({ delay: 0, bufferOffset: 4 })
+  })
+})
 
 describe('AudioEngine', () => {
   let engine: AudioEngine
@@ -211,6 +244,89 @@ describe('AudioEngine', () => {
     await started
     expect(engine.isPlaying()).toBe(false)
     expect(made.sources).toHaveLength(0)
+  })
+
+  describe('with offsets and mute ranges', () => {
+    const placed = (id: string, seconds: number, over: Partial<Stem>): Stem => ({ ...stem(id, seconds), ...over })
+    const sources = () => made.sources.filter((s) => s.started && !s.stopped)
+    const envelopeEvents = (stemIndex: number) =>
+      // Gains in creation order after master: envelope, fader, gate per stem.
+      made.gains.slice(-6)[stemIndex * 3].gain.events
+
+    beforeEach(async () => {
+      await engine.replaceStems([placed('a', 5, { startOffset: 2 }), placed('b', 3, {})])
+      made.sources = []
+    })
+
+    it('takes duration from the latest end on the timeline', () => {
+      expect(engine.duration).toBe(7)
+    })
+
+    it('schedules a later stem and starts the other at once', async () => {
+      await engine.play()
+      const [a, b] = sources()
+      expect(a.startArgs).toEqual([2, 0])
+      expect(b.startArgs).toEqual([0, 0])
+    })
+
+    it('starts inside the buffer after a seek past the offset', async () => {
+      await engine.play()
+      made.sources = []
+      engine.seek(4)
+      const [a] = sources()
+      expect(a.startArgs).toEqual([0, 2])
+      expect(sources()).toHaveLength(1)
+    })
+
+    it('resumes correctly from pause', async () => {
+      engine.seek(1)
+      await engine.play()
+      expect(sources().map((s) => s.startArgs)).toEqual([
+        [1, 0],
+        [0, 1],
+      ])
+      engine.pause()
+      expect(engine.getTime()).toBe(1)
+    })
+
+    it('stops at the end when a seek lands past every stem', async () => {
+      await engine.play()
+      engine.seek(7)
+      expect(engine.isPlaying()).toBe(false)
+      expect(engine.getTime()).toBe(7)
+    })
+
+    it('does not end when only the shorter stem finishes', async () => {
+      await engine.play()
+      const [, b] = sources()
+      b.onended?.()
+      expect(engine.isPlaying()).toBe(true)
+    })
+
+    it('schedules mute ranges on top of automation', async () => {
+      await engine.replaceStems([placed('a', 10, { muteRanges: [[2, 3]] }), placed('b', 10, {})])
+      engine.setTracks([track('a'), track('b')])
+      await engine.play()
+      expect(envelopeEvents(0)).toEqual([
+        ['set', 1, 0],
+        ['ramp', 1, 2],
+        ['ramp', 0, 2],
+        ['ramp', 0, 3],
+        ['ramp', 1, 3],
+      ])
+      expect(envelopeEvents(1)).toEqual([['set', 1, 0]])
+    })
+
+    it('reads silent when paused inside a mute range', async () => {
+      await engine.replaceStems([placed('a', 10, { muteRanges: [[2, 3]] })])
+      engine.setTracks([track('a')])
+      engine.seek(2.5)
+      expect(made.gains.slice(-3)[0].gain.events).toEqual([['set', 0, 0]])
+    })
+
+    it('gives analysis the offset', () => {
+      expect(engine.getSamples('a')?.startOffset).toBe(2)
+    })
   })
 
   it('accepts tracks that reference no loaded stem', async () => {

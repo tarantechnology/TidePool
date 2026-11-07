@@ -1,5 +1,5 @@
 import { MAX_GAIN } from '../edits'
-import type { Keyframe, Stem, TrackState } from '../types'
+import type { Keyframe, MuteRange, Stem, TrackState } from '../types'
 
 // Client for the upstream FastAPI backend. Paths and shapes come from
 // INTEGRATION.md and app/main.py at AkhilNam/SoundCanvas commit 9fc2216. They
@@ -24,6 +24,8 @@ export interface BackendStem {
   name: string
   duration: number
   audio_url: string
+  start_offset?: number
+  mute_ranges?: MuteRange[]
 }
 
 /** A row of GET /api/projects/{id}/stems: the stem as saved right now. */
@@ -85,6 +87,9 @@ function isSavedAutomation(raw: unknown): boolean {
   })
 }
 
+const isMuteRange = (r: unknown): boolean =>
+  Array.isArray(r) && r.length === 2 && r.every((v) => typeof v === 'number' && Number.isFinite(v))
+
 function isSavedStem(raw: Partial<SavedStem> | null): raw is SavedStem {
   return (
     typeof raw?.id === 'string' &&
@@ -94,7 +99,12 @@ function isSavedStem(raw: Partial<SavedStem> | null): raw is SavedStem {
     inGainRange(raw.volume) &&
     typeof raw.muted === 'boolean' &&
     typeof raw.solo === 'boolean' &&
-    isSavedAutomation(raw.automation)
+    isSavedAutomation(raw.automation) &&
+    typeof raw.start_offset === 'number' &&
+    Number.isFinite(raw.start_offset) &&
+    raw.start_offset >= 0 &&
+    Array.isArray(raw.mute_ranges) &&
+    raw.mute_ranges.every(isMuteRange)
   )
 }
 
@@ -128,7 +138,15 @@ export async function fetchStemBlobUrl(config: BackendConfig, audioUrl: string):
 
 export function toStem(stem: BackendStem, url: string): Stem {
   // The backend has no kind field, and kinds are not guessed from names.
-  return { id: stem.id, label: stem.name, kind: 'sfx', url, duration: stem.duration }
+  return {
+    id: stem.id,
+    label: stem.name,
+    kind: 'sfx',
+    url,
+    duration: stem.duration,
+    startOffset: stem.start_offset ?? 0,
+    muteRanges: stem.mute_ranges ?? [],
+  }
 }
 
 export interface StemPatch {

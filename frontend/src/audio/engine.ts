@@ -1,4 +1,4 @@
-import { automationFrom, isAudible } from '../edits'
+import { automationFrom, isAudible, stemEnd, stemStart, withMuteRanges } from '../edits'
 import type { Stem, TrackState } from '../types'
 
 // Per-stem graph:  source -> envelope (automation) -> fader (volume) -> gate (mute/solo) -> master
@@ -25,6 +25,20 @@ export interface EngineEvent {
 }
 
 export type EngineListener = (event: EngineEvent) => void
+
+/**
+ * How to start a stem's source for playback from a timeline position: after
+ * delay seconds, from bufferOffset into the audio. Null once the stem is over.
+ */
+export function sourceStart(
+  position: number,
+  startOffset: number,
+  bufferDuration: number,
+): { delay: number; bufferOffset: number } | null {
+  if (position >= startOffset + bufferDuration) return null
+  if (position < startOffset) return { delay: startOffset - position, bufferOffset: 0 }
+  return { delay: 0, bufferOffset: position - startOffset }
+}
 
 export class AudioEngine {
   private ctx: AudioContext
@@ -105,7 +119,7 @@ export class AudioEngine {
         gate,
         source: null,
       })
-      this.duration = Math.max(this.duration, buffer.duration)
+      this.duration = Math.max(this.duration, stemEnd({ ...stem, duration: buffer.duration }))
     }
     this.emit('load')
     return loaded.map((l) => l.stem)
@@ -116,10 +130,10 @@ export class AudioEngine {
   }
 
   /** Decoded audio of a stem (channel 0), for analysis. */
-  getSamples(stemId: string): { data: Float32Array; sampleRate: number } | null {
+  getSamples(stemId: string): { data: Float32Array; sampleRate: number; startOffset: number } | null {
     const ch = this.channels.get(stemId)
     if (!ch) return null
-    return { data: ch.buffer.getChannelData(0), sampleRate: ch.buffer.sampleRate }
+    return { data: ch.buffer.getChannelData(0), sampleRate: ch.buffer.sampleRate, startOffset: stemStart(ch.stem) }
   }
 
   isPlaying(): boolean {
@@ -162,7 +176,8 @@ export class AudioEngine {
     const target = Math.min(this.duration, Math.max(0, t))
     if (this.playing) {
       this.stopSources()
-      this.startSources(target)
+      // Past every stem nothing starts, so no source will ever end the playback.
+      if (!this.startSources(target)) this.finish()
     } else {
       this.pausedAt = target
     }
@@ -184,16 +199,23 @@ export class AudioEngine {
     void this.ctx.close()
   }
 
-  private startSources(from: number): void {
-    this.startedAt = this.ctx.currentTime - from
+  /** Returns whether any stem has audio left to play. */
+  private startSources(from: number): boolean {
+    const now = this.ctx.currentTime
+    this.startedAt = now - from
+    let started = false
     for (const ch of this.channels.values()) {
+      const start = sourceStart(from, stemStart(ch.stem), ch.buffer.duration)
+      if (!start) continue
       const src = this.ctx.createBufferSource()
       src.buffer = ch.buffer
       src.connect(ch.envelope)
       src.onended = () => this.handleEnded()
-      src.start(0, from)
+      src.start(now + start.delay, start.bufferOffset)
       ch.source = src
+      started = true
     }
+    return started
   }
 
   private stopSources(): void {
@@ -213,6 +235,10 @@ export class AudioEngine {
 
   private handleEnded(): void {
     if (!this.playing || this.getTime() < this.duration - 0.05) return
+    this.finish()
+  }
+
+  private finish(): void {
     this.stopSources()
     this.playing = false
     this.pausedAt = this.duration
@@ -241,7 +267,7 @@ export class AudioEngine {
 
       const env = ch.envelope.gain
       env.cancelScheduledValues(now)
-      const { start, ramps } = automationFrom(track.automation, t0)
+      const { start, ramps } = automationFrom(withMuteRanges(track.automation, ch.stem.muteRanges), t0)
       env.setValueAtTime(start, now)
       if (this.playing) {
         for (const kf of ramps) env.linearRampToValueAtTime(kf.value, this.startedAt + kf.t)

@@ -1,4 +1,4 @@
-import type { EditAction, EditList, Keyframe, Stem, TrackState } from './types'
+import type { EditAction, EditList, Keyframe, MuteRange, Stem, TrackState } from './types'
 
 export const MAX_GAIN = 2
 
@@ -102,6 +102,55 @@ export function automationFrom(keyframes: Keyframe[], t0: number): { start: numb
     start: at.length > 0 ? at[at.length - 1].value : envelopeAt(keyframes, t0),
     ramps: keyframes.filter((k) => k.t > t0),
   }
+}
+
+/** Where a stem starts on the timeline. The exporter delays by whole milliseconds. */
+export function stemStart(stem: Stem): number {
+  return Math.round((stem.startOffset ?? 0) * 1000) / 1000
+}
+
+export function stemEnd(stem: Stem): number {
+  return stemStart(stem) + stem.duration
+}
+
+/** Sorted and joined. A range with no length is dropped, since it silences nothing. */
+function mergedRanges(ranges: MuteRange[]): MuteRange[] {
+  const merged: MuteRange[] = []
+  for (const [a, b] of ranges.filter(([x, y]) => y > x).sort((x, y) => x[0] - y[0])) {
+    const last = merged.at(-1)
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b)
+    else merged.push([a, b])
+  }
+  return merged
+}
+
+/** Automation with mute ranges on top, as the exporter's between(t,a,b) gives. */
+export function effectiveGainAt(keyframes: Keyframe[], ranges: MuteRange[], t: number): number {
+  return ranges.some(([a, b]) => t >= a && t <= b) ? 0 : envelopeAt(keyframes, t)
+}
+
+/**
+ * The curve to schedule for playback: automation with hard steps at the edges
+ * of each mute range. Equal times are correct here. This never goes to the
+ * backend, which holds ranges separately, and automationFrom handles the steps.
+ */
+export function withMuteRanges(keyframes: Keyframe[], ranges: MuteRange[] = []): Keyframe[] {
+  const merged = mergedRanges(ranges)
+  if (merged.length === 0) return keyframes
+  const out: Keyframe[] = []
+  let cursor = -Infinity
+  for (const [a, b] of merged) {
+    out.push(...keyframes.filter((k) => k.t > cursor && k.t < a))
+    out.push(
+      { t: a, value: envelopeAt(keyframes, a) },
+      { t: a, value: 0 },
+      { t: b, value: 0 },
+      { t: b, value: envelopeAt(keyframes, b) },
+    )
+    cursor = b
+  }
+  out.push(...keyframes.filter((k) => k.t > cursor))
+  return out
 }
 
 /** The longest curve the backend's exporter is known to render (see docs/CONTRACTS.md). */
@@ -240,7 +289,7 @@ function timedEdit(
   message: string,
 ): ParseResult {
   if (to - from < MIN_RANGE_SEC) return { actions: [], message: 'That time range is too short to edit.' }
-  const keyframes = spliceAutomation(track.automation, edit, from, to, stem.duration)
+  const keyframes = spliceAutomation(track.automation, edit, from, to, stemEnd(stem))
   if (keyframes.length > MAX_KEYFRAMES) {
     return {
       actions: [],
@@ -259,7 +308,7 @@ function percentEdit(
 ): ParseResult {
   const { percent } = quantity
   const from = range ? Number(range[1]) : at ? Number(at[1]) : null
-  const to = range ? Math.min(Number(range[2]), stem.duration) : stem.duration
+  const to = range ? Math.min(Number(range[2]), stemEnd(stem)) : stemEnd(stem)
   if (from !== null && to <= from) return { actions: [], message: 'End time must be after start time.' }
   const where = from === null ? '' : ` from ${from}s to ${to}s`
 
@@ -336,7 +385,7 @@ export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): 
   if (mute || unmute) {
     if (mute && (range || at)) {
       const from = range ? Number(range[1]) : Number(at![1])
-      const to = Math.min(range ? Number(range[2]) : stem.duration, stem.duration)
+      const to = Math.min(range ? Number(range[2]) : stemEnd(stem), stemEnd(stem))
       if (to <= from) return { actions: [], message: 'End time must be after start time.' }
       return timedEdit(stem, track, { level: 0 }, from, to, `Muting ${stem.label} from ${from}s to ${to}s.`)
     }
@@ -394,7 +443,7 @@ export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): 
     const factor = louder ? 2 : 0.3
     if (range) {
       const a = Number(range[1])
-      const b = Math.min(Number(range[2]), stem.duration)
+      const b = Math.min(Number(range[2]), stemEnd(stem))
       if (b <= a) return { actions: [], message: 'End time must be after start time.' }
       return timedEdit(stem, track, { scale: factor }, a, b, `${stem.label} ${louder ? 'louder' : 'quieter'} from ${a}s to ${b}s.`)
     }

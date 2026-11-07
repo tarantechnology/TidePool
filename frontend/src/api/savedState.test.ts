@@ -22,9 +22,11 @@ const saved: SavedStem = {
   muted: true,
   solo: true,
   automation: AUTOMATION,
+  start_offset: 2,
+  mute_ranges: [[1, 1.5]],
 }
 // What the job holds from processing, which is older than the project.
-const snapshot = { ...saved, volume: 1, muted: false, solo: false, automation: [] }
+const snapshot = { ...saved, volume: 1, muted: false, solo: false, automation: [], start_offset: 0, mute_ranges: [] }
 
 const fetchMock = vi.fn<typeof fetch>()
 const requests = (method = 'GET') =>
@@ -136,10 +138,21 @@ describe('restoring saved state', () => {
     })
   })
 
-  it('takes offsets and audio from the saved row when it can', async () => {
+  it('takes offsets, ranges and audio from the saved row, not the snapshot', async () => {
     backend({ stems: [{ ...saved, audio_url: '/audio/current' }] })
-    await load()
+    const { stems } = await load()
     expect(requests()).toContain('http://api.test:8000/audio/current')
+    expect(stems[0]).toMatchObject({ startOffset: 2, muteRanges: [[1, 1.5]] })
+  })
+
+  it('never sends the offset or the ranges', async () => {
+    backend()
+    const { source } = await load()
+    const { runner } = follow(source, source.savedTracks!)
+    runner.apply(source.syncTarget!, applyAction(source.savedTracks!, { type: 'set_gain', stemId: 's1', value: 0.8 }))
+    await vi.advanceTimersByTimeAsync(SYNC_DEBOUNCE_MS)
+    const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')
+    expect(Object.keys(JSON.parse(patch?.[1]?.body as string)).sort()).toEqual(['automation', 'muted', 'solo', 'volume'])
   })
 })
 
@@ -192,6 +205,9 @@ describe('when saved state cannot be trusted', () => {
     ['automation out of range', [{ ...saved, automation: [{ time: 1, value: 5 }] }]],
     ['automation out of order', [{ ...saved, automation: [{ time: 2, value: 1 }, { time: 2, value: 0 }] }]],
     ['something that is not a list', { stems: [] }],
+    ['a missing offset', [{ ...saved, start_offset: undefined }]],
+    ['a negative offset', [{ ...saved, start_offset: -1 }]],
+    ['a malformed mute range', [{ ...saved, mute_ranges: [[1]] }]],
   ]
   for (const [name, stems] of malformed) {
     it(`never patches on ${name}`, async () => {

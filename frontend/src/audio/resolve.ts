@@ -11,12 +11,21 @@ import {
 
 /** The part of AudioEngine this needs, so it can be tested without an AudioContext. */
 export interface SampleSource {
-  getSamples(stemId: string): { data: Float32Array; sampleRate: number } | null
+  getSamples(stemId: string): { data: Float32Array; sampleRate: number; startOffset?: number } | null
 }
 
 export interface ResolveResult {
   actions: EditAction[]
   warnings: string[]
+}
+
+/** An envelope starts at the stem's first sample. Curves are in timeline time. */
+function onTimeline(env: Float32Array, startOffset = 0): Float32Array {
+  const lead = Math.round(startOffset / DEFAULT_WINDOW_SEC)
+  if (lead === 0) return env
+  const out = new Float32Array(lead + env.length)
+  out.set(env, lead)
+  return out
 }
 
 /**
@@ -35,7 +44,7 @@ export function resolveActions(actions: EditAction[], source: SampleSource, dura
     const envs: Float32Array[] = []
     for (const id of action.sourceStemIds) {
       const samples = source.getSamples(id)
-      if (samples) envs.push(rmsEnvelope(samples.data, samples.sampleRate, DEFAULT_WINDOW_SEC))
+      if (samples) envs.push(onTimeline(rmsEnvelope(samples.data, samples.sampleRate, DEFAULT_WINDOW_SEC), samples.startOffset))
       else warnings.push(`No audio for source stem ${id}.`)
     }
     if (envs.length === 0) {

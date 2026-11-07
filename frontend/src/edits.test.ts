@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyAction,
   automationFrom,
+  effectiveGainAt,
   envelopeAt,
   initialTracks,
   isAudible,
@@ -10,6 +11,9 @@ import {
   normalizeKeyframes,
   parsePrompt,
   spliceAutomation,
+  stemEnd,
+  stemStart,
+  withMuteRanges,
 } from './edits'
 import type { Keyframe, Stem, TrackState } from './types'
 
@@ -761,5 +765,74 @@ describe('timed edits on the stem boundaries', () => {
     expect(increasing(toEnd)).toBe(true)
     expect(toEnd.at(-1)).toEqual({ t: 20, value: 0 })
     expect(envelopeAt(toEnd, 10)).toBeCloseTo(envelopeAt(start[2].automation, 10), 9)
+  })
+})
+
+describe('mute ranges on top of automation', () => {
+  const curve: Keyframe[] = [
+    { t: 1, value: 0.5 },
+    { t: 5, value: 1.5 },
+  ]
+
+  it('is silent inside a range, inclusive at both ends like between()', () => {
+    for (const t of [2, 2.5, 3]) expect(effectiveGainAt(curve, [[2, 3]], t)).toBe(0)
+  })
+
+  it('follows the curve just outside a range', () => {
+    expect(effectiveGainAt(curve, [[2, 3]], 1.999)).toBeCloseTo(envelopeAt(curve, 1.999), 9)
+    expect(effectiveGainAt(curve, [[2, 3]], 3.001)).toBeCloseTo(envelopeAt(curve, 3.001), 9)
+  })
+
+  it('applies with no automation', () => {
+    expect(effectiveGainAt([], [[2, 3]], 2.5)).toBe(0)
+    expect(effectiveGainAt([], [[2, 3]], 4)).toBe(1)
+  })
+
+  it('schedules the same gain everywhere but the exact edges', () => {
+    const ranges: Array<[number, number]> = [
+      [2, 3],
+      [2.5, 4],
+      [6, 7],
+    ]
+    const scheduled = withMuteRanges(curve, ranges)
+    for (let t = 0; t <= 8; t += 0.0137) {
+      if (ranges.some(([a, b]) => Math.abs(t - a) < 1e-9 || Math.abs(t - b) < 1e-9)) continue
+      expect(envelopeAt(scheduled, t), `t=${t}`).toBeCloseTo(effectiveGainAt(curve, ranges, t), 9)
+    }
+  })
+
+  it('starts silent from inside a range and back on the curve after it', () => {
+    const scheduled = withMuteRanges(curve, [[2, 3]])
+    expect(automationFrom(scheduled, 2.5).start).toBe(0)
+    expect(automationFrom(scheduled, 2).start).toBe(0)
+    expect(automationFrom(scheduled, 4).start).toBeCloseTo(envelopeAt(curve, 4), 9)
+  })
+
+  it('does not change a curve with no ranges, and ignores a range with no length', () => {
+    expect(withMuteRanges(curve)).toBe(curve)
+    expect(withMuteRanges(curve, [])).toBe(curve)
+    expect(withMuteRanges(curve, [[3, 3]])).toBe(curve)
+    expect(withMuteRanges(curve, [[4, 2]])).toBe(curve)
+  })
+})
+
+describe('stems placed on the timeline', () => {
+  const late: Stem = { ...stem('s', 'Siren'), duration: 10, startOffset: 4 }
+  const tracks = initialTracks([late])
+
+  it('rounds the start to whole milliseconds, as the exporter delay does', () => {
+    expect(stemStart({ ...late, startOffset: 1.23456 })).toBe(1.235)
+    expect(stemStart(stem('x', 'x'))).toBe(0)
+    expect(stemEnd(late)).toBe(14)
+  })
+
+  it('takes the stem boundary from the timeline end, not the length', () => {
+    const [action] = parsePrompt('mute the siren from 12 to 99 seconds', [late], tracks).actions
+    expect(action.type === 'set_automation' && action.keyframes.at(-1)).toEqual({ t: 14, value: 0 })
+  })
+
+  it('accepts a range past the length but inside the placed stem', () => {
+    expect(parsePrompt('make the siren quieter from 11 to 13 seconds', [late], tracks).actions).toHaveLength(1)
+    expect(parsePrompt('set the siren to 30% at 12 seconds', [late], tracks).actions).toHaveLength(1)
   })
 })

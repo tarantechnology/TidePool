@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { applyAction, envelopeAt, initialTracks, parsePrompt } from '../src/edits'
 import { buildFilterGraph } from '../src/export/ffmpeg'
-import type { Keyframe, Stem, TrackState } from '../src/types'
+import type { Keyframe, MuteRange, Stem, TrackState } from '../src/types'
 
 // Renders through the real ffmpeg, so the preview math is compared against the
 // real filter. Lives in server/ because it needs Node types, which the browser
@@ -191,4 +191,72 @@ describe.skipIf(!hasFfmpeg)('timed edits on the stem boundaries, rendered by ffm
       for (const t of loud) expect(Math.abs(rmsAround(out, t) - base), `t=${t}`).toBeLessThan(0.03 * base)
     })
   }
+})
+
+describe.skipIf(!hasFfmpeg)('offsets and mute ranges, rendered by ffmpeg', () => {
+  const late = (over: Partial<Stem>): Stem => ({ ...stem('a', 'a.wav'), duration: 3, ...over })
+
+  function shortSine(): void {
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=${SR}:duration=3`, join(dir, 'a.wav')])
+  }
+
+  it('starts a stem at its offset', () => {
+    shortSine()
+    const out = render([track('a')], [late({ startOffset: 2 })])
+    expect(rmsAround(out, 1)).toBe(0)
+    expect(rmsAround(out, 1.9)).toBe(0)
+    expect(rmsAround(out, 2.1)).toBeGreaterThan(0.01)
+    expect(rmsAround(out, 4.9)).toBeGreaterThan(0.01)
+    expect(out.length / SR).toBeCloseTo(5, 1)
+  })
+
+  it('applies automation in timeline time, not stem time', () => {
+    shortSine()
+    const curve: Keyframe[] = [
+      { t: 2.9, value: 1 },
+      { t: 3, value: 0 },
+    ]
+    const out = render([track('a', { automation: curve })], [late({ startOffset: 2 })])
+    expect(rmsAround(out, 2.5)).toBeGreaterThan(0.01)
+    expect(rmsAround(out, 4)).toBe(0)
+  })
+
+  it('silences a mute range in timeline time', () => {
+    shortSine()
+    const ranges: MuteRange[] = [[3, 4]]
+    const out = render([track('a')], [late({ startOffset: 2, muteRanges: ranges })])
+    expect(rmsAround(out, 2.5)).toBeGreaterThan(0.01)
+    expect(rmsAround(out, 3.5)).toBe(0)
+    expect(rmsAround(out, 4.5)).toBeGreaterThan(0.01)
+  })
+
+  it('combines a mute range with automation', () => {
+    sine('a.wav', 440)
+    const curve: Keyframe[] = [
+      { t: 0, value: 0.5 },
+      { t: 6, value: 0.5 },
+    ]
+    const stems = [stem('a', 'a.wav')]
+    const base = rmsAround(render([track('a')], stems), 3)
+    const out = render([track('a', { automation: curve })], [{ ...stems[0], muteRanges: [[2, 3]] }])
+    expect(rmsAround(out, 2.5)).toBe(0)
+    expect(rmsAround(out, 4)).toBeCloseTo(base * 0.5, 2)
+  })
+
+  it('matches the filter order of app/media.py on the same input', () => {
+    shortSine()
+    const reference = render([track('a')], [late({ startOffset: 2, muteRanges: [[3, 4]] })])
+    const out = join(dir, 'media-offset.f32')
+    const expr = "(1.0)*if(between(t,3.0,4.0),0,1)"
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y', '-i', join(dir, 'a.wav'),
+      '-filter_complex', `[0:a]adelay=2000:all=1,volume='${expr}':eval=frame[a]`,
+      '-map', '[a]', '-ac', '1', '-f', 'f32le', out,
+    ])
+    const bytes = readFileSync(out)
+    const shaped = new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.length / 4))
+    for (const t of [1, 2.5, 3.5, 4.5]) {
+      expect(Math.abs(rmsAround(shaped, t) - rmsAround(reference, t)), `t=${t}`).toBeLessThan(0.005)
+    }
+  })
 })

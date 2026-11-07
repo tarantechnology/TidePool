@@ -24,7 +24,7 @@ separation-quality results** to report, and nothing in this document should be r
 | Contract version | `2025-11-draft-1` (returned in every response and by `/health`) |
 | Contract details | [`docs/contracts/audio_contracts.md`](contracts/audio_contracts.md) — Contracts A–E |
 | Editor fixture | `audio-service/fixtures/editor/` + `scripts/make_editor_fixture.py` |
-| Test suite | `cd audio-service && .venv/bin/python -m pytest -q` — passes on CPU with the mock backend (130 tests at the time of writing); CI: `.github/workflows/audio-service.yml` |
+| Test suite | `cd audio-service && .venv/bin/python -m pytest -q` — passes on CPU with the mock backend (145 tests at the time of writing); CI: `.github/workflows/audio-service.yml` |
 
 ---
 
@@ -33,9 +33,9 @@ separation-quality results** to report, and nothing in this document should be r
 | # | Test | Status | Why |
 | --- | --- | --- | --- |
 | 1 | Editor → backend → audio (Person 3) | **Blocked** — substituted | No Person 3 code exists in the repository. Substituted by `audio-service/fixtures/editor/` (a Contract C manifest + playable WAVs from `scripts/make_editor_fixture.py`) and `tests/test_editor_fixture.py`, which pin the payload the editor will consume. Executed with the **mock** backend. |
-| 2 | Vision → audio (Person 2) | **Blocked** | Two independent blockers: (a) no checkpoint access and no CUDA, so visually prompted inference cannot run at all; (b) nobody delivers the original video bytes or per-frame masks to this service yet — Person 4 forwards only the extracted WAV and the JSON `visual_prompt`, and Person 2's exports carry no media paths (Open Questions 1 and 2). The *translation* half is implemented and unit-tested against synthetic Person 2 documents (`tests/test_visual_prompts.py`); the model half is untested. |
-| 3 | Backend → audio (Person 4) | **Executed, mock backend** | `tests/test_integration_person4_backend.py` imports Person 4's real `app/` with `INFERENCE_ADAPTER=http` against a live instance of this service and walks create project → upload → `/process` → poll job → fetch each stem → `PATCH` volume/automation → MP4 export. Stem duration matches the source, 48 kHz stereo, export succeeds. Person 4's code is imported, never modified. |
-| 4 | Cinematic demo (all four) | **Audio half executed, mock backend** | The same test renders a synthetic "two voices + siren over video" clip and takes it through separation, a stem edit and an MP4 export. The editor half needs Person 3; the visual-prompt half needs Test 2's blockers cleared. |
+| 2 | Vision → audio (Person 2) | **Translation half executed with Person 2's real output; model half blocked** | `audio-service/fixtures/vision/` holds `detections.json` + `selection.json` produced by Person 2's actual `yolo26n-seg` + ByteTrack pipeline on their documented pedestrian clip; `tests/test_person2_artifacts.py` drives them through our translator, frame/mask preparation and `/separate` (mock backend) with zero mismatches. Speaker-specific separation itself cannot run: no checkpoint access, no CUDA, and nothing delivers the original video or masks to the service in production yet (Open Questions 1 and 2). |
+| 3 | Backend → audio (Person 4) | **Executed, mock backend, in-process and in Docker** | `tests/test_integration_person4_backend.py` imports Person 4's real `app/` with `INFERENCE_ADAPTER=http` against a live instance of this service. Additionally the compose overlay was built and run (`docker compose -f compose.yaml -f audio-service/compose.audio.yaml up`) and `scripts/e2e_compose.py` walked create project → upload → `/process` → poll → stem fetch → automation → webhook → MP4 export against the two containers. Stem duration matches the extracted audio, 48 kHz stereo, export probes as h264 + aac with the source duration. Person 4's code is imported, never modified. |
+| 4 | Cinematic demo (all four) | **Audio half executed, mock backend, in Docker** | The same compose run used a synthetic "two voices + siren over video" clip through separation, a stem automation curve, the natural-language webhook and an MP4 export. The editor half needs Person 3; the visual-prompt half needs Test 2's blockers cleared. |
 
 Every response produced by the mock backend carries `model.is_mock: true` and a warning
 saying the stems are band-pass filtered copies of the mixture, not separation.

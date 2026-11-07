@@ -21,6 +21,8 @@ sam = [
     "torchaudio>=2.4",
     "torchcodec>=0.2",
     "huggingface_hub>=0.25",
+    # Upstream requires >=4.54 and was written against 4.x; an unconstrained resolve picks 5.x.
+    "transformers>=4.54,<5",
     "sam_audio @ git+https://github.com/facebookresearch/sam-audio.git",
 ]
 

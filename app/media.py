@@ -19,8 +19,11 @@ def separate(audio, directory, payload):
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
     url = os.getenv('SAM_AUDIO_SERVICE_URL')
     if not url: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
-    with open(audio, 'rb') as f:
-        response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','600')))
+    try:
+        with open(audio, 'rb') as f:
+            response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
+    except httpx.TimeoutException as exc:
+        raise RuntimeError('Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS') from exc
     response.raise_for_status()
     result = response.json()
     if not isinstance(result.get('stems'), list) or not result['stems']: raise ValueError('Inference returned no stems')

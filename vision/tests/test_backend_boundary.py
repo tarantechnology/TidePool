@@ -47,7 +47,7 @@ def run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override):
     assert client.put(f'/api/projects/{pid}/visual-metadata', json=stored).status_code == 401
     assert client.put(f'/api/projects/{pid}/visual-metadata', headers=headers, json=stored).status_code == 200
     assert client.get(f'/api/projects/{pid}',headers=headers).json()['visual_metadata'] == stored
-    body = {'prompts':[], **({'visual_prompt':selection} if explicit_override else {})}
+    body = {'prompts':['person'], **({'visual_prompt':selection} if explicit_override else {})}
     response = client.post(f'/api/projects/{pid}/process', headers=headers, json=body)
     assert response.status_code == 202
     assert work_once()

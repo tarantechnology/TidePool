@@ -144,11 +144,11 @@ def decode(data: bytes | None = None, path: Path | None = None, *, target_rate: 
             fast = _try_wave(Path(path).read_bytes())
         except OSError:
             fast = None
+    if fast is not None and fast[0].shape[0] > max_channels:
+        fast = None  # let ffmpeg do a proper matrix downmix (-ac)
     if fast is not None:
         samples, rate = fast
         source_channels = samples.shape[0]
-        if samples.shape[0] > max_channels:
-            samples = samples.mean(axis=0, keepdims=True) if max_channels == 1 else np.stack([samples[0], samples[1:].mean(axis=0)])
         if rate != target_rate:
             samples = resample(samples, rate, target_rate, ffmpeg=ffmpeg, timeout=timeout)
         return DecodedAudio(np.ascontiguousarray(samples, dtype=np.float32), target_rate, rate, source_channels)

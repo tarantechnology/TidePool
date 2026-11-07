@@ -64,7 +64,7 @@ def _interval(selection: dict[str, Any], source_duration: float) -> tuple[float,
     return (start, end) if end > start else None
 
 
-def _load_detections(raw: dict[str, Any], settings: Settings, warnings: list[str]) -> dict[str, Any] | None:
+def _load_detections(raw: dict[str, Any], settings: Settings, warnings: list[str], workdir: Path | None = None) -> dict[str, Any] | None:
     detections = raw.get("detections")
     if isinstance(detections, dict):
         return detections
@@ -72,7 +72,7 @@ def _load_detections(raw: dict[str, Any], settings: Settings, warnings: list[str
     if not ref:
         return None
     try:
-        path = resolve_ref(str(ref), settings)
+        path = resolve_ref(str(ref), settings, workdir=workdir)
         data = json.loads(Path(path).read_text())
     except AudioServiceError as exc:
         warnings.append(f"detections_ref ignored: {exc.message}")
@@ -130,7 +130,7 @@ def _frame_masks(detections: dict[str, Any], track_id: int | None, detection_id:
     return masks, span
 
 
-def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | None, source_duration: float, settings: Settings, backend_supports_visual: bool) -> VisualTranslation:
+def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | None, source_duration: float, settings: Settings, backend_supports_visual: bool, workdir: Path | None = None) -> VisualTranslation:
     if not raw:
         return VisualTranslation(None, [])
     warnings: list[str] = []
@@ -144,7 +144,7 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
 
     if isinstance(raw.get("selection"), dict) or "detections" in raw or "detections_ref" in raw:
         selection = raw.get("selection") if isinstance(raw.get("selection"), dict) else None
-        detections = _load_detections(raw, settings, warnings)
+        detections = _load_detections(raw, settings, warnings, workdir)
     elif _is_selection(raw):
         selection = raw
     elif _is_detections(raw):
@@ -220,9 +220,11 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
         warnings.append("backend does not support visual prompting; using text and span anchors only")
         return VisualTranslation(None, anchors, warnings)
     if interval is None:
-        interval = (0.0, source_duration)
-    video_path = resolve_ref(str(video_ref), settings)
-    mask_path = resolve_ref(str(mask_video_ref), settings) if mask_video_ref else None
+        plus = [(a, b) for _, a, b in anchors]
+        # Generic shape: the union of the given time ranges is where the model should look.
+        interval = (min(a for a, _ in plus), max(b for _, b in plus)) if plus else (0.0, source_duration)
+    video_path = resolve_ref(str(video_ref), settings, workdir=workdir)
+    mask_path = resolve_ref(str(mask_video_ref), settings, workdir=workdir) if mask_video_ref else None
     visual = VisualInput(
         video_path=str(video_path), interval=interval, mask_video_path=str(mask_path) if mask_path else None, frame_masks=frame_masks,
         frame_rate=float(frame_rate) if frame_rate else None, frame_size=frame_size, object_id=str(object_id) if object_id else None,

@@ -89,7 +89,7 @@ class Engine:
         return {"backend": self.backend.name, "is_mock": self.backend.is_mock, "loaded": self.backend.loaded, "load_error": self._load_error, **self.backend.info()}
 
     # ------------------------------------------------------------------ translation
-    def translate_visual(self, prompt: PromptSpec, shared: dict[str, Any] | None, metadata: SeparationMetadata, source_duration: float, warnings: list[str]) -> tuple[VisualInput | None, list[Anchor]]:
+    def translate_visual(self, prompt: PromptSpec, shared: dict[str, Any] | None, metadata: SeparationMetadata, source_duration: float, warnings: list[str], workdir: Path | None = None) -> tuple[VisualInput | None, list[Anchor]]:
         """Translate Person 2's visual guidance into what the model actually consumes.
 
         Time ranges / selection intervals become ``+`` span anchors. Per-frame masks plus a
@@ -97,7 +97,12 @@ class Engine:
         but cannot steer the model, so it is reported as a warning rather than an error.
         """
         raw = prompt.visual_prompt.model_dump(exclude_none=True) if prompt.visual_prompt else shared
-        translation = translate_visual_prompt(raw, source=metadata.source, source_duration=source_duration, settings=self.settings, backend_supports_visual=self.backend.supports_visual)
+        try:
+            translation = translate_visual_prompt(raw, source=metadata.source, source_duration=source_duration, settings=self.settings, backend_supports_visual=self.backend.supports_visual, workdir=workdir)
+        except AudioServiceError:
+            raise
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            raise InvalidRequest(f"visual_prompt is malformed: {type(exc).__name__}: {exc}") from exc
         warnings.extend(translation.warnings)
         return translation.visual, translation.anchors
 
@@ -110,10 +115,12 @@ class Engine:
             raise UnsupportedOperation("backend cannot predict spans")
         stereo = options.stereo_mode or self.settings.stereo_mode
         chunk = self.settings.chunk_seconds if options.chunk_seconds is None else options.chunk_seconds
+        if chunk and chunk <= 2 * self.settings.chunk_overlap_seconds:
+            raise InvalidRequest(f"options.chunk_seconds must exceed {2 * self.settings.chunk_overlap_seconds:g}s (twice the crossfade overlap) or be 0", details={"chunk_overlap_seconds": self.settings.chunk_overlap_seconds})
         return BackendOptions(predict_spans=predict, reranking_candidates=rerank, seed=options.seed), stereo, chunk
 
     # ------------------------------------------------------------------ main entry
-    def separate(self, audio: DecodedAudio, metadata: SeparationMetadata) -> EngineResult:
+    def separate(self, audio: DecodedAudio, metadata: SeparationMetadata, workdir: Path | None = None) -> EngineResult:
         warnings: list[str] = []
         try:
             prompts = metadata.resolved_prompts(self.settings.max_prompts)
@@ -126,7 +133,6 @@ class Engine:
         if audio.frames == 0:
             raise InvalidRequest("audio is empty")
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
-        self.ensure_loaded()
         if self.backend.is_mock:
             warnings.append("MOCK backend: stems are band-pass filtered copies of the mixture, not real separation")
 
@@ -136,8 +142,11 @@ class Engine:
         model_residuals: list[np.ndarray] = []
         chunked = False
         with self._lock:
+            self.ensure_loaded()  # under the lock so concurrent first requests load the model once
             for spec in prompts:
-                visual, visual_anchors = self.translate_visual(spec, metadata.visual_prompt, metadata, audio.duration, warnings)
+                visual, visual_anchors = self.translate_visual(spec, metadata.visual_prompt, metadata, audio.duration, warnings, workdir)
+                if not spec.text and visual is None:
+                    raise InvalidRequest("prompt has no text and its visual guidance could not be used for separation: " + ("; ".join(warnings[-3:]) or "no visual guidance given"))
                 anchors: list[Anchor] = [(a.token, a.start, min(a.end, audio.duration)) for a in spec.anchors if a.start < audio.duration] + visual_anchors
                 if anchors and not self.backend.supports_spans:
                     warnings.append("backend ignores span anchors")
@@ -310,7 +319,10 @@ def _merge_spans(spans: list[tuple[float, float]], gap: float = 0.05) -> list[tu
 
 
 def write_stem_file(root: Path, request_id: str, stem: StemArrays, data: bytes) -> Path:
-    directory = root / request_id
+    root = root.resolve()
+    directory = (root / request_id).resolve()
+    if directory.parent != root:
+        raise InvalidRequest("request_id must be a single path segment")
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{stem.stem_id}.wav"
     path.write_bytes(data)

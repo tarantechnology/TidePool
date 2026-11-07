@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -107,9 +108,9 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         except ValidationError as exc:
             raise InvalidRequest("invalid metadata", details={"errors": json.loads(exc.json())}) from exc
 
-    def _respond(audio: DecodedAudio, metadata: SeparationMetadata) -> SeparationResponse:
+    def _respond(audio: DecodedAudio, metadata: SeparationMetadata, workdir: Path) -> SeparationResponse:
         request_id = metadata.request_id or uuid.uuid4().hex
-        result = engine.separate(audio, metadata)
+        result = engine.separate(audio, metadata, workdir=workdir)
         stems: list[StemResult] = []
         for stem in result.stems:
             wav = encode_wav_pcm16(stem.samples, audio.sample_rate)
@@ -132,28 +133,32 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     @app.post("/separate", response_model=SeparationResponse, response_model_exclude_none=True)
     def separate(audio: UploadFile = File(...), metadata: str = Form("{}")) -> SeparationResponse:
         meta = _parse_metadata(metadata)
-        chunks: list[bytes] = []
-        size = 0
-        while True:
-            chunk = audio.file.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > settings.max_input_bytes:
-                raise InvalidMedia("audio exceeds AUDIO_MAX_INPUT_BYTES", details={"max_input_bytes": settings.max_input_bytes})
-            chunks.append(chunk)
-        if size == 0:
-            raise InvalidMedia("audio upload is empty")
-        decoded = decode(data=b"".join(chunks), ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
-        return _respond(decoded, meta)
+        # Spool to a real file: MP4/MOV with a trailing moov atom cannot be demuxed from a pipe.
+        with tempfile.TemporaryDirectory(prefix="sam-audio-req-") as tmp:
+            workdir = Path(tmp)
+            suffix = Path(audio.filename or "").suffix.lower() or ".bin"
+            upload = workdir / ("upload" + suffix)
+            size = 0
+            with upload.open("wb") as out:
+                while chunk := audio.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > settings.max_input_bytes:
+                        raise InvalidMedia("audio exceeds AUDIO_MAX_INPUT_BYTES", details={"max_input_bytes": settings.max_input_bytes})
+                    out.write(chunk)
+            if size == 0:
+                raise InvalidMedia("audio upload is empty")
+            decoded = decode(path=upload, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
+            return _respond(decoded, meta, workdir)
 
     @app.post("/v1/separate", response_model=SeparationResponse, response_model_exclude_none=True)
     def separate_ref(body: SeparationRequest) -> SeparationResponse:
-        path = resolve_ref(body.audio_ref, settings)
-        if path.stat().st_size > settings.max_input_bytes:
-            raise InvalidMedia("referenced media exceeds AUDIO_MAX_INPUT_BYTES")
-        decoded = decode(path=Path(path), ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
-        return _respond(decoded, SeparationMetadata.model_validate(body.model_dump(exclude={"audio_ref"})))
+        with tempfile.TemporaryDirectory(prefix="sam-audio-req-") as tmp:
+            workdir = Path(tmp)
+            path = resolve_ref(body.audio_ref, settings, workdir=workdir)
+            if path.stat().st_size > settings.max_input_bytes:
+                raise InvalidMedia("referenced media exceeds AUDIO_MAX_INPUT_BYTES", details={"max_input_bytes": settings.max_input_bytes})
+            decoded = decode(path=Path(path), ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
+            return _respond(decoded, SeparationMetadata.model_validate(body.model_dump(exclude={"audio_ref"})), workdir)
 
     return app
 

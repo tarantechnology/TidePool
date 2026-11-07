@@ -106,11 +106,9 @@ class PromptSpec(BaseModel):
     def normalise_text(cls, value: str) -> str:
         return normalise_description(value)
 
-    @model_validator(mode="after")
-    def has_some_prompt(self) -> "PromptSpec":
-        if not self.text and not (self.visual_prompt and self.visual_prompt.has_model_input()):
-            raise ValueError("a prompt needs a text description or a visual prompt with video_ref and mask_video_ref")
-        return self
+    # A prompt may be text-less when visual guidance is supplied (per prompt or shared through
+    # ``metadata.visual_prompt``). Whether that guidance is actually usable is only known after
+    # translation, so the engine performs that check and reports why it failed.
 
     @property
     def display_name(self) -> str:
@@ -158,7 +156,7 @@ class SeparationMetadata(BaseModel):
     anchors: list[Anchor] = Field(default_factory=list, description="Span anchors applied to every prompt")
     options: InferenceOptions = Field(default_factory=InferenceOptions)
     asset_id: str | None = None
-    request_id: str | None = Field(default=None, max_length=128)
+    request_id: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
 
     def resolved_prompts(self, max_prompts: int) -> list[PromptSpec]:
         specs: list[PromptSpec] = []

@@ -106,6 +106,8 @@ class Settings:
             raise ValueError("AUDIO_MAX_VISUAL_INTERVAL_SECONDS must be positive")
         if self.chunk_seconds < 0:
             raise ValueError("AUDIO_CHUNK_SECONDS must not be negative")
+        if self.chunk_overlap_seconds <= 0:
+            raise ValueError("AUDIO_CHUNK_OVERLAP_SECONDS must be positive")
         if self.chunk_seconds and self.chunk_seconds <= 2 * self.chunk_overlap_seconds:
             raise ValueError("AUDIO_CHUNK_SECONDS must exceed twice AUDIO_CHUNK_OVERLAP_SECONDS")
         if self.visual_mask_mode not in {"keep_object", "notebook"}:

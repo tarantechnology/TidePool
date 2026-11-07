@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { getJob, patchStem } from '../src/api/backend'
+import { getJob, patchStem, toTrackState } from '../src/api/backend'
 import { pollJob, toJobStatus } from '../src/api/jobs'
 import { HttpStemSource } from '../src/api/stemSources'
 import { applyAction, normalizeKeyframes, parsePrompt } from '../src/edits'
@@ -124,7 +124,7 @@ describe.skipIf(!reachable)(`backend contract${skipReason}`, () => {
     await pollJob(async () => toJobStatus(await getJob(config, jobId)), { intervalMs: POLL_MS })
     const [saved] = await (await fetch(`${url}/api/projects/${id}/stems`, { headers: auth })).json()
     const stem: Stem = { id: saved.id, label: 'tone', kind: 'sfx', url: '', duration: 3 }
-    return { id, config, auth, stem }
+    return { id, config, auth, stem, jobId }
   }
 
   async function exportWav(id: string, auth: Record<string, string>): Promise<Float32Array> {
@@ -179,6 +179,29 @@ describe.skipIf(!reachable)(`backend contract${skipReason}`, () => {
       for (const t of loud) expect(rmsAt(out, t), `loud at ${t}`).toBeGreaterThan(0.01)
     }, 30_000)
   }
+
+  it('restores saved state through the editor mapper', async () => {
+    const { id, config, auth, stem, jobId } = await project3s()
+    const track: TrackState = {
+      stemId: stem.id,
+      gain: 0.5,
+      muted: true,
+      solo: true,
+      automation: [
+        { t: 0.5, value: 1.5 },
+        { t: 2, value: 0.25 },
+      ],
+    }
+    await patchStem(config, id, track)
+    const [row] = await (await fetch(`${url}/api/projects/${id}/stems`, { headers: auth })).json()
+    expect(toTrackState(row)).toEqual(track)
+
+    const source = new HttpStemSource(config, jobId)
+    await source.load()
+    source.dispose()
+    expect(source.savedTracks).toEqual([track])
+    expect(source.syncTarget).toEqual({ config, projectId: id })
+  }, 30_000)
 
   it('reports a missing job through the client error path', async () => {
     await expect(getJob({ baseUrl: url, token: 'wrong' }, 'missing')).rejects.toThrow(

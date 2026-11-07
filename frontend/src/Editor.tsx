@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 import { createAgent } from './agent'
 import type { SyncTarget } from './api/backend'
+import { loadFromSource } from './api/loadStems'
 import { FileStemSource, isAudioFile, isVideoFile, MockStemSource } from './api/stemSources'
 import type { StemSource } from './api/stemSources'
 import { AudioEngine } from './audio/engine'
@@ -61,7 +62,7 @@ export default function Editor() {
   const loadRequest = useRef(0)
   const { tracks, kinds } = history.present
   const stems = useMemo(() => mergeKinds(baseStems, kinds), [baseStems, kinds])
-  const syncError = useStemSync(syncTarget, tracks, setLoadError)
+  const { syncError, flush } = useStemSync(syncTarget, tracks, setLoadError)
   const chipErrors = [syncError, loadError, syncIssue].filter(Boolean)
   const tracksRef = useRef<TrackState[]>([])
 
@@ -120,12 +121,10 @@ export default function Editor() {
       setLoadError('')
       setStatus('loading')
       try {
-        const sourceStems = await source.load()
-        if (!isLatest()) return
-        const loaded = await engine.replaceStems(sourceStems)
-        if (!loaded || !isLatest()) return
-        setBaseStems(loaded)
-        setHistory(createHistory(createEditorState(initialTracks(loaded))))
+        const loaded = await loadFromSource(source, engine, isLatest, flush)
+        if (!loaded) return
+        setBaseStems(loaded.stems)
+        setHistory(createHistory(createEditorState(loaded.tracks)))
         setLog([])
         setStemsLabel(label)
         setSyncTarget(source.syncTarget ?? null)
@@ -138,7 +137,7 @@ export default function Editor() {
         if (isLatest()) setStatus('ready')
       }
     },
-    [engine],
+    [engine, flush],
   )
 
   const loadFiles = useCallback(

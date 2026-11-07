@@ -53,6 +53,16 @@ The upstream backend does not take an edit list. It stores the same data per ste
 
 The backend stores automation and app/media.py renders it the way `envelopeAt` does: linear segments, holding both ends, multiplied by volume. So a curve maps across exactly.
 
+### Restoring saved state
+
+A job result is a snapshot from processing, so `HttpStemSource` also reads `GET /api/projects/{id}/stems` and starts the editor and the sync baseline from those rows through `toTrackState`. Loading sends nothing, and a later edit is built on the saved values. Backend `volume` and `gain` share the range 0 to 2 (`MAX_GAIN`), so volume maps across unchanged. A saved curve is not rewritten, even if its keyframes are closer than the 1ms the editor uses.
+
+Queued edits land before that read (`loadFromSource`), so reopening a job right after an edit cannot start behind the backend.
+
+If the read fails, the job has no `project_id`, the job's stems are no longer the project's stems (processing again replaces them), or a row is missing a field or out of range, the stems still play from the job snapshot, but sync stays off: no PATCH at all, and the status chip says why. A patch built from guessed defaults would overwrite saved values.
+
+Saved state is read once, when stems load. A webhook edit made while the editor is open is not seen, and the next PATCH for that stem overwrites its volume, mute, solo and automation with the editor's.
+
 ### Steps
 
 The backend requires strictly increasing keyframe times, so it cannot hold an exact step. `normalizeKeyframes` in `src/edits.ts` makes every curve storable: sorted, values clamped to 0 to 2, and at least 1ms between keyframes, so a step becomes a 1ms ramp. Set_automation applies it, and so do the parser, agent validation and intensity output, so the preview plays exactly the curve that is sent. Curves restored from the backend are not rewritten: they already pass its validation.
@@ -144,7 +154,7 @@ The preview also applies a 0.7 master gain that neither exporter applies, so pre
 1. CORS. `app/main.py` has no CORS middleware, so browser calls with an Authorization header from `http://localhost:5173` should fail preflight (read from the code, not tested). In development the Vite proxy avoids this: set `VITE_API_BASE_URL=/api`. Without the proxy, and for any deployed build, Person 4 must add `CORSMiddleware` allowing the editor's origin.
 2. Whether the `volume=...:eval=frame` lag above should be fixed in `app/media.py`.
 3. `start_offset` and `mute_ranges` exist on backend stems. The editor has no equivalent, so it neither shows nor preserves their effect. `mute_ranges` set through the webhook will not appear in the preview.
-4. Stored stem state is not loaded into the editor. It starts every job at unity gain with no automation, so a first edit overwrites a stem's stored volume, mute, solo and automation with the editor's.
+4. Saved stem state is restored on load (see "Restoring saved state"), but only once. Whether the editor should notice webhook edits made while it is open.
 5. The agent ownership question above.
 6. Whether `project_id` on `GET /api/jobs/{id}` is part of the contract. Editor sync depends on it.
 7. Exact steps: resolved in the editor with a 1ms ramp (see "Steps"). `app/media.py` needs no change for this. Nothing has been confirmed against a running backend from this repo, but `server/backend-contract.test.ts` covers both boundary cases through export. It needs `BACKEND_URL`.

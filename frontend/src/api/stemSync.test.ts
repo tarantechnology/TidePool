@@ -170,6 +170,50 @@ describe('no edit can reach that guard', () => {
   })
 })
 
+describe('flush', () => {
+  const realTimers = async <T>(run: () => Promise<T>) => {
+    vi.useRealTimers()
+    return run()
+  }
+
+  it('sends a write waiting on the debounce and resolves once it landed', async () => {
+    await realTimers(async () => {
+      const sync = new StemSync(target, [track('s1')], () => {})
+      sync.update([track('s1', { gain: 0.5 })])
+      expect(fetchMock).not.toHaveBeenCalled()
+      await sync.flush()
+      expect(calls().map((c) => c.body)).toMatchObject([{ volume: 0.5 }])
+    })
+  })
+
+  it('also sends an edit made while a write was in flight', async () => {
+    await realTimers(async () => {
+      const sync = new StemSync(target, [track('s1')], () => {})
+      sync.update([track('s1', { gain: 0.5 })])
+      const first = sync.flush()
+      sync.update([track('s1', { gain: 0.25 })])
+      await first
+      expect(calls().map((c) => c.body)).toMatchObject([{ volume: 0.5 }, { volume: 0.25 }])
+    })
+  })
+
+  it('finishes when a write fails, and the failure still shows', async () => {
+    await realTimers(async () => {
+      fetchMock.mockResolvedValue(new Response(null, { status: 500 }))
+      const onError = vi.fn()
+      const sync = new StemSync(target, [track('s1')], onError)
+      sync.update([track('s1', { gain: 0.5 })])
+      await sync.flush()
+      expect(onError).toHaveBeenLastCalledWith(expect.stringContaining('500'))
+    })
+  })
+
+  it('does nothing without a sync', async () => {
+    await new StemSyncRunner(() => {}, () => {}).flush()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('the guard against curves the backend would reject', () => {
   // Nothing in the editor builds this any more. See the test after this block.
   const stepped = [
@@ -508,17 +552,14 @@ describe('only job stems sync', () => {
 
   it('syncs to the project named by the loaded job', async () => {
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }))
-    fetchMock.mockImplementation(async (input) =>
-      String(input).endsWith('/api/jobs/j1')
-        ? new Response(
-            JSON.stringify({
-              status: 'completed',
-              project_id: 'p9',
-              stems: [{ id: 's1', name: 'dog', duration: 2, audio_url: '/a' }],
-            }),
-          )
-        : ok(),
-    )
+    const row = { id: 's1', name: 'dog', duration: 2, audio_url: '/a' }
+    const saved = { ...row, volume: 1, muted: false, solo: false, automation: [] }
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).endsWith('/api/jobs/j1')) {
+        return new Response(JSON.stringify({ status: 'completed', project_id: 'p9', stems: [row] }))
+      }
+      return String(input).endsWith('/api/projects/p9/stems') ? new Response(JSON.stringify([saved])) : ok()
+    })
     const source = new HttpStemSource(target.config, 'j1')
     await source.load()
     expect(source.syncTarget).toEqual({ config: target.config, projectId: 'p9' })

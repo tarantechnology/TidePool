@@ -1,7 +1,7 @@
 import { createMockStems } from '../audio/mockStems'
-import type { Stem } from '../types'
-import { fetchStemBlobUrl, getJob, toStem } from './backend'
-import type { BackendConfig, SyncTarget } from './backend'
+import type { Stem, TrackState } from '../types'
+import { fetchStemBlobUrl, getJob, getSavedStems, toStem, toTrackState } from './backend'
+import type { BackendConfig, BackendStem, SyncTarget } from './backend'
 
 /**
  * Where stems come from. dispose() is called once the engine has decoded them
@@ -14,6 +14,10 @@ export interface StemSource {
   syncTarget?: SyncTarget
   /** Set after load() when they should but cannot get there. */
   syncIssue?: string
+  /** Set after load() when the backend holds state for these stems. It is the editor's start. */
+  savedTracks?: TrackState[]
+  /** load() reads the backend, so writes still queued for it must land first. */
+  readsSavedState?: boolean
 }
 
 const AUDIO_EXT = /\.(wav|mp3|m4a|aac|flac|ogg|opus)$/i
@@ -90,14 +94,19 @@ export class FileStemSource implements StemSource {
 /**
  * Stems of a completed processing job. Uses the documented GET /api/jobs/{id},
  * not the /jobs/{id}/stems path assumed in the sprint brief (see docs/CONTRACTS.md).
+ *
+ * A job result is a snapshot from processing. Editing a project means starting
+ * from what it holds now, so sync is only set up once that has been read.
  */
 export class HttpStemSource implements StemSource {
   private config: BackendConfig
   private jobId: string
   private urls: string[] = []
   private disposed = false
+  readonly readsSavedState = true
   syncTarget?: SyncTarget
   syncIssue?: string
+  savedTracks?: TrackState[]
 
   constructor(config: BackendConfig, jobId: string) {
     this.config = config
@@ -106,12 +115,11 @@ export class HttpStemSource implements StemSource {
 
   async load(): Promise<Stem[]> {
     const job = await getJob(this.config, this.jobId)
-    const stems = job.stems ?? []
-    if (stems.length === 0) throw new Error('Job has no stems yet')
-    if (job.project_id) this.syncTarget = { config: this.config, projectId: job.project_id }
-    else this.syncIssue = 'Job has no project_id, so edits stay in this browser.'
+    const snapshot = job.stems ?? []
+    if (snapshot.length === 0) throw new Error('Job has no stems yet')
+    const current = await this.restore(job.project_id, snapshot)
     return Promise.all(
-      stems.map(async (stem) => {
+      current.map(async (stem) => {
         const url = await fetchStemBlobUrl(this.config, stem.audio_url)
         // Another stem may have failed already, and dispose() runs at that point.
         if (this.disposed) URL.revokeObjectURL(url)
@@ -119,6 +127,30 @@ export class HttpStemSource implements StemSource {
         return toStem(stem, url)
       }),
     )
+  }
+
+  /** The saved stems when they can be trusted. Otherwise the snapshot, for playback only. */
+  private async restore(projectId: string | undefined, snapshot: BackendStem[]): Promise<BackendStem[]> {
+    if (!projectId) {
+      this.syncIssue = 'Job has no project_id, so edits stay in this browser.'
+      return snapshot
+    }
+    try {
+      const saved = await getSavedStems(this.config, projectId)
+      const matched = snapshot.flatMap((stem) => saved.filter((s) => s.id === stem.id))
+      // Processing again replaces a project's stems, so this job may be out of date.
+      if (matched.length !== snapshot.length) {
+        this.syncIssue = "This job's stems are no longer the project's stems, so edits stay in this browser."
+        return snapshot
+      }
+      this.savedTracks = matched.map(toTrackState)
+      this.syncTarget = { config: this.config, projectId }
+      return matched
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      this.syncIssue = `Could not read saved stem state (${reason}), so edits stay in this browser.`
+      return snapshot
+    }
   }
 
   dispose(): void {

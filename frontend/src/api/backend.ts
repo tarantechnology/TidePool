@@ -1,3 +1,4 @@
+import { MAX_GAIN } from '../edits'
 import type { Keyframe, Stem, TrackState } from '../types'
 
 // Client for the upstream FastAPI backend. Paths and shapes come from
@@ -23,6 +24,14 @@ export interface BackendStem {
   name: string
   duration: number
   audio_url: string
+}
+
+/** A row of GET /api/projects/{id}/stems: the stem as saved right now. */
+export interface SavedStem extends BackendStem {
+  volume: number
+  muted: boolean
+  solo: boolean
+  automation: Array<{ time: number; value: number }>
 }
 
 export interface BackendJob {
@@ -64,6 +73,51 @@ async function request(
 export async function getJob(config: BackendConfig, jobId: string, signal?: AbortSignal): Promise<BackendJob> {
   const res = await request(config, `/api/jobs/${encodeURIComponent(jobId)}`, {}, signal)
   return (await res.json()) as BackendJob
+}
+
+const inGainRange = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_GAIN
+
+function isSavedAutomation(raw: unknown): boolean {
+  if (!Array.isArray(raw)) return false
+  return raw.every((k: { time?: unknown; value?: unknown } | null, i) => {
+    if (typeof k?.time !== 'number' || !Number.isFinite(k.time) || k.time < 0 || !inGainRange(k.value)) return false
+    return i === 0 || k.time > (raw[i - 1] as { time: number }).time
+  })
+}
+
+function isSavedStem(raw: Partial<SavedStem> | null): raw is SavedStem {
+  return (
+    typeof raw?.id === 'string' &&
+    typeof raw.name === 'string' &&
+    typeof raw.duration === 'number' &&
+    typeof raw.audio_url === 'string' &&
+    inGainRange(raw.volume) &&
+    typeof raw.muted === 'boolean' &&
+    typeof raw.solo === 'boolean' &&
+    isSavedAutomation(raw.automation)
+  )
+}
+
+/**
+ * The project's current stems. Throws on a row that does not have every field,
+ * because a patch built from a guessed value would overwrite the saved one.
+ */
+export async function getSavedStems(config: BackendConfig, projectId: string): Promise<SavedStem[]> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems`)
+  const rows = (await res.json()) as unknown
+  if (!Array.isArray(rows) || !rows.every(isSavedStem)) throw new Error('Backend returned malformed stems')
+  return rows
+}
+
+/** The editable state saved for a stem. Volume 0..2 is the same range as gain. */
+export function toTrackState(stem: SavedStem): TrackState {
+  return {
+    stemId: stem.id,
+    gain: stem.volume,
+    muted: stem.muted,
+    solo: stem.solo,
+    automation: stem.automation.map(({ time, value }) => ({ t: time, value })),
+  }
 }
 
 /** Audio needs the bearer header, so it cannot be a plain URL on the Stem. */

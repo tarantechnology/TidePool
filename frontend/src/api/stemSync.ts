@@ -65,6 +65,19 @@ export class StemSync {
     this.report()
   }
 
+  /** Send what is waiting on the debounce now, and resolve when it has landed. */
+  async flush(): Promise<void> {
+    do {
+      for (const [id, timer] of this.timers) {
+        clearTimeout(timer)
+        this.timers.delete(id)
+        this.send(id)
+      }
+      // A write that finishes behind a newer edit schedules that edit, so go again.
+      await this.drained()
+    } while (this.timers.size > 0)
+  }
+
   /** Resolves when no write of this sync is in flight. */
   async drained(): Promise<void> {
     while (this.inflight.size > 0) await Promise.all(this.inflight)
@@ -177,6 +190,11 @@ export class StemSyncRunner {
       after,
     )
     this.sync = sync
+  }
+
+  /** Everything edited so far has reached the backend, or failed trying. */
+  flush(): Promise<void> {
+    return this.sync?.flush() ?? Promise.resolve()
   }
 
   close(): void {

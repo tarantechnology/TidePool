@@ -196,10 +196,9 @@ describe('parsePrompt', () => {
         type: 'set_automation',
         stemId: 'b',
         keyframes: [
-          { t: 11.95, value: 1 },
-          { t: 12, value: 0 },
+          { t: 12, value: 1 },
+          { t: 12.05, value: 0 },
           { t: 20, value: 0 },
-          { t: 20, value: 1 },
         ],
       },
     ])
@@ -436,7 +435,7 @@ describe('parsePrompt percentages', () => {
   })
 
   it('treats at as the start of a range running to the stem end', () => {
-    expect(inRange('set the siren to 30% at 12 seconds', 0.6)).toEqual([1, 0.5, 0.5, 1])
+    expect(inRange('set the siren to 30% at 12 seconds', 0.6)).toEqual([1, 0.5, 0.5])
   })
 
   it('applies a relative percentage to a range', () => {

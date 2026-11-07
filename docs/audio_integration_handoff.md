@@ -140,6 +140,13 @@ reported per request as `model.elapsed_seconds`, and requests are serialised by 
 
 ### GPU requirements
 
+**Runtime platform (verified here):** the real model does not install on macOS/Apple Silicon:
+`perception_models` needs `decord` (no macOS wheel) and imports `xformers` (no macOS wheel).
+Upstream issue #29 confirms this and lists source patches; we do not patch third-party code
+in this service. The Linux CUDA container (`audio-service/Dockerfile` target `sam`) is the
+deployment target, which makes Person 4's GPU host the only place the model can run.
+
+
 User-reported in upstream issue #24; not measured by us:
 
 | Checkpoint | fp32 size | Load | Peak (15 s clip) |

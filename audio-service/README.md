@@ -43,5 +43,12 @@ Memory, user-reported upstream (not measured by us): small ~21.6 GB to load / ~2
 `AUDIO_CHUNK_SECONDS=30`, `AUDIO_RERANKING_CANDIDATES` up to 8. Keep `AUDIO_DTYPE=float32`:
 fp16 is reported to break separation quality and is refused; `bfloat16` is an opt-in experiment.
 
+**macOS is not a supported runtime for the real model** (verified 2026-11-06 on Apple Silicon,
+Python 3.12): `pip install ".[sam]"` fails because `perception_models` requires `decord`, which has
+no macOS/cp312 wheel; installing around it with `--no-deps` then fails at import time on
+`xformers`, which also has no macOS wheel. Upstream issue facebookresearch/sam-audio#29 documents
+the same two blockers and the source patches people apply. The Linux CUDA image (`Dockerfile`
+target `sam`) is unaffected: both packages ship manylinux wheels.
+
 The mock backend (`AUDIO_BACKEND=mock`) is a band-pass filter, not separation; every response
 produced by it carries `model.is_mock=true` and a warning.

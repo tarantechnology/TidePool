@@ -49,7 +49,11 @@ def _run(args: list[str], stdin: bytes | None, timeout: int) -> bytes:
     except subprocess.TimeoutExpired as exc:
         raise InvalidMedia("media decoding timed out") from exc
     if proc.returncode != 0:
-        raise InvalidMedia("could not decode audio: " + proc.stderr.decode("utf-8", "replace")[-500:].strip())
+        message = proc.stderr.decode("utf-8", "replace")[-500:].strip()
+        for arg in args:  # keep server-side paths (temp spool files) out of client-facing errors
+            if "/" in arg and arg in message:
+                message = message.replace(arg, "<input>")
+        raise InvalidMedia("could not decode audio: " + message)
     return proc.stdout
 
 

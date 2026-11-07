@@ -11,11 +11,15 @@ keep working today: the service already implements Person 4's existing `/separat
 exactly as documented in `INTEGRATION.md`, and returns a strict superset of what their
 worker reads.
 
-**No real SAM Audio inference has been run.** This machine has no CUDA GPU, and our Hugging
-Face account is not yet approved for the gated `facebook/sam-audio-*` repositories (403).
-Everything below is verified against the code, against the mock backend, and — for the model
-facts — against the upstream `sam-audio` sources and upstream issues. There are **no
-separation-quality results** to report, and nothing in this document should be read as one.
+**Real SAM Audio inference has run once, on 2026-11-07, with `facebook/sam-audio-small` on an
+Apple M1 Max (MPS, float32, span predictor and re-rankers disabled) through this service's
+backend.** Measured on our synthetic-but-real-speech fixtures (`benchmarks/results/2026-11-07-sam-small-mps/`):
+SI-SDR improvement 11.6 dB isolating a siren from speech, 10.2 dB isolating one of two
+speakers by "man speaking", 12.9 dB isolating a guitar-like tone from a percussive mix;
+4–7.5 s of processing per second of audio on this hardware. No CUDA run exists yet, so the
+GPU figures below remain user-reported upstream numbers. Hugging Face access for the team
+account is approved. Everything else below is verified against the code, the mock backend
+and the upstream sources.
 
 | | |
 | --- | --- |
@@ -140,7 +144,9 @@ reported per request as `model.elapsed_seconds`, and requests are serialised by 
 
 ### GPU requirements
 
-**Runtime platform (verified here):** the real model does not install on macOS/Apple Silicon:
+**Dependency pin found on the first real load:** `huggingface_hub<1` (and `transformers<5`); with 1.x/2.x the upstream loader raises `TypeError ... missing 'proxies' and 'resume_download'`. Both are pinned in the `sam` extra.
+
+**Runtime platform (verified here):** the real model does not install on macOS/Apple Silicon unpatched:
 `perception_models` needs `decord` (no macOS wheel) and imports `xformers` (no macOS wheel).
 Upstream issue #29 confirms this and lists source patches; we do not patch third-party code
 in this service. The Linux CUDA container (`audio-service/Dockerfile` target `sam`) is the
@@ -711,7 +717,7 @@ layer, not a model change.
 **8. Which checkpoint, and who holds access?**
 *Owners: Person 1, with Person 4 for deployment.*
 `facebook/sam-audio-{small,base,large}` and the `-tv` visual variants are gated on Hugging
-Face; our token is not approved (403), so nothing has been downloaded or run.
+Face; the team account is now approved and `sam-audio-small` has run here (see top of document).
 *Proposed default:* `facebook/sam-audio-large` where a 40–80 GB GPU exists, `-small` on
 24 GB, float32 everywhere, span predictor off on 24 GB. The `-tv` variants need evaluating
 once access lands — Person 2 also flags that the team must choose. One approved account's

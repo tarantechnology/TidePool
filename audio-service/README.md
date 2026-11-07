@@ -18,6 +18,10 @@ or run both with the compose overlay: `docker compose -f compose.yaml -f audio-s
 
 ## Real model
 
+First real run (2026-11-07, `sam-audio-small`, Apple M1 Max via MPS): SI-SDR improvement 10–13 dB
+on the speech+siren, two-speaker and music fixtures, 4–7.5 s processing per second of audio. See
+`benchmarks/results/`.
+
 ```bash
 uv pip install --python .venv/bin/python -e ".[sam]"   # Python >= 3.11, CUDA GPU recommended
 hf auth login                                           # after access is approved on huggingface.co/facebook/sam-audio-large

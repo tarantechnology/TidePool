@@ -1,0 +1,206 @@
+{
+  "schema": "soundcanvas/audio-benchmark-1",
+  "generated_at": "2026-11-07T05:01:44+00:00",
+  "command": "python -m benchmarks.run_benchmark --backend sam --seconds 6 --latency-seconds 15 --speech-mode say --out benchmarks/out/sam-small-mps",
+  "backend": {
+    "mode": "engine",
+    "name": "sam",
+    "is_mock": false,
+    "model_id": "facebook/sam-audio-small",
+    "device": "mps",
+    "dtype": "float32"
+  },
+  "is_mock": false,
+  "mock_disclaimer": null,
+  "settings": {
+    "seconds": 6.0,
+    "latency_seconds": 15.0,
+    "repeat": 1,
+    "speech_mode": "say"
+  },
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.6",
+    "numpy": "1.26.4"
+  },
+  "fixtures": [
+    {
+      "fixture": "speech_plus_siren",
+      "prompt": "siren",
+      "target_source": "siren",
+      "sources": [
+        "speech",
+        "siren"
+      ],
+      "duration": 6.0,
+      "channels": 2,
+      "speech_source": "say:Daniel",
+      "notes": "Cinematic demo case: siren must come out as its own stem, 6 dB under the voice, panned right.",
+      "stems": [
+        "siren",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 5.0070150147740975,
+        "si_sdr_input_db": -6.592645217463677,
+        "si_sdri_db": 11.599660232237774,
+        "sdr_db": 6.196674863365187,
+        "leakage_db": -12.728751207676535,
+        "reconstruction_error": 8.568167686462402e-08,
+        "has_residual": true,
+        "latency_seconds": 39.12904129200615,
+        "latency_seconds_all": [
+          39.129
+        ],
+        "real_time_factor": 6.521506882001025,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 39.127,
+        "is_mock": false
+      }
+    },
+    {
+      "fixture": "two_speakers",
+      "prompt": "man speaking",
+      "target_source": "speaker_low",
+      "sources": [
+        "speaker_low",
+        "speaker_high"
+      ],
+      "duration": 6.0,
+      "channels": 2,
+      "speech_source": "low=say:Daniel high=say:Samantha",
+      "notes": "Two talkers at equal level, ~100 Hz vs ~205 Hz f0, panned apart. Hard case: prompts cannot name a person.",
+      "stems": [
+        "man speaking",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 10.673834276237752,
+        "si_sdr_input_db": 0.4873615675328236,
+        "si_sdri_db": 10.186472708704928,
+        "sdr_db": 11.002405177302926,
+        "leakage_db": -12.340095756056023,
+        "reconstruction_error": 4.470348358154297e-08,
+        "has_residual": true,
+        "latency_seconds": 24.36449333303608,
+        "latency_seconds_all": [
+          24.3645
+        ],
+        "real_time_factor": 4.060748888839346,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 24.364,
+        "is_mock": false
+      }
+    },
+    {
+      "fixture": "music_mix",
+      "prompt": "guitar",
+      "target_source": "guitar",
+      "sources": [
+        "drums",
+        "guitar"
+      ],
+      "duration": 6.0,
+      "channels": 2,
+      "speech_source": "n/a",
+      "notes": "Percussive kit vs sustained harmonic tone; overlapping low band makes band-pass mocks fail here.",
+      "stems": [
+        "guitar",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 13.94080926199264,
+        "si_sdr_input_db": 1.0013333650405525,
+        "si_sdri_db": 12.939475896952088,
+        "sdr_db": 13.653575171628995,
+        "leakage_db": -28.6890109509476,
+        "reconstruction_error": 4.470348358154297e-08,
+        "has_residual": true,
+        "latency_seconds": 45.03047404199606,
+        "latency_seconds_all": [
+          45.0305
+        ],
+        "real_time_factor": 7.505079006999343,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 45.03,
+        "is_mock": false
+      }
+    },
+    {
+      "fixture": "long_mixture_15s",
+      "prompt": "siren",
+      "target_source": "siren",
+      "sources": [
+        "speech",
+        "siren"
+      ],
+      "duration": 15.0,
+      "channels": 1,
+      "speech_source": "say:Daniel",
+      "notes": "Mono 15s mixture for latency and real-time factor.",
+      "stems": [
+        "siren",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 1.9452718434996494,
+        "si_sdr_input_db": -5.012098859470679,
+        "si_sdri_db": 6.957370702970328,
+        "sdr_db": 4.057945009464129,
+        "leakage_db": -15.963376650840232,
+        "reconstruction_error": 2.9802322387695312e-08,
+        "has_residual": true,
+        "latency_seconds": 22.295568083995022,
+        "latency_seconds_all": [
+          22.2956
+        ],
+        "real_time_factor": 1.486371205599668,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 22.295,
+        "is_mock": false
+      }
+    }
+  ],
+  "warnings": []
+}

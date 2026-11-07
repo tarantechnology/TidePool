@@ -148,7 +148,7 @@ Every call except project creation needs `Authorization: Bearer <project token>`
 
 The sprint brief assumed `GET {base}/jobs/{jobId}/stems` and a `state` field. Neither exists upstream, so the client follows the documented API instead.
 
-`server/backend-contract.test.ts` checks all of this against a running backend. It has not been run. It skips unless `BACKEND_URL` is set:
+`server/backend-contract.test.ts` checks all of this against a running backend. The two original tests passed there when the backend owner ran them. The tests added since (boundary curves through export, saved state, offsets and mute ranges) have not run against a real backend. They skip, and the suite name says why, unless `BACKEND_URL` is set and answers:
 
 ```sh
 BACKEND_URL=http://localhost:8000 npx vitest run server/backend-contract

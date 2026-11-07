@@ -132,3 +132,12 @@ def test_visual_interval_longer_than_limit_is_rejected(env, monkeypatch):
     meta = SeparationMetadata(prompts=["person"], source={"original_ref": video.as_uri()}, visual_prompt={"selection": selection_doc(), "detections": detections_doc()})
     with pytest.raises(UnsupportedOperation, match="limited to 0s|limited to 1s"):
         engine.separate(DecodedAudio(mix, rate, rate, 2), meta)
+
+
+def test_interval_is_clamped_to_processed_window(env):
+    settings, video = env
+    src = SourceRef(original_ref=video.as_uri(), sha256="a" * 64)
+    raw = {"selection": selection_doc(start=0.2, end=5.0), "detections": detections_doc()}  # processed window is 1.0 s
+    t = translate_visual_prompt(raw, source=src, source_duration=10.0, settings=settings, backend_supports_visual=True)
+    assert t.visual is not None and t.visual.interval == (0.2, 1.0)
+    assert t.anchors == [("+", 0.2, 1.0)] and any("clamped" in w for w in t.warnings)

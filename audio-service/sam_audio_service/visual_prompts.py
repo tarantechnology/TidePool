@@ -196,6 +196,16 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
         if source and source.sha256 and detections.get("source_sha256") and detections["source_sha256"] != source.sha256:
             warnings.append("detections were computed on different media bytes than the source; visual prompt ignored")
             return VisualTranslation(None, anchors, warnings)
+        processed = detections.get("processed_duration_seconds")
+        if interval and isinstance(processed, (int, float)) and interval[1] > processed:
+            # Person 2 only guarantees masks inside the processed window; beyond it every
+            # frame would read as "object absent", which would silently bias the model.
+            warnings.append(f"selection interval end {interval[1]:g}s clamped to the processed window ({processed:g}s)")
+            interval = (interval[0], float(processed))
+            anchors = [("+", a, min(b, float(processed))) for t, a, b in anchors if a < processed] 
+            if interval[1] <= interval[0]:
+                warnings.append("selection interval lies entirely outside the processed window; visual prompt ignored")
+                return VisualTranslation(None, anchors, warnings)
         track_id, detection_id = _select_object(detections, selection, raw, warnings)
         if track_id is not None or detection_id is not None:
             frame_masks, span = _frame_masks(detections, track_id, detection_id, warnings)

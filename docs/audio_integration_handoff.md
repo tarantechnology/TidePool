@@ -362,6 +362,27 @@ Contract D.
 6. **Masks at source resolution**, not letterboxed or annotated (you already do this; we
    resize to the model's 336×336 ourselves).
 
+### Verified against your real output
+
+`audio-service/fixtures/vision/` holds `detections.json` + `selection.json` produced by your
+pipeline (`yolo26n-seg`, ByteTrack, native 10 fps, your `download_demo.py` pedestrian clip,
+commit `0f5654f`) and `tests/test_person2_artifacts.py` drives them through our translator,
+frame/mask preparation and `/separate` (mock backend). Result: no field-name, polarity,
+frame-alignment or sha256 mismatches; 49 masked frames for the selected track, interval
+0–6 s, spans reported back as `[[0.0, 6.0]]`. Three things we noticed:
+
+1. **A raw viewer click is too short.** `select_at_point` yields `interval = [timestamp,
+   valid_until)`: one sample interval (0.1 s at 10 fps, 33 ms at 30 fps). We reject
+   visual intervals under 100 ms, so the editor must extend the interval before sending
+   it (your README documents this as optional; for us it is required).
+2. **Inline per-frame RLE does not scale.** ~24 KB per 768×576 frame, 2.97 MB for 12 s.
+   Person 4 forwards the whole object inline today. Use `detections_ref` (or a mask video)
+   for anything beyond demo length (Open Question 1).
+3. **Processed window.** We clamp the selection interval to your `processed_duration_seconds`
+   (with a warning) so frames past the processed window are never fed as "object absent";
+   your `prepare_visual_inputs` rejects such intervals outright. Either is fine; we chose
+   degradation so a text prompt still runs.
+
 ### Two points to settle with you
 
 - **Polarity.** We agree on the net effect — the object is kept, the background is zeroed —

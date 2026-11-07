@@ -1,6 +1,6 @@
 # CV integration contract 1.0 (proposed for teammate review)
 
-This specializes the backend's existing arbitrary `visual-metadata` / `visual_prompt` objects. It changes no backend endpoint or enforced model. Issues [#3](https://github.com/AkhilNam/SoundCanvas/issues/3) and [#4](https://github.com/AkhilNam/SoundCanvas/issues/4) track coordination; documentation is not evidence of approval by Person 1.
+This specializes the backend's existing `visual-metadata` / `visual_prompt` objects. Schema-1.0 selections now receive identity/mask validation and a server-owned video reference; legacy label/time-range objects retain pass-through behavior. Issues [#3](https://github.com/AkhilNam/SoundCanvas/issues/3) and [#4](https://github.com/AkhilNam/SoundCanvas/issues/4) track coordination; documentation is not evidence of approval by Person 1. See [current implementation/validation](ISSUE4.md).
 
 ## Identity, coordinates and time
 
@@ -44,10 +44,10 @@ From the repository root, once `PROJECT_ID` and `PROJECT_TOKEN` identify an uplo
 ```bash
 curl --fail-with-body -X PUT "http://localhost:8000/api/projects/$PROJECT_ID/visual-metadata" \
   -H "Authorization: Bearer $PROJECT_TOKEN" -H 'Content-Type: application/json' \
-  --data-binary @vision/outputs/real_yolo/detections.json
+  --data-binary @vision/outputs/real_seg/detections.json
 ```
 
-A subsequent `/process` with no explicit `visual_prompt` forwards stored metadata unchanged. For a specific selection, send an explicit override instead:
+A subsequent `/process` with no explicit `visual_prompt` forwards legacy metadata unchanged. Store native-FPS segmentation detections, then submit a specific frozen selection:
 
 ```python
 import json, os, httpx
@@ -61,7 +61,7 @@ response.raise_for_status()
 print(response.json())  # job ID; poll existing /api/jobs/{id}
 ```
 
-The worker POSTs `audio` (48kHz stereo WAV) plus JSON-string `metadata` with `prompts` and `visual_prompt` to Person 1. It currently sends **no original video bytes, no NPZ payload and no original-video download endpoint**. Person 1/4 must agree how a trusted service resolves `video_id` to the same original bytes, obtains matching analysis/masks, crops matching audio/video intervals and returns a full-timeline stem (or a future agreed offset contract). Existing stems default to offset zero; submitting a cropped clip without offset reconstruction would misalign playback. No such resolver/offset extension is implemented here.
+The worker POSTs `audio` (48kHz stereo WAV) plus JSON-string `metadata`. For a validated selection, `visual_prompt` is an envelope containing the unchanged selection and snapshotted stored detections; the server adds `source.original_ref` (a file URI under the project's upload directory), source SHA256, FPS/duration and project asset ID. No client media references are accepted. The audio service resolves the video under `AUDIO_MEDIA_ROOT`, uses its existing visual translator/frame-mask preparation, crops inference and reconstructs full-timeline target/residual stems. The backend checks zero offset and full extracted-audio duration/rate/channels before exposing stems. Both services require the same absolute storage mount. Jobs expose model/mock status and warnings under `inference`. [ISSUE4.md](ISSUE4.md) details validation, setup and the remaining real-model gate.
 
 CV exports do not contain local absolute media paths or tokens. The `detector` field records model name, weight digest, thresholds, device and tracker; `runtime` records environment and pipeline seconds. Detection/selection IDs are machine references, not verified physical/person identities.
 

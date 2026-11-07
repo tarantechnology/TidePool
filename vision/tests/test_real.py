@@ -34,7 +34,7 @@ def test_pretrained_yolo_mp4_and_selection(tmp_path,weights,segmentation):
     if segmentation:
         assert decode_mask(person['mask']).shape==(576,768)
         prepared=prepare_visual_inputs(video,data,selected)
-        assert prepared.frames_rgb.shape==(1,3,576,768)
+        assert prepared.frames_rgb.shape==(10,3,576,768)
         assert prepared.foreground_masks.any()
     else: assert person['mask'] is None
     # Reusing one detector for a new video resets the tracker; IDs start afresh.

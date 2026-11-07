@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 from .core import MAX_UPLOAD, connect, digest, init, probe, project_dir, run, stem, uid
 from .commands import parse
 from .worker import enqueue, loop, stop
+from .visual import file_sha256, prepare_payload, reject_media_refs
 
 @asynccontextmanager
 async def lifespan(app):
@@ -33,7 +34,9 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload'); output=json.loads(d.pop('output')) if d['output'] else None
-    if kind=='process': d['stems']=output or []
+    if kind=='process':
+        d['stems'] = output.get('stems', []) if isinstance(output, dict) else output or []
+        d['inference'] = output.get('inference') if isinstance(output, dict) else None
     else: d['download_url']=f'/api/exports/{jid}/download' if output else None
     return d
 
@@ -88,6 +91,7 @@ async def upload(pid: str, file: UploadFile=File(...), authorization: str | None
                 if size>MAX_UPLOAD: raise HTTPException(413,'Upload too large')
                 out.write(chunk)
         info=probe(path)
+        info.update(video_id=pid, source_sha256=file_sha256(path))
         if ext in ('.mp4','.mov') and not info['has_video']: raise ValueError('Expected a video stream')
         run('ffmpeg','-v','error','-y','-i',str(path),'-vn','-ac','2','-ar','48000','-c:a','pcm_s16le',str(audio))
         with connect() as db: db.execute("UPDATE projects SET filename=?,original=?,audio=?,metadata=?,status='uploaded' WHERE id=?",(Path(file.filename or '').name,str(path),str(audio),json.dumps(info),pid))
@@ -106,6 +110,8 @@ def project(pid: str, authorization: str | None=Header(None)):
 @app.put('/api/projects/{pid}/visual-metadata')
 def visual(pid: str, body: dict, authorization: str | None=Header(None)):
     auth(pid,authorization)
+    try: reject_media_refs(body)
+    except ValueError as exc: raise HTTPException(422, str(exc)) from exc
     with connect() as db: db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(body),pid))
     return {'status':'saved'}
 
@@ -120,7 +126,8 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
     if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not prompt.strip() for prompt in body.prompts)):
         raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
     payload=body.model_dump()
-    if payload['visual_prompt'] is None and p['visual']: payload['visual_prompt']=json.loads(p['visual'])
+    try: payload=prepare_payload(p, payload)
+    except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422, str(exc)) from exc
     return {'job_id':start(pid,'process',payload),'status':'queued'}
 
 @app.get('/api/jobs/{jid}')

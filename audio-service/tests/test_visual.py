@@ -304,3 +304,28 @@ def test_unknown_mask_mode_is_rejected(video):
     visual = VisualInput(video_path=video, interval=(0.0, 1.0), frame_masks={0: _half_mask()}, frame_rate=FPS)
     with pytest.raises(ValueError, match="mask_mode"):
         prepare_masked_video(visual, size=64, mask_mode="invert")  # type: ignore[arg-type]
+
+
+@requires_tensors
+def test_decoded_frame_count_must_match_masks(video, monkeypatch):
+    from sam_audio_service import visual as module
+    decode = module._decode_rawvideo
+    monkeypatch.setattr(module, '_decode_rawvideo', lambda *a, **k: decode(*a, **k)[:-1])
+    visual = VisualInput(video_path=video, interval=(0, 1), frame_rate=FPS, frame_masks={i: _half_mask() for i in range(10)})
+    with pytest.raises(InvalidMedia, match='decoded 9 frames, expected 10'):
+        prepare_masked_video(visual, size=64)
+
+
+@requires_tensors
+def test_fractional_fps_crop_keeps_frame_and_mask_correspondence(tmp_path):
+    """Compare the actual cropped RGB frames with native indices at 30000/1001 FPS."""
+    import torch
+    rate = 30000 / 1001
+    path = str(tmp_path / 'fractional.mp4')
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                    'testsrc=size=64x64:rate=30000/1001', '-frames:v', '30', '-pix_fmt', 'yuv420p', path], check=True)
+    masks = {i: _half_mask() if i % 2 else 1 - _half_mask() for i in range(30)}
+    complete, complete_masks = prepare_masked_video(VisualInput(video_path=path, interval=(0, 30/rate), frame_rate=rate, frame_masks=masks), size=64)
+    cropped, cropped_masks = prepare_masked_video(VisualInput(video_path=path, interval=(7/rate, 19/rate), frame_rate=rate, frame_masks=masks), size=64)
+    assert torch.equal(cropped, complete[7:19])
+    assert torch.equal(cropped_masks, complete_masks[7:19])

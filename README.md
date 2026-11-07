@@ -1,6 +1,6 @@
 # SoundCanvas backend
 
-An independent FastAPI backend for uploading media, running an asynchronous separation adapter, editing stems and rendering media with FFmpeg. The default adapter creates **copies**, not separated sounds. No frontend, CV model or SAM model is included.
+An independent FastAPI backend for uploading media, running an asynchronous separation adapter, editing stems and rendering media with FFmpeg. The default adapter creates **copies**, not separated sounds. Optional vision and audio inference packages live in `vision/` and `audio-service/`; model weights and a frontend editor are not included.
 
 ## Team collaboration
 
@@ -22,6 +22,6 @@ This is a local-development MVP: terminate TLS at a trusted proxy, protect token
 
 ## Vision workstream (Part 2)
 
-The independent [vision pipeline](vision/README.md) provides YOLO detection/tracking, a clickable video viewer, optional instance masks and versioned metadata. See its [validated results](vision/docs/VALIDATION.md) and [proposed integration contract](vision/docs/CONTRACT.md). It uses the existing visual-metadata/process endpoints; the backend does not load CV models. SAM Audio visual separation remains pending a real audio service and original-video resolver.
+The independent [vision pipeline](vision/README.md) provides YOLO detection/tracking, a clickable video viewer, optional instance masks and versioned metadata. See its [validated results](vision/docs/VALIDATION.md) and [integration contract](vision/docs/CONTRACT.md). The existing visual-metadata/process endpoints now pair selections with stored masks and a project-owned original-video reference for the audio service. The backend does not load CV models. [Issue #4 validation](vision/docs/ISSUE4.md) documents the working handoff/edit/export tests and the remaining real visual-guided SAM Audio model blocker.
 
 Root `pytest` runs backend tests. Install vision extras and run its separate suite as documented in `vision/README.md`; `Vision tests` CI covers the optional package without adding YOLO to the backend Docker image.

@@ -2,6 +2,8 @@
 
 Independent, working CV pipeline: MP4/image decoding, real YOLO detection, ByteTrack tracking, optional YOLO instance masks, click selection and versioned JSON. This package does not separate audio. See [validation evidence](docs/VALIDATION.md), [integration contract](docs/CONTRACT.md) and [SAM feasibility](docs/SAM.md).
 
+[Issue #4 integration](docs/ISSUE4.md) adds project-owned video resolution, stored-mask/selection pairing, job diagnostics and an upload → edit → MP4 example. Real YOLO/browser and mock-audio integration tests pass; genuine visual-guided SAM Audio isolation is still blocked. The report includes the exact local runtime/dependency diagnosis and reproduction commands.
+
 ## Setup
 
 From the SoundCanvas repository root, with Python 3.11 or 3.12:

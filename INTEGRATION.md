@@ -16,6 +16,8 @@ Return at least one valid WAV containing audio. Duration is probed locally. The 
 
 `PUT /api/projects/{id}/visual-metadata` accepts an arbitrary JSON object containing detections, tracks, timestamps, bounding boxes and selection IDs, for example `{"tracks":[{"id":"42","label":"dog","frames":[{"time":1.0,"bbox":[0.1,0.2,0.3,0.4]}]}]}`. Agree coordinate conventions with Person 1. That object is passed unchanged as `visual_prompt` on processing unless the process request explicitly supplies a `visual_prompt` object. Alternatively send `{ "prompts":["dog"], "visual_prompt":{"track_id":"42"} }` directly to `/process`. The backend does not run detection or infer associations.
 
+The independent [Part 2 CV package](vision/README.md) proposes [schema 1.0](vision/docs/CONTRACT.md) for these arbitrary objects, with source/analysis identity, pixel and normalized boxes, bounded intervals, and optional instance-mask RLE. This is additive documentation for review in issues #3/#4; no backend validation or audio inference behavior changes. The WAV+JSON inference boundary does not transmit original video; real SAM Audio visual prompting still requires an agreed video resolver and aligned audio/mask preparation.
+
 ## Person 3: frontend
 
 1. `POST /api/projects` returns `{"project_id":"...","access_token":"...","status":"created"}`. Save the token securely.

@@ -43,6 +43,11 @@ Memory, user-reported upstream (not measured by us): small ~21.6 GB to load / ~2
 `AUDIO_CHUNK_SECONDS=30`, `AUDIO_RERANKING_CANDIDATES` up to 8. Keep `AUDIO_DTYPE=float32`:
 fp16 is reported to break separation quality and is refused; `bfloat16` is an opt-in experiment.
 
+**Dependency pins that matter:** `huggingface_hub<1` and `transformers<5`. With `huggingface_hub`
+1.x/2.x the upstream loader fails with `TypeError: BaseModel._from_pretrained() missing 2 required
+keyword-only arguments: 'proxies' and 'resume_download'` (found on our first real load); the `sam`
+extra pins both.
+
 **macOS is not a supported runtime for the real model** (verified 2026-11-06 on Apple Silicon,
 Python 3.12): `pip install ".[sam]"` fails because `perception_models` requires `decord`, which has
 no macOS/cp312 wheel; installing around it with `--no-deps` then fails at import time on

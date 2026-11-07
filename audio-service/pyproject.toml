@@ -20,8 +20,10 @@ sam = [
     "torch>=2.4",
     "torchaudio>=2.4",
     "torchcodec>=0.2",
-    "huggingface_hub>=0.25",
-    # Upstream requires >=4.54 and was written against 4.x; an unconstrained resolve picks 5.x.
+    # Verified 2026-11-06 on the first real load: sam_audio's BaseModel._from_pretrained requires
+    # the `proxies` / `resume_download` keyword arguments that huggingface_hub >= 1.0 no longer
+    # passes (TypeError at load). 0.x works; transformers 4.x is the matching series.
+    "huggingface_hub>=0.25,<1",
     "transformers>=4.54,<5",
     "sam_audio @ git+https://github.com/facebookresearch/sam-audio.git",
 ]

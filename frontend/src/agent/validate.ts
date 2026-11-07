@@ -1,4 +1,4 @@
-import { MAX_GAIN } from '../edits'
+import { MAX_GAIN, MAX_KEYFRAMES } from '../edits'
 import type { EditAction, Keyframe, Stem } from '../types'
 
 // Agent output is untrusted input: nothing from it reaches the edit pipeline
@@ -6,7 +6,7 @@ import type { EditAction, Keyframe, Stem } from '../types'
 // anything extra the model sent is dropped.
 
 export const MAX_ACTIONS = 20
-export const MAX_KEYFRAMES = 64
+export { MAX_KEYFRAMES }
 
 export type ValidationResult = { ok: true; actions: EditAction[] } | { ok: false; errors: string[] }
 

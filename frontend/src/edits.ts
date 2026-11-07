@@ -76,6 +76,61 @@ export function automationFrom(keyframes: Keyframe[], t0: number): { start: numb
   }
 }
 
+/** The longest curve the backend's exporter is known to render (see docs/CONTRACTS.md). */
+export const MAX_KEYFRAMES = 64
+
+/** A level is flat across the range. A scale keeps the shape of the curve under it. */
+export type RangeEdit = { level: number } | { scale: number }
+
+/** Edges of a level edit, short so the range really is at that level. */
+const LEVEL_RAMP_SEC = 0.05
+const SCALE_RAMP_SEC = 0.5
+const MIN_RANGE_SEC = 0.01
+
+/**
+ * Apply an edit to [from, to] of an existing curve. Outside that interval the
+ * result evaluates exactly as before: the edges carry the curve's own value, and
+ * the ramps sit inside the interval. An edge at 0 or at end has nothing beyond
+ * it to return to, so it needs no ramp and adds no extra point.
+ */
+export function spliceAutomation(
+  curve: Keyframe[],
+  edit: RangeEdit,
+  from: number,
+  to: number,
+  end: number,
+): Keyframe[] {
+  const longest = 'level' in edit ? LEVEL_RAMP_SEC : SCALE_RAMP_SEC
+  const ramp = Math.min(longest, (to - from) / 4)
+  const later = curve.filter((k) => k.t > to)
+  const opensAfter = to < end || later.length > 0
+  const start = from > 0 ? from + ramp : from
+  const stop = opensAfter ? to - ramp : to
+  const inside = (t: number) => {
+    if ('level' in edit) return edit.level
+    return clamp(envelopeAt(curve, t) * edit.scale, 0, MAX_GAIN)
+  }
+
+  const times = [start, stop]
+  if ('scale' in edit) {
+    times.splice(1, 0, ...curve.filter((k) => k.t > start && k.t < stop).map((k) => k.t))
+    // The clamp bends the curve where the product reaches MAX_GAIN, between keyframes.
+    const limit = edit.scale > 0 ? MAX_GAIN / edit.scale : Infinity
+    for (let i = times.length - 1; i > 0; i--) {
+      const u = envelopeAt(curve, times[i - 1])
+      const v = envelopeAt(curve, times[i])
+      if ((u - limit) * (v - limit) < 0) {
+        times.splice(i, 0, times[i - 1] + ((limit - u) / (v - u)) * (times[i] - times[i - 1]))
+      }
+    }
+  }
+
+  const before = curve.filter((k) => k.t < from)
+  if (from > 0) before.push({ t: from, value: envelopeAt(curve, from) })
+  const after = opensAfter ? [{ t: to, value: envelopeAt(curve, to) }, ...later] : []
+  return [...before, ...times.map((t) => ({ t, value: inside(t) })), ...after]
+}
+
 export function isAudible(tracks: TrackState[], track: TrackState): boolean {
   if (track.muted) return false
   const anySolo = tracks.some((t) => t.solo)
@@ -148,14 +203,23 @@ function parseQuantity(text: string): Quantity {
   return { kind: 'clarify', message: `Did you mean "to ${percent}%" or "by ${percent}%"?` }
 }
 
-function rangeCurve(a: number, b: number, value: number): Keyframe[] {
-  const ramp = Math.min(0.5, (b - a) / 4)
-  return [
-    { t: a, value: 1 },
-    { t: a + ramp, value },
-    { t: b - ramp, value },
-    { t: b, value: 1 },
-  ]
+function timedEdit(
+  stem: Stem,
+  track: TrackState,
+  edit: RangeEdit,
+  from: number,
+  to: number,
+  message: string,
+): ParseResult {
+  if (to - from < MIN_RANGE_SEC) return { actions: [], message: 'That time range is too short to edit.' }
+  const keyframes = spliceAutomation(track.automation, edit, from, to, stem.duration)
+  if (keyframes.length > MAX_KEYFRAMES) {
+    return {
+      actions: [],
+      message: `That edit would give ${stem.label} ${keyframes.length} keyframes, over the limit of ${MAX_KEYFRAMES}. Remove some first.`,
+    }
+  }
+  return { actions: [{ type: 'set_automation', stemId: stem.id, keyframes }], message }
 }
 
 function percentEdit(
@@ -190,10 +254,7 @@ function percentEdit(
         message: `${stem.label}'s fader is too low to reach ${percent}%: that needs a curve above ${MAX_GAIN * 100}%. Raise the fader first.`,
       }
     }
-    return {
-      actions: [{ type: 'set_automation', stemId: stem.id, keyframes: rangeCurve(from, to, multiplier) }],
-      message: `${stem.label} at ${percent}%${where}.`,
-    }
+    return timedEdit(stem, track, { level: multiplier }, from, to, `${stem.label} at ${percent}%${where}.`)
   }
 
   const factor = clamp(quantity.louder ? 1 + percent / 100 : 1 - percent / 100, 0, MAX_GAIN)
@@ -205,10 +266,7 @@ function percentEdit(
       message: `${stem.label} ${change}, fader to ${toDb(next)}.`,
     }
   }
-  return {
-    actions: [{ type: 'set_automation', stemId: stem.id, keyframes: rangeCurve(from, to, factor) }],
-    message: `${stem.label} ${change}${where}.`,
-  }
+  return timedEdit(stem, track, { scale: factor }, from, to, `${stem.label} ${change}${where}.`)
 }
 
 export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): ParseResult {
@@ -252,22 +310,7 @@ export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): 
       const from = range ? Number(range[1]) : Number(at![1])
       const to = Math.min(range ? Number(range[2]) : stem.duration, stem.duration)
       if (to <= from) return { actions: [], message: 'End time must be after start time.' }
-      const e = 0.05
-      return {
-        actions: [
-          {
-            type: 'set_automation',
-            stemId: stem.id,
-            keyframes: [
-              { t: Math.max(0, from - e), value: 1 },
-              { t: from, value: 0 },
-              { t: to, value: 0 },
-              { t: Math.min(stem.duration, to + e), value: 1 },
-            ],
-          },
-        ],
-        message: `Muting ${stem.label} from ${from}s to ${to}s.`,
-      }
+      return timedEdit(stem, track, { level: 0 }, from, to, `Muting ${stem.label} from ${from}s to ${to}s.`)
     }
     return {
       actions: [{ type: 'set_mute', stemId: stem.id, muted: mute }],
@@ -306,13 +349,15 @@ export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): 
       if (sources.length === 0) {
         return { actions: [], message: 'No dialogue stems to follow. Intensity uses dialogue loudness.' }
       }
+      const hasCurve = tracks.some((t) => t.stemId === target.id && t.automation.length > 0)
+      const replaces = hasCurve ? ` This replaces ${target.label}'s existing curve.` : ''
       return {
         actions: [
           duck
             ? { type: 'follow_intensity', stemId: target.id, sourceStemIds: sources, minValue: 1, maxValue: 0.3 }
             : { type: 'follow_intensity', stemId: target.id, sourceStemIds: sources },
         ],
-        message: `${target.label} ${duck ? 'ducks' : 'rises'} with dialogue loudness (a proxy, not emotion detection).`,
+        message: `${target.label} ${duck ? 'ducks' : 'rises'} with dialogue loudness (a proxy, not emotion detection).${replaces}`,
       }
     }
   }
@@ -323,10 +368,7 @@ export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): 
       const a = Number(range[1])
       const b = Math.min(Number(range[2]), stem.duration)
       if (b <= a) return { actions: [], message: 'End time must be after start time.' }
-      return {
-        actions: [{ type: 'set_automation', stemId: stem.id, keyframes: rangeCurve(a, b, factor) }],
-        message: `${stem.label} ${louder ? 'louder' : 'quieter'} from ${a}s to ${b}s.`,
-      }
+      return timedEdit(stem, track, { scale: factor }, a, b, `${stem.label} ${louder ? 'louder' : 'quieter'} from ${a}s to ${b}s.`)
     }
     const next = clamp(track.gain * (louder ? 1.5 : 0.5), 0, MAX_GAIN)
     return {

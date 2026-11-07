@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { applyAction, automationFrom, envelopeAt, initialTracks, isAudible, MAX_GAIN, parsePrompt } from './edits'
-import type { Stem, TrackState } from './types'
+import {
+  applyAction,
+  automationFrom,
+  envelopeAt,
+  initialTracks,
+  isAudible,
+  MAX_GAIN,
+  MAX_KEYFRAMES,
+  parsePrompt,
+  spliceAutomation,
+} from './edits'
+import type { Keyframe, Stem, TrackState } from './types'
 
 const stem = (id: string, label: string, kind: Stem['kind'] = 'sfx'): Stem => ({
   id,
@@ -480,5 +490,124 @@ describe('parsePrompt percentages', () => {
     expect(faderOf('make the siren quieter')).toBe(0.5)
     expect(faderOf('make the siren louder')).toBe(1.5)
     expect(faderOf('make the siren quieter', 0.5)).toBe(0.25)
+  })
+})
+
+describe('spliceAutomation', () => {
+  const END = 20
+  // A boost, a step-like dip and a slope, on purpose not on round edit times.
+  const CURVE: Keyframe[] = [
+    { t: 1, value: 0.8 },
+    { t: 3, value: 1.6 },
+    { t: 5, value: 1.6 },
+    { t: 7, value: 1 },
+    { t: 7.05, value: 0.2 },
+    { t: 9, value: 0.2 },
+    { t: 9.05, value: 1 },
+    { t: 15, value: 1.8 },
+    { t: 18, value: 0.6 },
+  ]
+  const expectOutsideUnchanged = (next: Keyframe[], original: Keyframe[], from: number, to: number) => {
+    let checked = 0
+    for (let i = 0; i <= 2000 && checked < 2000; i++) {
+      const t = (i / 2000) * END
+      if (t >= from && t <= to) continue
+      expect(Math.abs(envelopeAt(next, t) - envelopeAt(original, t)), `t=${t}`).toBeLessThan(1e-9)
+      checked++
+    }
+    expect(checked).toBeGreaterThan(200)
+  }
+
+  it('leaves the curve outside a muted range alone', () => {
+    const next = spliceAutomation(CURVE, { level: 0 }, 11, 13, END)
+    expectOutsideUnchanged(next, CURVE, 11, 13)
+    for (const t of [11.05, 11.5, 12, 12.95]) expect(envelopeAt(next, t)).toBe(0)
+  })
+
+  it('multiplies the curve inside a range, keeping its shape', () => {
+    const next = spliceAutomation(CURVE, { scale: 0.5 }, 4, 16, END)
+    expectOutsideUnchanged(next, CURVE, 4, 16)
+    for (let t = 4.5; t <= 15.5; t += 0.05) {
+      expect(envelopeAt(next, t)).toBeCloseTo(envelopeAt(CURVE, t) * 0.5, 9)
+    }
+  })
+
+  it('follows the clamp where a product passes MAX_GAIN between keyframes', () => {
+    const next = spliceAutomation(CURVE, { scale: 2 }, 10, 17, END)
+    expectOutsideUnchanged(next, CURVE, 10, 17)
+    for (let t = 10.5; t <= 16.5; t += 0.05) {
+      expect(envelopeAt(next, t)).toBeCloseTo(Math.min(MAX_GAIN, envelopeAt(CURVE, t) * 2), 9)
+    }
+  })
+
+  it('holds a level across a range with keyframes in it', () => {
+    const next = spliceAutomation(CURVE, { level: 0.5 }, 2, 16, END)
+    expectOutsideUnchanged(next, CURVE, 2, 16)
+    for (let t = 2.05; t <= 15.95; t += 0.1) expect(envelopeAt(next, t)).toBe(0.5)
+  })
+
+  it('works on an empty curve', () => {
+    const next = spliceAutomation([], { level: 0 }, 8, 12, END)
+    expectOutsideUnchanged(next, [], 8, 12)
+    expect(envelopeAt(next, 10)).toBe(0)
+  })
+
+  it('keeps a curve that continues past the stem end', () => {
+    const next = spliceAutomation([{ t: 25, value: 0.5 }], { level: 0 }, 12, END, END)
+    expect(next.at(-1)).toEqual({ t: 25, value: 0.5 })
+    expect(envelopeAt(next, 22)).toBe(0.5)
+  })
+})
+
+describe('parsePrompt timed edits', () => {
+  const CURVE: Keyframe[] = [
+    { t: 1, value: 0.8 },
+    { t: 3, value: 1.6 },
+    { t: 5, value: 1.6 },
+    { t: 7, value: 1 },
+    { t: 7.05, value: 0.2 },
+    { t: 9, value: 0.2 },
+  ]
+  const withCurve = TRACKS.map((t) => (t.stemId === 's' ? { ...t, automation: CURVE } : t))
+  const after = (tracks: TrackState[], text: string) =>
+    parsePrompt(text, STEMS, tracks).actions.reduce(applyAction, tracks)
+  const curveOf = (tracks: TrackState[]) => tracks.find((t) => t.stemId === 's')!.automation
+
+  it('keeps earlier automation on a second timed edit', () => {
+    const first = after(withCurve, 'mute the siren from 12 to 14 seconds')
+    const second = after(first, 'make the siren louder from 16 to 18 seconds')
+    const curve = curveOf(second)
+    for (const t of [0, 2, 4, 6, 8, 10]) expect(envelopeAt(curve, t)).toBeCloseTo(envelopeAt(CURVE, t), 9)
+    expect(envelopeAt(curve, 13)).toBe(0)
+    expect(envelopeAt(curve, 17)).toBeCloseTo(0.2 * 2, 9)
+    expect(envelopeAt(curve, 15)).toBeCloseTo(0.2, 9)
+  })
+
+  it('reaches an exact level over an existing curve', () => {
+    const tracks = withCurve.map((t) => (t.stemId === 's' ? { ...t, gain: 0.5 } : t))
+    const curve = curveOf(after(tracks, 'set the siren to 30% from 2 to 8 seconds'))
+    for (const t of [2.1, 4, 6, 7.9]) expect(0.5 * envelopeAt(curve, t)).toBeCloseTo(0.3, 9)
+    expect(envelopeAt(curve, 1)).toBeCloseTo(envelopeAt(CURVE, 1), 9)
+    expect(envelopeAt(curve, 8.5)).toBeCloseTo(envelopeAt(CURVE, 8.5), 9)
+  })
+
+  it('refuses an edit past the keyframe limit, with no lossy simplification', () => {
+    const full = Array.from({ length: MAX_KEYFRAMES }, (_, i) => ({ t: i * 0.25, value: 1 + (i % 2) * 0.1 }))
+    const tracks = TRACKS.map((t) => (t.stemId === 's' ? { ...t, automation: full } : t))
+    const res = parsePrompt('make the siren louder from 16 to 19 seconds', STEMS, tracks)
+    expect(res.actions).toEqual([])
+    expect(res.message).toContain(`limit of ${MAX_KEYFRAMES}`)
+  })
+
+  it('refuses a range too short to ramp', () => {
+    const res = parsePrompt('mute the siren from 5 to 5.001 seconds', STEMS, TRACKS)
+    expect(res.actions).toEqual([])
+    expect(res.message).toContain('too short')
+  })
+
+  it('says when intensity replaces a curve, and only then', () => {
+    const prompt = 'make the siren louder whenever the argument gets intense'
+    expect(parsePrompt(prompt, STEMS, withCurve).message).toContain("replaces Siren's existing curve")
+    expect(parsePrompt(prompt, STEMS, TRACKS).message).not.toContain('replaces')
   })
 })

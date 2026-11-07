@@ -224,6 +224,12 @@ class Engine:
         s1 = min(n, max(s0, int(round(interval[1] * sr))))
         if s1 - s0 < sr // 10:
             raise InvalidRequest("visual prompt interval is shorter than 100 ms or outside the audio", details={"interval": list(interval)})
+        if (s1 - s0) / sr > self.settings.max_visual_interval_seconds:
+            raise UnsupportedOperation(
+                f"visual prompt interval is {(s1 - s0) / sr:.1f}s; visually prompted separation runs as one model window and is limited to "
+                f"{self.settings.max_visual_interval_seconds:.0f}s (AUDIO_MAX_VISUAL_INTERVAL_SECONDS). Select a shorter interval or use text + span anchors.",
+                details={"interval": list(interval), "max_visual_interval_seconds": self.settings.max_visual_interval_seconds},
+            )
         local_anchors = None
         if prompt.anchors:
             local_anchors = [(t, max(a - s0 / sr, 0.0), min(b - s0 / sr, (s1 - s0) / sr)) for t, a, b in prompt.anchors]

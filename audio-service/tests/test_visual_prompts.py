@@ -119,3 +119,16 @@ def test_engine_places_visual_result_on_full_timeline(env):
     total = sum(s.samples for s in result.stems)
     assert np.max(np.abs(total - mix)) < 1e-5
     assert result.model["chunked"] is False
+
+
+def test_visual_interval_longer_than_limit_is_rejected(env, monkeypatch):
+    from sam_audio_service.errors import UnsupportedOperation
+
+    monkeypatch.setenv("AUDIO_MAX_VISUAL_INTERVAL_SECONDS", "0.5")
+    settings, video = env
+    engine = Engine(load_settings())
+    rate = 48000
+    mix = np.zeros((2, rate), dtype=np.float32)
+    meta = SeparationMetadata(prompts=["person"], source={"original_ref": video.as_uri()}, visual_prompt={"selection": selection_doc(), "detections": detections_doc()})
+    with pytest.raises(UnsupportedOperation, match="limited to 0s|limited to 1s"):
+        engine.separate(DecodedAudio(mix, rate, rate, 2), meta)

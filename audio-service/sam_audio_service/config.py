@@ -27,6 +27,12 @@ def _float(name: str, default: float) -> float:
     return float(raw) if raw not in (None, "") else default
 
 
+def _opt_float(name: str) -> float | None:
+    """``None`` when the variable is unset, so a backend-dependent default can apply."""
+    raw = os.getenv(name)
+    return float(raw) if raw not in (None, "") else None
+
+
 @dataclass
 class Settings:
     # "mock" is a deterministic DSP stand-in for local development and CI. It is NOT
@@ -42,7 +48,10 @@ class Settings:
     predict_spans: bool = field(default_factory=lambda: _bool("AUDIO_PREDICT_SPANS", False))
     reranking_candidates: int = field(default_factory=lambda: _int("AUDIO_RERANKING_CANDIDATES", 1))
     # 0 disables chunking. Long inputs are otherwise processed in overlapping windows.
-    chunk_seconds: float = field(default_factory=lambda: _float("AUDIO_CHUNK_SECONDS", 0.0))
+    # Unset => 20 s for the real model (upstream recommends 10-30 s windows and memory
+    # scales with window length), 0 for the mock, which has no memory ceiling.
+    chunk_seconds: float = 0.0
+    chunk_seconds_env: float | None = field(default_factory=lambda: _opt_float("AUDIO_CHUNK_SECONDS"), repr=False)
     chunk_overlap_seconds: float = field(default_factory=lambda: _float("AUDIO_CHUNK_OVERLAP_SECONDS", 2.0))
     # "duplicate": run mono separation and duplicate to source channel count (1 pass).
     # "per_channel": separate each channel independently (N passes, keeps stereo image).
@@ -52,6 +61,10 @@ class Settings:
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
     max_input_bytes: int = field(default_factory=lambda: _int("AUDIO_MAX_INPUT_BYTES", 500 * 1024 * 1024))
     max_prompts: int = field(default_factory=lambda: _int("AUDIO_MAX_PROMPTS", 8))
+    # Visually prompted requests run the whole selected interval as ONE model window (frames
+    # must stay aligned with the audio, so no chunking). Upstream reports ~30 s as the
+    # practical ceiling for the large model on an 80 GB GPU.
+    max_visual_interval_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_VISUAL_INTERVAL_SECONDS", 30.0))
 
     # Media references. file:// references must resolve under media_root (a shared volume
     # owned by Person 4). http(s) references must match an allow-listed host.
@@ -60,17 +73,47 @@ class Settings:
     # Where stems are written when a request asks for file references instead of base64.
     output_root: Path = field(default_factory=lambda: Path(os.getenv("AUDIO_OUTPUT_ROOT", "output")).resolve())
 
+    # Real-model knobs (AUDIO_BACKEND=sam). See backends/sam_audio.py for the rationale,
+    # the user-reported memory figures and the per-GPU-class recommendations.
+    # "keep_object" follows the paper (object kept, background zeroed); "notebook"
+    # reproduces the official notebook (object zeroed). A/B documented in sam_audio.py.
+    visual_mask_mode: str = field(default_factory=lambda: os.getenv("AUDIO_VISUAL_MASK_MODE", "keep_object"))
+    # The PE-A-Frame span predictor is multi-billion-parameter; off it is, no span prediction.
+    load_span_predictor: bool = field(default_factory=lambda: _bool("AUDIO_LOAD_SPAN_PREDICTOR", True))
+    # CLAP/Judge/ImageBind re-rankers; only used when reranking_candidates > 1.
+    load_rankers: bool = field(default_factory=lambda: _bool("AUDIO_LOAD_RANKERS", True))
+    ode_method: str = field(default_factory=lambda: os.getenv("AUDIO_ODE_METHOD", "midpoint"))
+    ode_step_size: float = field(default_factory=lambda: _float("AUDIO_ODE_STEP_SIZE", 2 / 32))
+    # Frames and masks are pre-resized to this; the vision encoder resizes to 336 anyway.
+    frame_size: int = field(default_factory=lambda: _int("AUDIO_FRAME_SIZE", 336))
+
     ffmpeg: str = field(default_factory=lambda: os.getenv("AUDIO_FFMPEG", "ffmpeg"))
     ffprobe: str = field(default_factory=lambda: os.getenv("AUDIO_FFPROBE", "ffprobe"))
     ffmpeg_timeout: int = field(default_factory=lambda: _int("AUDIO_FFMPEG_TIMEOUT", 600))
+
+    def __post_init__(self) -> None:
+        if self.chunk_seconds_env is not None:
+            self.chunk_seconds = self.chunk_seconds_env
+        elif self.backend == "sam":
+            self.chunk_seconds = 20.0
 
     def validate(self) -> None:
         if self.backend not in {"mock", "sam"}:
             raise ValueError(f"AUDIO_BACKEND must be 'mock' or 'sam', got {self.backend!r}")
         if self.stereo_mode not in {"duplicate", "per_channel"}:
             raise ValueError("AUDIO_STEREO_MODE must be 'duplicate' or 'per_channel'")
+        if self.max_visual_interval_seconds <= 0:
+            raise ValueError("AUDIO_MAX_VISUAL_INTERVAL_SECONDS must be positive")
+        if self.chunk_seconds < 0:
+            raise ValueError("AUDIO_CHUNK_SECONDS must not be negative")
         if self.chunk_seconds and self.chunk_seconds <= 2 * self.chunk_overlap_seconds:
             raise ValueError("AUDIO_CHUNK_SECONDS must exceed twice AUDIO_CHUNK_OVERLAP_SECONDS")
+        if self.visual_mask_mode not in {"keep_object", "notebook"}:
+            raise ValueError("AUDIO_VISUAL_MASK_MODE must be 'keep_object' or 'notebook'")
+        if self.frame_size <= 0:
+            raise ValueError("AUDIO_FRAME_SIZE must be positive")
+        if not 0 < self.ode_step_size <= 1:
+            raise ValueError("AUDIO_ODE_STEP_SIZE must be in (0, 1]")
 
 
 def load_settings() -> Settings:

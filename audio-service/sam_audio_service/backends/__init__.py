@@ -13,7 +13,20 @@ def create_backend(settings: Settings) -> Backend:
     if settings.backend == "sam":
         from .sam_audio import SamAudioBackend
 
-        return SamAudioBackend(model_id=settings.model_id, device=settings.device, dtype=settings.dtype)
+        return SamAudioBackend(
+            model_id=settings.model_id,
+            device=settings.device,
+            dtype=settings.dtype,
+            mask_mode=settings.visual_mask_mode,  # type: ignore[arg-type]  # validated in Settings.validate
+            load_span_predictor=settings.load_span_predictor,
+            load_rankers=settings.load_rankers,
+            ode_method=settings.ode_method,
+            ode_step_size=settings.ode_step_size,
+            frame_size=settings.frame_size,
+            ffmpeg=settings.ffmpeg,
+            ffprobe=settings.ffprobe,
+            ffmpeg_timeout=settings.ffmpeg_timeout,
+        )
     raise ValueError(f"unknown backend {settings.backend!r}")
 
 

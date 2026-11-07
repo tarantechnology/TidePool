@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from . import CONTRACT_VERSION, __version__
-from .audio_io import DecodedAudio, decode, encode_wav_pcm16
+from .audio_io import DecodedAudio, decode, encode_wav_pcm16, encode_wav_float32
 from .config import Settings, load_settings
 from .contracts import ModelInfo, SeparationMetadata, SeparationRequest, SeparationResponse, SourceInfo, StemResult
 from .engine import Engine, write_stem_file
@@ -74,6 +74,11 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         status = engine.status()
         return {"status": "ok" if status["loaded"] else "degraded", "service": "sam-audio-service", "version": __version__, "contract_version": CONTRACT_VERSION, "model": status}
 
+    @app.get("/ready")
+    def ready():
+        status = engine.status()
+        return JSONResponse({"status": "ready" if status["loaded"] else "not_ready", "model": status}, status_code=200 if status["loaded"] else 503)
+
     @app.get("/capabilities")
     def capabilities() -> dict[str, Any]:
         backend = engine.backend
@@ -91,7 +96,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                 "visual": backend.supports_visual,
             },
             "input": {"sample_rate": backend.sample_rate, "accepted": "any FFmpeg-decodable audio or video; WAV PCM preferred", "max_duration_seconds": settings.max_duration_seconds, "max_input_bytes": settings.max_input_bytes, "max_prompts": settings.max_prompts},
-            "output": {"format": "wav/pcm_s16le", "sample_rate": backend.sample_rate, "channels": "matches source (1 or 2)", "residual_modes": ["mixture_minus_targets", "model", "none"], "return_modes": ["base64", "file"]},
+            "output": {"format": "wav/pcm_f32le (default), wav/pcm_s16le (lossy)", "sample_rate": backend.sample_rate, "channels": "matches source (1 or 2)", "residual_modes": ["mixture_minus_targets", "model", "none"], "return_modes": ["base64", "file"]},
             "defaults": {"predict_spans": settings.predict_spans, "reranking_candidates": settings.reranking_candidates, "stereo_mode": settings.stereo_mode, "chunk_seconds": settings.chunk_seconds},
             "error_codes": ERROR_CODES,
         }
@@ -113,9 +118,9 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         result = engine.separate(audio, metadata, workdir=workdir)
         stems: list[StemResult] = []
         for stem in result.stems:
-            wav = encode_wav_pcm16(stem.samples, audio.sample_rate)
+            wav = (encode_wav_float32 if metadata.options.output_format == "pcm_f32le" else encode_wav_pcm16)(stem.samples, audio.sample_rate)
             item = StemResult(
-                name=stem.name, stem_id=stem.stem_id, role=stem.role, prompt=stem.prompt, label=stem.label, start_time=0.0,
+                name=stem.name, stem_id=stem.stem_id, role=stem.role, prompt=stem.prompt, label=stem.label, start_time=0.0, format="wav/" + metadata.options.output_format,
                 duration=round(stem.samples.shape[1] / audio.sample_rate, 6), sample_rate=audio.sample_rate, channels=int(stem.samples.shape[0]),
                 sample_count=int(stem.samples.shape[1]), spans=stem.spans, source_asset_id=metadata.asset_id,
             )

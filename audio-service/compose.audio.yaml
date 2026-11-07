@@ -2,7 +2,7 @@
 # HTTP adapter without editing Person 4's file:
 #   docker compose -f compose.yaml -f audio-service/compose.audio.yaml up --build
 # GPU variant (needs the NVIDIA container toolkit and approved Hugging Face access):
-#   AUDIO_TARGET=sam HF_TOKEN=hf_... docker compose -f compose.yaml -f audio-service/compose.audio.yaml up --build
+#   HF_TOKEN=hf_... docker compose -f compose.yaml -f audio-service/compose.audio.yaml -f audio-service/compose.gpu.yaml up --build
 services:
   soundcanvas:
     environment:
@@ -34,7 +34,7 @@ services:
       - ./storage:/data:ro
       - sam-audio-models:/models
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health').status==200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/ready').status==200 else 1)"]
       interval: 15s
       timeout: 5s
       retries: 20

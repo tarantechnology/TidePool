@@ -86,7 +86,7 @@ class InferenceOptions(BaseModel):
     stereo_mode: Literal["duplicate", "per_channel"] | None = None
     chunk_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     seed: int | None = Field(default=None, ge=0)
-    output_format: Literal["pcm_s16le"] = "pcm_s16le"
+    output_format: Literal["pcm_f32le", "pcm_s16le"] = "pcm_f32le"
     # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.
     return_mode: Literal["base64", "file"] = "base64"
@@ -199,7 +199,7 @@ class StemResult(BaseModel):
     sample_rate: int
     channels: int
     sample_count: int
-    format: str = "wav/pcm_s16le"
+    format: str = "wav/pcm_f32le"
     spans: list[list[float]] | None = Field(default=None, description="[[start, end], ...] seconds where the target is active, if known")
     source_asset_id: str | None = None
 

@@ -61,3 +61,15 @@ target `sam`) is unaffected: both packages ship manylinux wheels.
 
 The mock backend (`AUDIO_BACKEND=mock`) is a band-pass filter, not separation; every response
 produced by it carries `model.is_mock=true` and a warning.
+
+## GPU deployment and readiness
+
+For NVIDIA hardware with Docker's NVIDIA Container Toolkit and approved Hugging Face model access, run:
+
+```bash
+HF_TOKEN=... docker compose -f compose.yaml -f audio-service/compose.audio.yaml -f audio-service/compose.gpu.yaml up --build
+```
+
+The GPU override requests one NVIDIA device and sets `AUDIO_DEVICE=cuda`; model startup fails rather than falling back to CPU if CUDA is unavailable. `/health` is liveness and `/ready` returns 503 until the model is loaded. GPU access, weights and model performance must be checked on the target host. The base overlay remains mock/CPU by default.
+
+The default response contains IEEE float32 WAV stems. This preserves values outside [-1, 1] so the target and residual can reconstruct the mixture without clipping. Explicit `options.output_format=pcm_s16le` is a lossy compatibility option. The backend inference timeout defaults to 3600 seconds and is configurable via `INFERENCE_TIMEOUT_SECONDS`; retry failed jobs by submitting a new process request. A long timeout does not guarantee completion for all inputs and hardware.

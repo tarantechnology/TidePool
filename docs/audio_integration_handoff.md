@@ -54,7 +54,7 @@ saying the stems are band-pass filtered copies of the mixture, not separation.
 | --- | --- | --- |
 | `POST` | `/separate` | **Person 4's existing contract.** Multipart: file part `audio`, form field `metadata` (JSON string). |
 | `POST` | `/v1/separate` | *Proposed.* Same JSON as `metadata`, plus `audio_ref` instead of uploaded bytes — for when both services share a volume. |
-| `GET` | `/health` | `{"status": "ok"\|"degraded", "version", "contract_version", "model": {...}}`. `degraded` means the checkpoint is not loaded; `model.load_error` says why. Use as a container healthcheck. |
+| `GET` | `/health` | `{"status": "ok"\|"degraded", "version", "contract_version", "model": {...}}`. `degraded` means the checkpoint is not loaded; `model.load_error` says why. Use `/ready` for the container readiness check; it returns 503 until the model is loaded. |
 | `GET` | `/capabilities` | Machine-readable prompting modes, limits, defaults, output format and the full `error_codes` table. Read this instead of hard-coding our limits. |
 | `GET` | `/docs`, `/openapi.json` | FastAPI's generated schema for everything above. |
 
@@ -88,7 +88,7 @@ Contract C: `stems[]` + `model` + `source` + `request_id` + `warnings[]` +
 
 Guarantees, in one place:
 
-- Output is **48 kHz, PCM signed 16-bit little-endian WAV** (complete RIFF file, base64, no
+- Output defaults to **48 kHz, IEEE float32 WAV** (complete RIFF file, base64, no
   data-URI prefix). Channel count **matches the source** (1 or 2).
 - **Every stem is full-timeline**: `start_time == 0.0`, and `duration` / `sample_count`
   equal `source.duration` / `source.sample_count` for every stem including the residual. We
@@ -97,8 +97,8 @@ Guarantees, in one place:
 - One stem per prompt (named by `prompts[].name`, else the normalised prompt text), plus one
   `residual` stem unless `options.residual: "none"`.
 - With the default `options.residual: "mixture_minus_targets"` the residual is
-  `mixture - sum(targets)`, so **`sum(stems) == source`** exactly in float and within a few
-  16-bit LSBs after encoding. That is what makes "mute the siren" equal "original minus
+  `mixture - sum(targets)`, so **`sum(stems) == source`** exactly in float and within
+  float32 rounding after encoding. That is what makes "mute the siren" equal "original minus
   siren" in the editor.
 - `warnings[]` is never a reason to fail a job. It is where we say "the mock backend ran",
   "your `track_id` could not steer the model", "chunking was disabled", "the residual mode
@@ -131,8 +131,8 @@ is available.
 
 | Setup | Reported | Implication |
 | --- | --- | --- |
-| RTX 4090, `sam-audio-large`, reranking on | ≈ 1 min per ~4 s of audio | A 60 s clip is far beyond Person 4's 600 s timeout. Not viable without reranking off and chunking. |
-| A100, `sam-audio-large`, 30 s clip | tens of seconds | A 60 s clip in 20–30 s windows plausibly fits inside 600 s. |
+| RTX 4090, `sam-audio-large`, reranking on | ≈ 1 min per ~4 s of audio | A 60 s clip is far beyond the earlier 600 s backend timeout. Not viable without reranking off and chunking. |
+| A100, `sam-audio-large`, 30 s clip | tens of seconds | A 60 s clip in 20–30 s windows may fit the configurable timeout. |
 | `reranking_candidates = 8` | ≈ 8× the above | Treat as an opt-in quality mode, not a default. |
 | Apple MPS | minutes per 10 s, memory hungry | Development only; never a demo path. |
 | Mock backend (CPU) | ~10–20 ms per 3 s stereo clip, measured | What CI and the fixtures use. |
@@ -266,7 +266,7 @@ Real response from this service (mock backend, 3 s stereo source, `prompts: ["si
       "role": "target", "prompt": "siren", "label": "siren",
       "start_time": 0.0, "duration": 3.0,
       "sample_rate": 48000, "channels": 2, "sample_count": 144000,
-      "format": "wav/pcm_s16le"
+      "format": "wav/pcm_f32le"
     },
     {
       "name": "residual",
@@ -275,7 +275,7 @@ Real response from this service (mock backend, 3 s stereo source, `prompts: ["si
       "role": "residual", "label": "everything else",
       "start_time": 0.0, "duration": 3.0,
       "sample_rate": 48000, "channels": 2, "sample_count": 144000,
-      "format": "wav/pcm_s16le"
+      "format": "wav/pcm_f32le"
     }
   ],
   "model": {
@@ -421,7 +421,7 @@ blob). What follows is what we guarantee about the audio behind that URL.
 
 ### Preferred audio output format
 
-- **48 kHz, signed 16-bit little-endian PCM, RIFF WAV**, complete file with header. Every
+- **48 kHz, IEEE float32 RIFF WAV by default**, complete file with header. Every
   browser decodes it, it is seekable, and it is the format Person 4 already stores.
 - Channel count **matches the source** (1 or 2), identical across all stems in a response.
 - Over HTTP we return the WAV base64-encoded in `stems[].audio_base64`; with
@@ -465,7 +465,7 @@ Per stem, from Contract C (Person 4 should pass these through):
 
 ### Audio layer expectations
 
-- `sum(stems) == source` (exactly in float; within a few 16-bit LSBs after PCM16 encoding),
+- `sum(stems) == source` (exactly in float; within float32 rounding after default WAV encoding),
   because `residual = mixture - sum(targets)` by default. So:
   **mute** a stem = original minus that stem; **solo** = that stem alone; **all stems at
   unity, unmuted** = the original, bit-for-bit modulo rounding.
@@ -579,14 +579,14 @@ if none of it happens, text and interval prompting keep working exactly as today
    `jobs.output`) and pass `role`, `label`, `prompt`, `spans` and `model.is_mock` through to
    the stem/job response, so Person 3 can tell a mock run from a real one and a text-only
    run from a mask-guided one.
-5. **Timeout**: your 600 s default is the right order of magnitude but is not enough for
+5. **Timeout**: the configurable 3600 s default may not be enough for
    `-large` + reranking on a single GPU for anything over ~30 s of audio. Either keep
    `reranking_candidates: 1` and `chunk_seconds: 20`, or raise
    `INFERENCE_TIMEOUT_SECONDS`. Per-prompt, per-channel and per-candidate costs multiply.
 6. **Keep one in-flight separation per project** (you already enforce this with the
    `one_active` index). We serialise inference internally, so parallel requests queue rather
    than fail, but a single GPU cannot overlap them.
-7. **Health gating**: use `GET /health` (our compose overlay already waits on
+7. **Health gating**: use `GET /ready` (our compose overlay already waits on
    `service_healthy`). `degraded` means the model has not loaded; a request then returns
    `MISSING_MODEL` with `retryable: true` rather than hanging.
 
@@ -611,7 +611,7 @@ if none of it happens, text and interval prompting keep working exactly as today
 - Stems stay yours: you decode `audio_base64` into
   `STORAGE_ROOT/projects/<pid>/stems/<uid>.wav` exactly as you do now. We do not write
   there and do not want to.
-- `MAX_STEM_BYTES` (500 MiB) is comfortable: a 48 kHz stereo PCM16 stem is ~11.5 MB/minute,
+- `MAX_STEM_BYTES` (500 MiB) is comfortable: a 48 kHz stereo float32 stem is ~23 MB/minute,
   so even a 10-minute input is ~115 MB per stem. The **response body** is the tighter
   constraint — N+1 stems, base64 (+33%) — e.g. 3 stems of a 10-minute clip is ~460 MB in one
   JSON document. That is the motivation for `options.return_mode: "file"` or `/v1/separate`
@@ -741,7 +741,7 @@ parsing we can do.
 Real latency is unmeasured (no GPU). Reported figures range from ~1 min per 4 s of audio on
 a 4090 with reranking to tens of seconds for a 30 s clip on an A100.
 *Proposed default:* `reranking_candidates: 1` and `chunk_seconds: 20` as the shipping
-configuration, `INFERENCE_TIMEOUT_SECONDS=600`, and a demo clip under ~30 s. We report
+configuration, `INFERENCE_TIMEOUT_SECONDS=3600`, and a demo clip under ~30 s. We report
 `model.elapsed_seconds` per request; we do **not** stream progress, so Person 4's `progress`
 field cannot be finer-grained than queued/processing/completed from our side. Per-chunk
 progress callbacks are possible if wanted.

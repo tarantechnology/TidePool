@@ -35,6 +35,7 @@ def _free_port() -> int:
 @pytest.fixture
 def audio_service(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    monkeypatch.setenv("AUDIO_MEDIA_ROOT", str(tmp_path))
     from sam_audio_service.api import create_app
     from sam_audio_service.config import load_settings
 
@@ -116,8 +117,9 @@ def test_backend_to_audio_and_export(backend_client, tmp_path):
         assert abs(stem["duration"] - source["duration"]) < 0.05, (stem["duration"], source["duration"])
         audio = client.get(stem["audio_url"], headers=headers)
         assert audio.status_code == 200
-        with wave.open(io.BytesIO(audio.content)) as w:
-            assert w.getframerate() == 48000 and w.getnchannels() == 2
+        from sam_audio_service.audio_io import decode
+        decoded = decode(data=audio.content)
+        assert decoded.sample_rate == 48000 and decoded.channels == 2
     siren = next(s for s in job["stems"] if s["name"] == "siren")
 
     # Editor-style edits (Person 3 operations through Person 4's API) and the cinematic export
@@ -145,3 +147,50 @@ def test_backend_surfaces_audio_service_error(backend_client, tmp_path):
     r = client.post(f"/api/projects/{pid}/process", headers=headers, json={"prompts": ["a" * 600]})
     job = _wait(client, "/api/jobs/" + r.json()["job_id"], headers)
     assert job["status"] == "failed" and job["error"]
+
+
+def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
+    """30 fps visual selection through the real HTTP boundary, with a mock model."""
+    import hashlib
+    from sam_audio_service.backends.mock import MockBackend
+    from sam_audio_service.visual import prepare_masked_video
+
+    client, _ = backend_client
+    original = tmp_path/'visual.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=red:s=64x48:r=30:d=1',
+                    '-f','lavfi','-i','sine=frequency=440:duration=1', '-c:v','mpeg4','-c:a','aac','-shortest',str(original)],check=True)
+    sha = hashlib.sha256(original.read_bytes()).hexdigest()
+    mask = {'encoding':'rle','order':'C','size':[48,64],'counts':[0,3072],'foreground_value':1}
+    frames = [{'frame_index':i, 'timestamp_seconds':i/30, 'valid_until_seconds':(i+1)/30,
+               'objects':[{'track_id':7,'detection_id':f'frame:{i}:det:0','mask':mask}]} for i in range(30)]
+    detections = {'analysis_id':'run1','source_sha256':sha,'fps':30,'width':64,'height':48,
+                  'processed_duration_seconds':1.0,'frames':frames}
+    selection = {'kind':'visual_selection','analysis_id':'run1','source_sha256':sha,'track_id':7,
+                 'detection_id':'frame:9:det:0','label':'person','interval':{'start_seconds':.2,'end_seconds':.8}}
+    calls=[]
+    base = MockBackend.separate
+    def validate_masks(self, mixture, prompt, options):
+        assert prompt.visual is not None
+        decoded, masks = prepare_masked_video(prompt.visual, size=64)
+        assert decoded.shape[0] == masks.shape[0] == 18
+        assert (masks == 0).all()
+        calls.append(True)
+        return base(self, mixture, prompt, options)
+    monkeypatch.setattr(MockBackend, 'separate', validate_masks)
+    project=client.post('/api/projects').json(); pid=project['project_id']; h={'Authorization':'Bearer '+project['access_token']}
+    with original.open('rb') as f:
+        assert client.post(f'/api/projects/{pid}/upload', headers=h, files={'file':('visual.mp4',f,'video/mp4')}).status_code==200
+    request={'prompts':['person'], 'visual_prompt':{'selection':selection,'detections':detections,'video_ref':str(original)}}
+    start=client.post(f'/api/projects/{pid}/process',headers=h,json=request)
+    assert start.status_code==202, start.text
+    result=_wait(client, '/api/jobs/'+start.json()['job_id'],h)
+    assert result['status']=='completed', result
+    assert calls
+    stem=result['stems'][0]
+    assert client.patch(f"/api/projects/{pid}/stems/{stem['id']}",headers=h,json={'volume':.5}).status_code==200
+    export=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'mp4','include_video':True}).json()['export_id']
+    result=_wait(client,'/api/exports/'+export,h)
+    assert result['status']=='completed', result
+    out=tmp_path/'visual-export.mp4'; out.write_bytes(client.get(result['download_url'],headers=h).content)
+    streams=subprocess.check_output(['ffprobe','-v','error','-show_entries','stream=codec_type','-of','csv=p=0',str(out)],text=True)
+    assert 'audio' in streams and 'video' in streams

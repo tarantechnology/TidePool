@@ -31,8 +31,9 @@ def test_person4_contract_shape(client, wav_path):
     assert names == ["dog", "residual"]
     for stem in body["stems"]:
         raw = base64.b64decode(stem["audio_base64"], validate=True)
-        with wave.open(io.BytesIO(raw)) as w:
-            assert w.getframerate() == 48000 and w.getnchannels() == 2 and w.getnframes() == 48000
+        decoded = decode(data=raw)
+        assert decoded.sample_rate == 48000 and decoded.channels == 2 and decoded.frames == 48000
+        assert stem["format"] == "wav/pcm_f32le"
         assert stem["sample_rate"] == 48000 and stem["channels"] == 2 and stem["start_time"] == 0.0
         assert abs(stem["duration"] - 1.0) < 1e-6
     assert body["model"]["is_mock"] is True
@@ -126,3 +127,27 @@ def test_chunking_preserves_length_and_reconstruction(tmp_path, monkeypatch):
     # the 1 kHz tone sits inside the mock "siren" band, so the target should carry most energy
     target = result.stems[0].samples
     assert np.mean(target**2) > 0.8 * np.mean(mix**2)
+
+
+def test_float_stems_preserve_out_of_range_samples():
+    from sam_audio_service.audio_io import encode_wav_float32
+    target = np.array([[1.5, -1.25, .25]], dtype=np.float32)
+    mixture = np.array([[.8, -.9, .3]], dtype=np.float32)
+    residual = mixture - target
+    recovered = [decode(data=encode_wav_float32(stem, 48000)).samples for stem in (target, residual)]
+    assert np.max(np.abs(recovered[0] - target)) < 1e-6
+    assert np.max(np.abs(sum(recovered) - mixture)) < 1e-6
+
+
+def test_readiness_requires_loaded_model(settings):
+    from fastapi.testclient import TestClient
+    from sam_audio_service.api import create_app
+    settings.load_on_startup = False
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/health').status_code == 200
+        assert client.get('/ready').status_code == 503
+
+
+def test_readiness_after_model_load(client):
+    response = client.get('/ready')
+    assert response.status_code == 200 and response.json()['status'] == 'ready'

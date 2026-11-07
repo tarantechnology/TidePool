@@ -203,6 +203,17 @@ def encode_wav_pcm16(samples: np.ndarray, sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
+def encode_wav_float32(samples: np.ndarray, sample_rate: int) -> bytes:
+    """IEEE float WAV preserves model values outside [-1, 1] for lossless stem mixing."""
+    if samples.ndim == 1:
+        samples = samples[None, :]
+    channels = samples.shape[0]
+    data = np.ascontiguousarray(sanitise(samples).T, dtype='<f4').tobytes()
+    # RIFF WAVE, format 3 = IEEE float; do not apply per-stem normalization.
+    fmt = struct.pack('<HHIIHH', 3, channels, sample_rate, sample_rate * channels * 4, channels * 4, 32)
+    return b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<I', 16) + fmt + b'data' + struct.pack('<I', len(data)) + data
+
+
 def peak_dbfs(samples: np.ndarray) -> float:
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0
     return 20 * np.log10(peak) if peak > 0 else -np.inf

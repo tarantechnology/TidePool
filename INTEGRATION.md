@@ -10,7 +10,7 @@ Set `INFERENCE_ADAPTER=http` and `SAM_AUDIO_SERVICE_URL` to your endpoint. The w
 {"stems":[{"name":"dog","audio_base64":"<base64-encoded WAV bytes>"}]}
 ```
 
-Return at least one valid WAV containing audio. Duration is probed locally. The default HTTP timeout is 600 seconds (`INFERENCE_TIMEOUT_SECONDS`), and each decoded stem is capped by `MAX_STEM_BYTES`. Non-2xx, timeout, malformed JSON, invalid base64 and invalid audio fail the job; its error appears at `GET /api/jobs/{id}`. To retry, submit a new processing job. Service responses are trusted and should come from a trusted network. In fake mode each prompt produces a copy of the original audio, for integration only.
+Return at least one valid WAV containing audio. Float32 WAV preserves stem headroom and is supported by the backend; PCM16 may clip individual stems. In HTTP mode at least one nonempty text prompt is required before a job is queued. Duration is probed locally. The default HTTP timeout is 3600 seconds (`INFERENCE_TIMEOUT_SECONDS`), and each decoded stem is capped by `MAX_STEM_BYTES`. Non-2xx, timeout, malformed JSON, invalid base64 and invalid audio fail the job; its error appears at `GET /api/jobs/{id}`. To retry, submit a new processing job. Service responses are trusted and should come from a trusted network. In fake mode each prompt produces a copy of the original audio, for integration only.
 
 ## Person 2: vision
 

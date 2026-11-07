@@ -55,7 +55,7 @@ selection = json.load(open('vision/outputs/real_seg/selection.json'))
 response = httpx.post(
     f"http://localhost:8000/api/projects/{os.environ['PROJECT_ID']}/process",
     headers={'Authorization': 'Bearer ' + os.environ['PROJECT_TOKEN']},
-    json={'prompts': [], 'visual_prompt': selection},
+    json={'prompts': ['person speaking'], 'visual_prompt': selection},
 )
 response.raise_for_status()
 print(response.json())  # job ID; poll existing /api/jobs/{id}

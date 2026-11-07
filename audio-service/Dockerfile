@@ -13,7 +13,7 @@ COPY sam_audio_service ./sam_audio_service
 RUN pip install --no-cache-dir .
 ENV AUDIO_BACKEND=mock AUDIO_PORT=8001 AUDIO_HOST=0.0.0.0
 EXPOSE 8001
-HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health').status==200 else 1)"
+HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/ready').status==200 else 1)"
 CMD ["python", "-m", "sam_audio_service"]
 
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS sam

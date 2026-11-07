@@ -123,7 +123,7 @@ def generate(out: Path, *, seconds: float, prompts: list[str], ffmpeg: str) -> d
                 duration=round(stem.samples.shape[1] / audio.sample_rate, 6),
                 sample_rate=audio.sample_rate,
                 channels=int(stem.samples.shape[0]),
-                sample_count=int(stem.samples.shape[1]),
+                sample_count=int(stem.samples.shape[1]), format="wav/pcm_s16le",
                 spans=stem.spans,
                 source_asset_id=asset_id,
             )

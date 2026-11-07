@@ -25,6 +25,7 @@ request still runs with text + anchors and the response explains what was missin
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -130,6 +131,37 @@ def _frame_masks(detections: dict[str, Any], track_id: int | None, detection_id:
     return masks, span
 
 
+def _validate_coverage(detections: dict[str, Any], interval: tuple[float, float], fps: float,
+                       track_id: int | None, detection_id: str | None) -> None:
+    """Missing records are unknown, not evidence that an object is absent."""
+    if not math.isfinite(fps) or fps <= 0:
+        raise InvalidRequest("native video FPS is required for frame coverage validation")
+    first = max(0, math.ceil(interval[0] * fps - 1e-6))
+    end = max(first, math.ceil(interval[1] * fps - 1e-6))
+    records = {}
+    for frame in detections.get("frames", []):
+        index = frame.get("frame_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index in records:
+            raise InvalidRequest("detection frame indices must be unique integers")
+        records[index] = frame
+    for index in range(first, end):
+        frame = records.get(index)
+        if frame is None:
+            raise InvalidRequest(f"sparse detection metadata: native frame {index} is missing; rerun segmentation at native FPS")
+        objects = [obj for obj in frame.get("objects", []) if
+                   (obj.get("track_id") == track_id if track_id is not None else obj.get("detection_id") == detection_id)]
+        if len(objects) > 1:
+            raise InvalidRequest(f"ambiguous selected track at frame {index}")
+        if objects and not objects[0].get("mask"):
+            raise InvalidRequest(f"selected object has no instance mask at frame {index}")
+        if objects:
+            try:
+                from .visual import decode_rle_mask
+                decode_rle_mask(objects[0]["mask"])
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidRequest(f"invalid selected-object mask at frame {index}: {exc}") from exc
+
+
 def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | None, source_duration: float, settings: Settings, backend_supports_visual: bool, workdir: Path | None = None) -> VisualTranslation:
     if not raw:
         return VisualTranslation(None, [])
@@ -217,6 +249,8 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
                 frame_rate = frame_rate or detections.get("fps")
                 object_id = object_id or (f"track:{track_id}" if track_id is not None else detection_id)
             else:
+                if video_ref and not mask_video_ref and backend_supports_visual:
+                    raise InvalidRequest("visual input has no usable instance masks; rerun segmentation at native FPS")
                 frame_masks = None
 
     if not (frame_masks or mask_video_ref):
@@ -234,6 +268,13 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
         # Generic shape: the union of the given time ranges is where the model should look.
         interval = (min(a for a, _ in plus), max(b for _, b in plus)) if plus else (0.0, source_duration)
     video_path = resolve_ref(str(video_ref), settings, workdir=workdir)
+    if detections is not None and frame_masks is not None:
+        from .visual import probe_video
+        native_fps = probe_video(str(video_path), settings.ffprobe, min(settings.ffmpeg_timeout, 60))["frame_rate"]
+        declared_fps = float(frame_rate or 0)
+        if not native_fps or not math.isclose(declared_fps, native_fps, rel_tol=1e-4, abs_tol=1e-5):
+            raise InvalidRequest("detection FPS does not match the source video; rerun segmentation at native FPS")
+        _validate_coverage(detections, interval, native_fps, track_id, detection_id)
     mask_path = resolve_ref(str(mask_video_ref), settings, workdir=workdir) if mask_video_ref else None
     visual = VisualInput(
         video_path=str(video_path), interval=interval, mask_video_path=str(mask_path) if mask_path else None, frame_masks=frame_masks,

@@ -195,7 +195,7 @@ HTTP 200. `null` fields are omitted from the wire response
       "sample_rate": 48000,
       "channels": 2,
       "sample_count": 576000,
-      "format": "wav/pcm_s16le",
+      "format": "wav/pcm_f32le",
       "spans": [[2.35, 5.8], [7.1, 10.95]],
       "source_asset_id": "7f3c9d2e1a5b4c6d8e0f1a2b3c4d5e6f"
     },
@@ -210,7 +210,7 @@ HTTP 200. `null` fields are omitted from the wire response
       "sample_rate": 48000,
       "channels": 2,
       "sample_count": 576000,
-      "format": "wav/pcm_s16le"
+      "format": "wav/pcm_f32le"
     }
   ],
   "model": {
@@ -256,7 +256,7 @@ A committed copy with truncated base64 lives at
 | `stems[].sample_rate` | int | proposed | Always `48000`. |
 | `stems[].channels` | int | proposed | Matches the source (1 or 2). Identical across stems. |
 | `stems[].sample_count` | int | proposed | Frames per channel. **Authoritative length.** Identical across stems and equal to `source.sample_count`. |
-| `stems[].format` | string | proposed | `"wav/pcm_s16le"`. The only format produced today. |
+| `stems[].format` | string | proposed | `"wav/pcm_f32le"` by default; optional PCM16 can clip. |
 | `stems[].spans` | `[[start, end], ...]` \| null | proposed | Seconds on the source timeline where the target is believed active: predicted spans when `predict_spans`, otherwise the `+` anchors. A **UI hint**, not a trim instruction — audio outside a span is in the file and usually near-silent. |
 | `stems[].source_asset_id` | string \| null | proposed | Echo of the request's asset id. |
 | `model.*` | object | proposed | What actually ran: `backend` (`mock`\|`sam`), `model_id`, `device`, `dtype`, the effective `predict_spans` / `reranking_candidates` / `stereo_mode`, whether chunking kicked in, wall-clock `elapsed_seconds`, and `is_mock`. |
@@ -269,10 +269,10 @@ A committed copy with truncated base64 lives at
 ### The residual, and why it matters to the editor
 
 With the default `options.residual: "mixture_minus_targets"` the residual is literally
-`mixture - sum(targets)`, computed in float before PCM16 encoding. Therefore:
+`mixture - sum(targets)`, computed in float before WAV encoding. Therefore:
 
 ```
-sum(all stems) == source        # exactly in float; within a few 16-bit LSBs after encoding
+sum(all stems) == source        # within float32 rounding after default WAV encoding
 ```
 
 This is what makes the editor's semantics exact: muting a stem is the original minus that

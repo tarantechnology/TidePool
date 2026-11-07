@@ -89,11 +89,12 @@ def test_detections_only_picks_single_masked_track(env):
     assert any("only masked track" in w for w in t.warnings)
 
 
-def test_bbox_only_detections_fall_back(env):
+def test_bbox_only_visual_request_is_rejected(env):
+    from sam_audio_service.errors import InvalidRequest
     settings, video = env
     raw = {"selection": selection_doc(), "detections": detections_doc(with_masks=False), "video_ref": video.as_uri()}
-    t = translate_visual_prompt(raw, source=None, source_duration=1.0, settings=settings, backend_supports_visual=True)
-    assert t.visual is None and any("no instance masks" in w for w in t.warnings)
+    with pytest.raises(InvalidRequest, match="no usable instance masks"):
+        translate_visual_prompt(raw, source=None, source_duration=1.0, settings=settings, backend_supports_visual=True)
 
 
 def test_identity_mismatch_is_rejected(env):
@@ -141,3 +142,28 @@ def test_interval_is_clamped_to_processed_window(env):
     t = translate_visual_prompt(raw, source=src, source_duration=10.0, settings=settings, backend_supports_visual=True)
     assert t.visual is not None and t.visual.interval == (0.2, 1.0)
     assert t.anchors == [("+", 0.2, 1.0)] and any("clamped" in w for w in t.warnings)
+
+
+def test_sparse_and_unmasked_observations_are_rejected(env):
+    from sam_audio_service.errors import InvalidRequest
+    settings, video = env
+    doc = detections_doc()
+    doc['frames'] = [f for f in doc['frames'] if f['frame_index'] != 4]
+    with pytest.raises(InvalidRequest, match='native frame 4 is missing'):
+        translate_visual_prompt({'selection': selection_doc(), 'detections': doc, 'video_ref':video.as_uri()}, source=None, source_duration=1, settings=settings, backend_supports_visual=True)
+    doc = detections_doc()
+    doc['frames'][4]['objects'][0]['mask'] = None
+    with pytest.raises(InvalidRequest, match='no instance mask at frame 4'):
+        translate_visual_prompt({'selection': selection_doc(), 'detections': doc, 'video_ref':video.as_uri()}, source=None, source_duration=1, settings=settings, backend_supports_visual=True)
+    doc['frames'][4]['objects'] = []  # analyzed frame with no observation is valid
+    result = translate_visual_prompt({'selection': selection_doc(), 'detections': doc, 'video_ref':video.as_uri()}, source=None, source_duration=1, settings=settings, backend_supports_visual=True)
+    assert result.visual is not None and 4 not in result.visual.frame_masks
+
+
+def test_claimed_low_fps_cannot_hide_missing_frames(env):
+    from sam_audio_service.errors import InvalidRequest
+    settings, video = env
+    doc = detections_doc(fps=5, frames=5, start_frame=1, end_frame=4)
+    with pytest.raises(InvalidRequest, match='FPS does not match'):
+        translate_visual_prompt({'selection':selection_doc(), 'detections':doc, 'video_ref':video.as_uri()},
+                                source=None, source_duration=1, settings=settings, backend_supports_visual=True)

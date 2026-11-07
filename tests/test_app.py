@@ -58,7 +58,7 @@ def test_failed_inference(client,tmp_path,monkeypatch):
     audio=tmp_path/'a.wav'; subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
     with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
     monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://127.0.0.1:1/separate')
-    j=client.post(f'/api/projects/{pid}/process',headers=h,json={}).json()['job_id']
+    j=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['sound']}).json()['job_id']
     result=wait(client,'/api/jobs/'+j,h); assert result['status']=='failed' and result['error']
 
 def test_audio_mute_export(client,tmp_path):
@@ -74,3 +74,29 @@ def test_audio_mute_export(client,tmp_path):
     result=wait(client,'/api/exports/'+eid,h); assert result['status']=='completed',result
     out=tmp_path/'muted.wav'; out.write_bytes(client.get(result['download_url'],headers=h).content)
     with wave.open(str(out),'rb') as w: assert not any(w.readframes(w.getnframes()))
+
+
+def test_http_inference_requires_prompt_before_job(client, tmp_path, monkeypatch):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    monkeypatch.setenv('INFERENCE_ADAPTER','http')
+    assert client.post(f'/api/projects/{pid}/process',headers=h,json={}).status_code==422
+    assert client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['  ']}).status_code==422
+
+
+def test_inference_timeout_is_retryable_by_new_request(client, tmp_path, monkeypatch):
+    import httpx
+    import app.media as media
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://example.invalid')
+    def timeout(*args, **kwargs): raise httpx.ReadTimeout('timed out')
+    monkeypatch.setattr(media.httpx, 'post', timeout)
+    for _ in range(2):
+        response=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['tone']})
+        result=wait(client,'/api/jobs/'+response.json()['job_id'],h)
+        assert result['status']=='failed' and 'timed out' in result['error']

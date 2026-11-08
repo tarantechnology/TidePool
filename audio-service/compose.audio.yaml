@@ -1,0 +1,42 @@
+# Overlay for Person 4's compose.yaml. Adds this service and switches the backend to the
+# HTTP adapter without editing Person 4's file:
+#   docker compose -f compose.yaml -f audio-service/compose.audio.yaml up --build
+# GPU variant (needs the NVIDIA container toolkit and approved Hugging Face access):
+#   HF_TOKEN=hf_... docker compose -f compose.yaml -f audio-service/compose.audio.yaml -f audio-service/compose.gpu.yaml up --build
+services:
+  soundcanvas:
+    environment:
+      INFERENCE_ADAPTER: http
+      SAM_AUDIO_SERVICE_URL: http://audio-service:8001/separate
+    depends_on:
+      audio-service:
+        condition: service_healthy
+  audio-service:
+    build:
+      context: ./audio-service
+      target: ${AUDIO_TARGET:-mock}
+    ports:
+      - "8001:8001"
+    environment:
+      # Follows the image target unless overridden explicitly.
+      AUDIO_BACKEND: ${AUDIO_BACKEND:-${AUDIO_TARGET:-mock}}
+      AUDIO_MODEL_ID: ${AUDIO_MODEL_ID:-facebook/sam-audio-large}
+      AUDIO_DEVICE: ${AUDIO_DEVICE:-auto}
+      AUDIO_PREDICT_SPANS: ${AUDIO_PREDICT_SPANS:-false}
+      AUDIO_RERANKING_CANDIDATES: ${AUDIO_RERANKING_CANDIDATES:-1}
+      # Empty = unset: 20 s for the real model, 0 for the mock (see config.py).
+      AUDIO_CHUNK_SECONDS: ${AUDIO_CHUNK_SECONDS:-}
+      AUDIO_MAX_DURATION_SECONDS: ${AUDIO_MAX_DURATION_SECONDS:-600}
+      # Shared media volume so file:// references (video + mask video for visual prompts) resolve.
+      AUDIO_MEDIA_ROOT: /data
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ./storage:/data:ro
+      - sam-audio-models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/ready').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+volumes:
+  sam-audio-models:

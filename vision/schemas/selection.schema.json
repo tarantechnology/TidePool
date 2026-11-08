@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SoundCanvas visual selection 1.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "video_id",
+    "source",
+    "source_sha256",
+    "object_id",
+    "detection_id",
+    "label",
+    "class_name",
+    "class_id",
+    "confidence",
+    "bbox_xyxy",
+    "bbox_normalized",
+    "track_id",
+    "mask",
+    "kind",
+    "frame_width",
+    "frame_height",
+    "frame_index",
+    "timestamp_seconds",
+    "clicked_at_seconds",
+    "interval",
+    "audio_association",
+    "analysis_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "object_id": {
+      "type": "string"
+    },
+    "detection_id": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "class_name": {
+      "type": "string"
+    },
+    "class_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "bbox_xyxy": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "bbox_normalized": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "track_id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "mask": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "encoding",
+            "order",
+            "size",
+            "counts",
+            "foreground_value"
+          ],
+          "properties": {
+            "encoding": {
+              "const": "rle"
+            },
+            "order": {
+              "const": "C"
+            },
+            "foreground_value": {
+              "const": 1
+            },
+            "size": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "counts": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "kind": {
+      "const": "visual_selection"
+    },
+    "frame_width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "frame_height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "frame_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "clicked_at_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "interval": {
+      "type": "object",
+      "required": [
+        "start_seconds",
+        "end_seconds"
+      ],
+      "properties": {
+        "start_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "audio_association": {
+      "const": "unverified"
+    },
+    "analysis_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

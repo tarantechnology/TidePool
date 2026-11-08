@@ -118,6 +118,8 @@ def start(pid,kind,payload):
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
+    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not prompt.strip() for prompt in body.prompts)):
+        raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
     payload=body.model_dump()
     if payload['visual_prompt'] is None and p['visual']: payload['visual_prompt']=json.loads(p['visual'])
     return {'job_id':start(pid,'process',payload),'status':'queued'}

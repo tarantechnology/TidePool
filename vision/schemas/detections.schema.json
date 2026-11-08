@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SoundCanvas CV detections 1.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "video_id",
+    "source",
+    "source_sha256",
+    "width",
+    "height",
+    "frame_width",
+    "frame_height",
+    "processed_frames",
+    "analyzed_frames",
+    "inference_frames",
+    "media_type",
+    "fps",
+    "processed_duration_seconds",
+    "frames",
+    "annotated_media",
+    "runtime",
+    "analysis_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "frame_width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "frame_height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "processed_frames": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "analyzed_frames": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "inference_frames": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "media_type": {
+      "enum": [
+        "image",
+        "video"
+      ]
+    },
+    "fps": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0
+    },
+    "processed_duration_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "frame_index",
+          "timestamp_seconds",
+          "objects"
+        ],
+        "properties": {
+          "frame_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "valid_until_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "object_id",
+                "detection_id",
+                "label",
+                "class_name",
+                "class_id",
+                "confidence",
+                "bbox_xyxy",
+                "bbox_normalized",
+                "track_id",
+                "mask"
+              ],
+              "properties": {
+                "object_id": {
+                  "type": "string"
+                },
+                "detection_id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "class_name": {
+                  "type": "string"
+                },
+                "class_id": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "bbox_xyxy": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "bbox_normalized": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "track_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "mask": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "encoding",
+                        "order",
+                        "size",
+                        "counts",
+                        "foreground_value"
+                      ],
+                      "properties": {
+                        "encoding": {
+                          "const": "rle"
+                        },
+                        "order": {
+                          "const": "C"
+                        },
+                        "foreground_value": {
+                          "const": 1
+                        },
+                        "size": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        "counts": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "annotated_media": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "seconds"
+      ],
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "analysis_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "media_type": {
+            "const": "video"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "fps": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "processed_duration_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "frames": {
+            "items": {
+              "required": [
+                "valid_until_seconds"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

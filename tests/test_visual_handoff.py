@@ -233,3 +233,19 @@ def test_unsupported_video_timelines_are_rejected(tmp_path, video, damage, monke
     subprocess.run([*args, str(output)], check=True)
     with pytest.raises(ValueError, match='starting at zero|rotation|constant frame rate'):
         validate_timeline(output, 30)
+
+
+@pytest.mark.parametrize('start,end,frame',[(.2,.8,9),(.6,.9,21)])
+def test_visual_selection_past_extracted_audio_is_rejected(setup, start, end, frame):
+    from app.core import connect
+    client, pid, h, data, selection = setup
+    with connect() as db:
+        audio=Path(db.execute('SELECT audio FROM projects WHERE id=?',(pid,)).fetchone()['audio'])
+    short=audio.with_name('short.wav')
+    subprocess.run(['ffmpeg','-v','error','-y','-i',str(audio),'-t','0.5',str(short)],check=True)
+    short.replace(audio)
+    selection=deepcopy(selection)
+    selection.update(frame_index=frame,timestamp_seconds=frame/30,interval={'start_seconds':start,'end_seconds':end},**deepcopy(data['frames'][frame]['objects'][0]))
+    response=save_and_process(setup,selection=selection)
+    assert response.status_code==422
+    assert 'beyond the extracted audio' in response.json()['detail']

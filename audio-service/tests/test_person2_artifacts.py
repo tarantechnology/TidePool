@@ -154,6 +154,7 @@ def test_translate_real_documents(artefacts, probe, settings):
         for frame in detections["frames"]
         for obj in frame["objects"]
         if obj.get("track_id") == selection["track_id"] and obj.get("mask")
+        and _interval(selection)[0] - 1e-7 <= frame["timestamp_seconds"] < _interval(selection)[1] - 1e-7
     }
     assert expected, "the selected track has no instance masks in the detections document"
     assert set(visual.frame_masks) == expected
@@ -203,6 +204,7 @@ def test_prepare_masked_video_from_real_masks(artefacts, probe, settings):
         for frame in detections["frames"]
         for obj in frame["objects"]
         if obj.get("track_id") == selection["track_id"] and obj.get("mask")
+        and _interval(selection)[0] - 1e-7 <= frame["timestamp_seconds"] < _interval(selection)[1] - 1e-7
     }
     first_index = max(0, math.ceil(_interval(selection)[0] * float(detections["fps"]) - 1e-6))
     for offset, count in enumerate(per_frame):

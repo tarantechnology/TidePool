@@ -23,6 +23,8 @@ storage path; the existing Compose overlay already mounts `/data` appropriately.
 
 The backend validates source/analysis identity, the clicked observation, dimensions,
 FPS, frame-aligned interval, complete native-frame coverage and instance-mask RLE.
+The requested interval must also fit within the extracted audio; neither the backend nor the audio service silently retargets a selection when audio ends early. The audio service decodes selected-track masks only within the requested interval, and bounds implicitly inferred intervals before decoding.
+
 It rejects client media references recursively, conflicting inline detections,
 sparse records, missing/invalid masks and fabricated selections. A recorded frame
 without the track is valid absence; its foreground stays empty. Track identities

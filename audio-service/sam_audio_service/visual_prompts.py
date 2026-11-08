@@ -35,7 +35,7 @@ import numpy as np
 from .backends.base import Anchor, VisualInput
 from .config import Settings
 from .contracts import SourceRef, TimeRange, VisualPrompt
-from .errors import AudioServiceError, InvalidRequest
+from .errors import AudioServiceError, InvalidRequest, UnsupportedOperation
 from .media import resolve_ref
 
 
@@ -60,9 +60,11 @@ def _interval(selection: dict[str, Any], source_duration: float) -> tuple[float,
     end = interval.get("end_seconds")
     if start is None:
         return None
-    start = max(0.0, float(start))
-    end = source_duration if end is None else min(float(end), source_duration)
-    return (start, end) if end > start else None
+    start = float(start)
+    end = source_duration if end is None else float(end)
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start or end > source_duration + 1e-6:
+        raise InvalidRequest("selection interval must lie within the source audio duration")
+    return (start, min(end, source_duration))
 
 
 def _load_detections(raw: dict[str, Any], settings: Settings, warnings: list[str], workdir: Path | None = None) -> dict[str, Any] | None:
@@ -104,13 +106,17 @@ def _select_object(detections: dict[str, Any], selection: dict[str, Any] | None,
     return (int(track_id) if track_id is not None else None), detection_id
 
 
-def _frame_masks(detections: dict[str, Any], track_id: int | None, detection_id: str | None, warnings: list[str]) -> tuple[dict[int, np.ndarray], tuple[float, float] | None]:
+def _frame_masks(detections: dict[str, Any], track_id: int | None, detection_id: str | None, warnings: list[str], interval: tuple[float, float] | None = None) -> tuple[dict[int, np.ndarray], tuple[float, float] | None]:
     from .visual import decode_rle_mask  # pure numpy, kept in the visual module next to the frame loader
 
     masks: dict[int, np.ndarray] = {}
     first = last = None
     bbox_only = 0
     for frame in detections.get("frames", []):
+        if interval is not None:
+            timestamp = float(frame.get("timestamp_seconds", -1))
+            if timestamp < interval[0] - 1e-7 or timestamp >= interval[1] - 1e-7:
+                continue
         for obj in frame.get("objects", []):
             if (track_id is not None and obj.get("track_id") == track_id) or (track_id is None and obj.get("detection_id") == detection_id):
                 if obj.get("mask"):
@@ -240,7 +246,23 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
                 return VisualTranslation(None, anchors, warnings)
         track_id, detection_id = _select_object(detections, selection, raw, warnings)
         if track_id is not None or detection_id is not None:
-            frame_masks, span = _frame_masks(detections, track_id, detection_id, warnings)
+            if interval is None:
+                # Find the implicit track extent without allocating full-resolution masks.
+                matching_frames = [f for f in detections.get("frames", []) if any(
+                    (o.get("track_id") == track_id if track_id is not None else o.get("detection_id") == detection_id)
+                    and o.get("mask") for o in f.get("objects", []))]
+                if matching_frames:
+                    first = min(float(f.get("timestamp_seconds", 0)) for f in matching_frames)
+                    last = max(float(f.get("valid_until_seconds", f.get("timestamp_seconds", 0))) for f in matching_frames)
+                    interval = (max(0.0, first), min(last, source_duration))
+                    if interval[1] <= interval[0]:
+                        raise InvalidRequest("selected track is outside the source audio duration")
+                    if interval[1] - interval[0] > settings.max_visual_interval_seconds:
+                        raise UnsupportedOperation(f"visual prompt interval is limited to {settings.max_visual_interval_seconds:.0f}s; choose a shorter interval")
+                    anchors.append(("+", *interval))
+            if interval and interval[1] - interval[0] > settings.max_visual_interval_seconds:
+                raise UnsupportedOperation(f"visual prompt interval is limited to {settings.max_visual_interval_seconds:.0f}s; choose a shorter interval")
+            frame_masks, span = _frame_masks(detections, track_id, detection_id, warnings, interval)
             if frame_masks:
                 if interval is None and span:
                     interval = (max(0.0, span[0]), min(span[1], source_duration))

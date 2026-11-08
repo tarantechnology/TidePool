@@ -167,3 +167,32 @@ def test_claimed_low_fps_cannot_hide_missing_frames(env):
     with pytest.raises(InvalidRequest, match='FPS does not match'):
         translate_visual_prompt({'selection':selection_doc(), 'detections':doc, 'video_ref':video.as_uri()},
                                 source=None, source_duration=1, settings=settings, backend_supports_visual=True)
+
+
+@pytest.mark.parametrize('start,end', [(0.2, 0.8), (0.6, 0.8)])
+def test_selection_beyond_audio_is_rejected_not_retargeted(env, start, end):
+    from sam_audio_service.errors import InvalidRequest
+    settings, video = env
+    raw = {'selection':selection_doc(start=start,end=end), 'detections':detections_doc(), 'video_ref':video.as_uri()}
+    with pytest.raises(InvalidRequest, match='within the source audio duration'):
+        translate_visual_prompt(raw, source=None, source_duration=.5, settings=settings, backend_supports_visual=True)
+
+
+def test_decodes_only_masks_within_selection(env, monkeypatch):
+    import sam_audio_service.visual as visual
+    settings, video = env
+    doc = detections_doc(frames=10, start_frame=0, end_frame=10)
+    # Corrupt outside frames: they must not be decoded or affect the selected interval.
+    for frame in doc['frames'][:2] + doc['frames'][8:]:
+        frame['objects'][0]['mask']['counts'] = [999]
+    calls=[]
+    decode=visual.decode_rle_mask
+    def record(mask):
+        calls.append(mask)
+        return decode(mask)
+    monkeypatch.setattr(visual, 'decode_rle_mask', record)
+    raw={'selection':selection_doc(), 'detections':doc, 'video_ref':video.as_uri()}
+    result=translate_visual_prompt(raw, source=None, source_duration=1, settings=settings, backend_supports_visual=True)
+    assert sorted(result.visual.frame_masks) == list(range(2,8))
+    assert len(calls)==12  # decode plus validation, only 6 selected frames each
+    assert not any('mask ignored' in warning for warning in result.warnings)

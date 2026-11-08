@@ -102,6 +102,9 @@ def validate_selection(selection, detections, project, source):
         raise ValueError('Selection interval must contain finite start and end seconds')
     if start < 0 or not .1 - 1e-8 <= end - start <= 30 + 1e-8 or end > min(detections.get('processed_duration_seconds', 0), info['duration']) + 1e-6:
         raise ValueError('Selection interval must span 0.1–30 seconds inside processed media')
+    audio_duration = probe(project['audio'])['duration']
+    if end > audio_duration + 1e-6:
+        raise ValueError('Selection interval extends beyond the extracted audio; choose a range within the audio duration')
     if any(abs(t * fps - round(t * fps)) > 1e-5 for t in (start, end)):
         raise ValueError('Selection interval must align to native frame boundaries')
     records = {}

@@ -8,6 +8,17 @@ from fastapi.testclient import TestClient
 from soundcanvas_cv.pipeline import process_media
 from soundcanvas_cv.selection import select_at_point
 from test_contract import Detector
+from soundcanvas_cv.masks import encode_mask
+import numpy as np
+
+
+class Segmented(Detector):
+    def detect(self, frame):
+        objects = super().detect(frame)
+        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        mask[4:24, 4:20] = 1
+        objects[0].mask = encode_mask(mask)
+        return objects
 
 
 def run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override):
@@ -25,7 +36,7 @@ def run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override):
     x1,y1,x2,y2 = obj['bbox_normalized']
     selection = select_at_point(metadata, 0, (x1+x2)/2, (y1+y2)/2)
     stored = {'detections':metadata, 'selection':selection}
-    expected = selection if explicit_override else stored
+    expected = stored
     captured = []
     def mock_audio_post(url, files, data, timeout):
         import base64
@@ -33,6 +44,9 @@ def run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override):
         assert url == 'http://mock-audio.invalid/separate'
         payload = json.loads(data['metadata']); captured.append(payload)
         assert payload['visual_prompt'] == expected
+        assert payload['source']['sha256'] == metadata['source_sha256']
+        assert payload['source']['asset_id'] == pid
+        assert payload['source']['original_ref'].startswith((core_root/'projects'/pid/'original').as_uri())
         assert files['audio'][0] == 'audio.wav' and files['audio'][2] == 'audio/wav'
         raw = files['audio'][1].read()
         return httpx.Response(200, request=httpx.Request('POST', url), json={'stems':[{'name':'MOCK copy; not separated','audio_base64':base64.b64encode(raw).decode()}]})
@@ -49,7 +63,7 @@ def run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override):
     assert client.get(f'/api/projects/{pid}',headers=headers).json()['visual_metadata'] == stored
     body = {'prompts':['person'], **({'visual_prompt':selection} if explicit_override else {})}
     response = client.post(f'/api/projects/{pid}/process', headers=headers, json=body)
-    assert response.status_code == 202
+    assert response.status_code == 202, response.text
     assert work_once()
     job = client.get('/api/jobs/'+response.json()['job_id'],headers=headers).json()
     assert job['status'] == 'completed', job
@@ -64,7 +78,7 @@ def test_selection_through_backend_to_mock_audio_service(tmp_path, monkeypatch, 
     subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=c=blue:s=64x48:r=10:d=1',
                     '-f','lavfi','-i','sine=frequency=440:duration=1','-c:v','libx264','-pix_fmt','yuv420p',
                     '-c:a','aac','-shortest',str(video)], check=True)
-    metadata = process_media(video, tmp_path/'cv', Detector(), 5, 1)
+    metadata = process_media(video, tmp_path/'cv', Segmented(), 10, 1)
     run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override)
 
 
@@ -72,5 +86,5 @@ def test_selection_through_backend_to_mock_audio_service(tmp_path, monkeypatch, 
 @pytest.mark.skipif(__import__('os').getenv('SC_CV_REAL_TESTS') != '1', reason='Set SC_CV_REAL_TESTS=1 after real validation')
 def test_real_yolo_metadata_to_backend(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    data = json.loads((root/'outputs/real_yolo/detections.json').read_text())
+    data = json.loads((root/'outputs/real_seg/detections.json').read_text())
     run_handoff(tmp_path, monkeypatch, root/'examples/media/pedestrians.mp4', data, True)

@@ -155,7 +155,7 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     from sam_audio_service.backends.mock import MockBackend
     from sam_audio_service.visual import prepare_masked_video
 
-    client, _ = backend_client
+    client, core = backend_client
     original = tmp_path/'visual.mp4'
     subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=red:s=64x48:r=30:d=1',
                     '-f','lavfi','-i','sine=frequency=440:duration=1', '-c:v','mpeg4','-c:a','aac','-shortest',str(original)],check=True)
@@ -171,6 +171,10 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     base = MockBackend.separate
     def validate_masks(self, mixture, prompt, options):
         assert prompt.visual is not None
+        assert mixture.shape == (28800,)
+        assert prompt.visual.interval == (.2, .8)
+        assert Path(prompt.visual.video_path).parent.parent.name == pid
+        assert hashlib.sha256(Path(prompt.visual.video_path).read_bytes()).hexdigest() == sha
         decoded, masks = prepare_masked_video(prompt.visual, size=64)
         assert decoded.shape[0] == masks.shape[0] == 18
         assert (masks == 0).all()
@@ -180,12 +184,25 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     project=client.post('/api/projects').json(); pid=project['project_id']; h={'Authorization':'Bearer '+project['access_token']}
     with original.open('rb') as f:
         assert client.post(f'/api/projects/{pid}/upload', headers=h, files={'file':('visual.mp4',f,'video/mp4')}).status_code==200
-    request={'prompts':['person'], 'visual_prompt':{'selection':selection,'detections':detections,'video_ref':str(original)}}
+    detections.update(schema_version='1.0', video_id=pid)
+    selection.update(schema_version='1.0', video_id=pid, frame_width=64, frame_height=48,
+                     frame_index=9, timestamp_seconds=.3, mask=mask)
+    assert client.put(f'/api/projects/{pid}/visual-metadata',headers=h,json=detections).status_code==200
+    request={'prompts':['person'], 'visual_prompt':selection}
     start=client.post(f'/api/projects/{pid}/process',headers=h,json=request)
     assert start.status_code==202, start.text
     result=_wait(client, '/api/jobs/'+start.json()['job_id'],h)
     assert result['status']=='completed', result
     assert calls
+    assert result['inference']['model']['is_mock'] is True
+    assert result['inference']['warnings']
+    assert result['inference']['source']['asset_id'] == pid
+    from sam_audio_service.audio_io import decode
+    source_audio = decode(data=(core.project_dir(pid)/'extracted/audio.wav').read_bytes())
+    stems = [decode(data=client.get(s['audio_url'],headers=h).content).samples for s in result['stems']]
+    assert all(s.shape == source_audio.samples.shape for s in stems)
+    np.testing.assert_allclose(sum(stems), source_audio.samples, atol=1e-7)
+    assert not stems[0][:,:9600].any() and not stems[0][:,38400:].any()
     stem=result['stems'][0]
     assert client.patch(f"/api/projects/{pid}/stems/{stem['id']}",headers=h,json={'volume':.5}).status_code==200
     export=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'mp4','include_video':True}).json()['export_id']
@@ -194,3 +211,20 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     out=tmp_path/'visual-export.mp4'; out.write_bytes(client.get(result['download_url'],headers=h).content)
     streams=subprocess.check_output(['ffprobe','-v','error','-show_entries','stream=codec_type','-of','csv=p=0',str(out)],text=True)
     assert 'audio' in streams and 'video' in streams
+    import json
+    probe = json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(out)]))
+    assert abs(float(probe['format']['duration']) - 1.) < 1/30
+    assert all(abs(float(s['start_time'])) < 1/48000 for s in probe['streams'])
+    assert next(s for s in probe['streams'] if s['codec_type']=='video')['nb_frames'] == '30'
+    exported = decode(data=out.read_bytes()).samples
+    expected = .5*stems[0]+stems[1]
+    n = min(exported.shape[1], expected.shape[1])
+    assert abs(exported.shape[1] - expected.shape[1]) <= 1024  # AAC padding
+    assert np.sqrt(np.mean((exported[:,:n] - expected[:,:n])**2)) < .01
+    for edit, expected in [({'muted':True},stems[1]), ({'muted':False,'solo':True},.5*stems[0])]:
+        assert client.patch(f"/api/projects/{pid}/stems/{stem['id']}",headers=h,json=edit).status_code==200
+        eid=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}).json()['export_id']
+        done=_wait(client,'/api/exports/'+eid,h)
+        assert done['status']=='completed',done
+        edited=decode(data=client.get(done['download_url'],headers=h).content).samples
+        np.testing.assert_allclose(edited[:,:expected.shape[1]],expected,atol=1/32768)

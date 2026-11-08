@@ -266,10 +266,9 @@ def prepare_masked_video(
 
     first_index, last_exclusive = _frame_index_range(start, end, fps)
     if n != last_exclusive - first_index:
-        log.warning(
-            "decoded %d frames for interval [%.3f, %.3f)s of %s, expected %d at %.3f fps; "
-            "using decoded order (variable frame rate or seek rounding)",
-            n, start, end, visual.video_path, last_exclusive - first_index, fps,
+        raise InvalidMedia(
+            f"decoded {n} frames, expected {last_exclusive - first_index}; "
+            "visual frames and masks cannot be aligned (normalize to constant frame rate)",
         )
 
     masks = _build_masks(visual, n, first_index, size, info, ffmpeg=ffmpeg, ffprobe=ffprobe, timeout=timeout)

@@ -1,5 +1,13 @@
 # Audio integration handoff (Person 1 → Persons 2, 3, 4)
 
+**Issue #4 implementation update (2026-11-07):** the backend now validates frozen
+CV selections, attaches stored native-frame detections and a project-owned
+`source.original_ref`/SHA256/FPS, propagates model warnings/errors, and enforces
+full-timeline visual stems. See [current validation and runtime audit](../vision/docs/ISSUE4.md).
+The historical requests/status tables below describe PR #13's original handoff;
+they are not the current backend implementation. Real visual-guided inference
+remains unverified; the successful M1 Max experiment below was text-only.
+
 Person 1 owns the audio AI pipeline: SAM Audio inference, audio preprocessing for the model,
 target/residual stems, audio benchmarking, the audio inference HTTP API and the model-level
 interpretation of visual prompts. All of it lives in `audio-service/`. We do not own

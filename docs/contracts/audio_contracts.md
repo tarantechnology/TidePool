@@ -1,5 +1,12 @@
 # SoundCanvas audio contracts (Person 1 proposal)
 
+**Issue #4 implementation update (2026-11-07):** the project backend now supplies
+trusted source media and stored detections for validated selections, preserves
+service warnings/model identity and rejects misaligned visual stems. The service's
+more permissive direct-call behavior below is unchanged. See [current integration
+and real-model validation status](../../vision/docs/ISSUE4.md); genuine visual-guided
+SAM Audio inference remains unverified.
+
 **Status: PROPOSED, awaiting team agreement.** Every contract below is Person 1's proposal,
 not an agreed interface. Nothing here requires another team to change code today: the audio
 service already accepts exactly what Person 4's worker sends and returns a superset of what

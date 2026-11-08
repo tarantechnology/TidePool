@@ -5,10 +5,12 @@ from pathlib import Path
 import httpx
 from .core import run, probe, uid
 
-def separate(audio, directory, payload):
+def separate(audio, directory, payload, report=None):
     directory.mkdir(parents=True, exist_ok=True)
     mode = os.getenv('INFERENCE_ADAPTER', 'fake')
     if mode == 'fake':
+        if report is not None:
+            report.update(model={'backend':'fake','is_mock':True}, warnings=['Fake adapter copies audio; no source separation performed'])
         # Deterministic fixtures, not source separation: each stem is a copy.
         results = []
         for name in (payload.get('prompts') or ['Audio']):
@@ -24,9 +26,18 @@ def separate(audio, directory, payload):
             response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
     except httpx.TimeoutException as exc:
         raise RuntimeError('Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS') from exc
-    response.raise_for_status()
+    if response.is_error:
+        try:
+            error = response.json()['error']
+            message = f"{error['code']}: {error['message']}"
+        except (ValueError, KeyError, TypeError):
+            message = f'Audio service HTTP {response.status_code}'
+        raise RuntimeError(message)
     result = response.json()
+    if report is not None:
+        report.update({key:result[key] for key in ('model','warnings','source','request_id','contract_version') if key in result})
     if not isinstance(result.get('stems'), list) or not result['stems']: raise ValueError('Inference returned no stems')
+    source_info = probe(audio) if payload.get('source') else None
     stems = []
     for item in result['stems']:
         name = item['name']
@@ -34,7 +45,13 @@ def separate(audio, directory, payload):
         if len(raw) > int(os.getenv('MAX_STEM_BYTES',str(500*1024*1024))): raise ValueError('Inference stem too large')
         path = directory / (uid()+'.wav')
         path.write_bytes(raw)
-        probe(path)
+        info = probe(path)
+        if source_info:
+            # Visual results must already be reconstructed on the complete audio timeline.
+            if (item.get('start_time', 0) != 0 or abs(info['duration'] - source_info['duration']) > 1e-6
+                    or (info['sample_rate'], info['channels']) != (source_info['sample_rate'], source_info['channels'])):
+                path.unlink(missing_ok=True)
+                raise ValueError('Visual stem must start at zero and match the full extracted audio duration, sample rate and channels')
         stems.append((name,path))
     return stems
 

@@ -55,7 +55,14 @@ def probe(path):
     data = json.loads(run('ffprobe','-v','error','-show_streams','-show_format','-of','json',str(path)))
     audio = next((s for s in data['streams'] if s['codec_type']=='audio'), None)
     if not audio: raise ValueError('Media must contain an audio stream')
-    return {'duration': float(data['format'].get('duration') or audio.get('duration') or 0), 'sample_rate': int(audio['sample_rate']), 'channels': int(audio['channels']), 'has_video': any(s['codec_type']=='video' for s in data['streams'])}
+    info = {'duration': float(data['format'].get('duration') or audio.get('duration') or 0), 'sample_rate': int(audio['sample_rate']), 'channels': int(audio['channels']), 'has_video': any(s['codec_type']=='video' for s in data['streams'])}
+    video = next((s for s in data['streams'] if s['codec_type']=='video'), None)
+    if video:
+        from fractions import Fraction
+        try: fps = float(Fraction(video.get('avg_frame_rate', '0/0')))
+        except (ValueError, ZeroDivisionError): fps = None
+        info.update(width=video['width'], height=video['height'], frame_rate=fps)
+    return info
 
 def stem(row):
     d = dict(row)

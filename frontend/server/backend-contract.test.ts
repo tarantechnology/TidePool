@@ -200,7 +200,7 @@ describe.skipIf(!reachable)(`backend contract${skipReason}`, () => {
     await source.load()
     source.dispose()
     expect(source.savedTracks).toEqual([track])
-    expect(source.syncTarget).toEqual({ config, projectId: id })
+    expect(source.syncTarget).toEqual({ config, projectId: id, revisions: { [stem.id]: row.revision } })
   }, 30_000)
 
   it('previews an offset and a webhook mute range the way the export renders them', async () => {

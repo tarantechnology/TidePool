@@ -257,9 +257,18 @@ describe('loadFromSource', () => {
     expect(order[1]).toBe('read')
   })
 
-  it('does not hold a file import back on a slow backend', async () => {
+  it('keeps the current editor when flushing unsaved edits fails', async () => {
+    const source = new HttpStemSource(config, 'j1')
+    const read = vi.spyOn(source, 'load')
+    flush.mockRejectedValueOnce(new Error('Unsaved edits'))
+    await expect(loadFromSource(source, engine, () => true, flush)).rejects.toThrow('Unsaved edits')
+    expect(read).not.toHaveBeenCalled()
+    expect(engine.replaceStems).not.toHaveBeenCalled()
+  })
+
+  it('flushes pending edits before replacing them with file imports', async () => {
     await loadFromSource(new FileStemSource([new File(['x'], 'a.wav')]), engine, () => true, flush)
-    expect(flush).not.toHaveBeenCalled()
+    expect(flush).toHaveBeenCalledOnce()
   })
 
   it('a replaced load changes nothing, wherever it is overtaken', async () => {

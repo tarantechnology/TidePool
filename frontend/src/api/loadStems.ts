@@ -24,7 +24,8 @@ export async function loadFromSource(
   isLatest: () => boolean,
   flush: () => Promise<void>,
 ): Promise<LoadedStems | null> {
-  if (source.readsSavedState) await flush()
+  // Do not replace local edits until all pending writes have succeeded.
+  await flush()
   if (!isLatest()) return null
   const sourceStems = await source.load()
   if (!isLatest()) return null

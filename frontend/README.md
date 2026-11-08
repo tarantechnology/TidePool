@@ -59,3 +59,7 @@ With a job loaded, the editor starts from the project's saved state and sends ed
 - [docs/CONTRACTS.md](docs/CONTRACTS.md): shared types, API contracts and open questions for each workstream.
 
 The backend is at the root of this repository. Outside the dev proxy, the browser cannot reach it until CORS is enabled there (see `docs/CONTRACTS.md`).
+
+### Protecting saved edits
+
+Backend stems carry a revision. The editor sends the revision it loaded with each save; if a remote command or another editor changes the stem first, the save is rejected and the editor keeps the local edit. Copy or export your edit list, then refresh and reapply the changes against the latest project state. Reloading or replacing stems waits for pending saves and stops if a save fails. Manual automation is limited to 64 keyframes per stem to match the backend limit. Legacy API clients that omit the expected revision do not receive conflict protection.

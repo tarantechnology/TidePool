@@ -93,6 +93,10 @@ def test_revision_conflict_and_automation_limit(client, tmp_path):
     assert fresh.json()['revision']==2 and fresh.json()['muted']
     points=[{'time':i*.01,'value':1} for i in range(65)]
     assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points}).status_code==422
+    points=[{'time':i*.01,'value':float(i % 2)} for i in range(64)]
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points,'expected_revision':2}).status_code==200
+    eid=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}).json()['export_id']
+    assert wait(client,'/api/exports/'+eid,h)['status']=='completed'
 
 
 def test_http_inference_requires_prompt_before_job(client, tmp_path, monkeypatch):
@@ -119,3 +123,17 @@ def test_inference_timeout_is_retryable_by_new_request(client, tmp_path, monkeyp
         response=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['tone']})
         result=wait(client,'/api/jobs/'+response.json()['job_id'],h)
         assert result['status']=='failed' and 'timed out' in result['error']
+
+
+def test_existing_database_gains_revision_column(tmp_path, monkeypatch):
+    import sqlite3
+    import app.core as core
+    path=tmp_path/'legacy.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE stems(id TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO stems(id) VALUES('old')")
+    monkeypatch.setattr(core,'DB',path)
+    core.init()
+    with core.connect() as db:
+        assert db.execute("SELECT revision FROM stems WHERE id='old'").fetchone()['revision']==0
+    core.init()  # migration is safe to repeat

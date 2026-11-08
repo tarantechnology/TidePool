@@ -76,6 +76,29 @@ def test_audio_mute_export(client,tmp_path):
     with wave.open(str(out),'rb') as w: assert not any(w.readframes(w.getnframes()))
 
 
+def test_revision_conflict_and_automation_limit(client, tmp_path):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    j=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog']}).json()['job_id']
+    s=wait(client,'/api/jobs/'+j,h)['stems'][0]; sid=s['id']; assert s['revision']==0
+    remote=client.post('/api/webhooks/local',json={'project_id':pid,'token':p['access_token'],'text':'Mute the dog'})
+    assert remote.json()['status']=='applied'
+    stale=client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'expected_revision':0,'volume':.5,'muted':False})
+    assert stale.status_code==409
+    current=client.get(f'/api/projects/{pid}/stems',headers=h).json()[0]
+    assert current['muted'] and current['revision']==1 and current['volume']==1
+    fresh=client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'expected_revision':1,'volume':.5})
+    assert fresh.json()['revision']==2 and fresh.json()['muted']
+    points=[{'time':i*.01,'value':1} for i in range(65)]
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points}).status_code==422
+    points=[{'time':i*.01,'value':float(i % 2)} for i in range(64)]
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points,'expected_revision':2}).status_code==200
+    eid=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}).json()['export_id']
+    assert wait(client,'/api/exports/'+eid,h)['status']=='completed'
+
+
 def test_http_inference_requires_prompt_before_job(client, tmp_path, monkeypatch):
     p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
     audio=tmp_path/'tone.wav'
@@ -100,3 +123,17 @@ def test_inference_timeout_is_retryable_by_new_request(client, tmp_path, monkeyp
         response=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['tone']})
         result=wait(client,'/api/jobs/'+response.json()['job_id'],h)
         assert result['status']=='failed' and 'timed out' in result['error']
+
+
+def test_existing_database_gains_revision_column(tmp_path, monkeypatch):
+    import sqlite3
+    import app.core as core
+    path=tmp_path/'legacy.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE stems(id TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO stems(id) VALUES('old')")
+    monkeypatch.setattr(core,'DB',path)
+    core.init()
+    with core.connect() as db:
+        assert db.execute("SELECT revision FROM stems WHERE id='old'").fetchone()['revision']==0
+    core.init()  # migration is safe to repeat

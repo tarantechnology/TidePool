@@ -35,6 +35,8 @@ def init():
         CREATE UNIQUE INDEX IF NOT EXISTS one_active ON jobs(project_id,kind) WHERE status IN ('queued','processing');
         CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         ''')
+        if "revision" not in {row[1] for row in db.execute("PRAGMA table_info(stems)")}:
+            db.execute("ALTER TABLE stems ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
         db.execute("UPDATE jobs SET status='queued', progress=0 WHERE status='processing'")
 
 def digest(token): return hashlib.sha256(token.encode()).hexdigest()

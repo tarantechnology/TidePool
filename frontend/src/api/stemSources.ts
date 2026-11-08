@@ -144,7 +144,7 @@ export class HttpStemSource implements StemSource {
         return snapshot
       }
       this.savedTracks = matched.map(toTrackState)
-      this.syncTarget = { config: this.config, projectId }
+      this.syncTarget = { config: this.config, projectId, revisions: Object.fromEntries(matched.map(s => [s.id, s.revision])) }
       return matched
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)

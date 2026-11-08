@@ -1,8 +1,8 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { MouseEvent, PointerEvent } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
-import { isAudible, MAX_GAIN, stemStart } from '../edits'
+import { isAudible, MAX_GAIN, MAX_KEYFRAMES, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
@@ -99,6 +99,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
 }
 
 export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
+  const [limitMessage, setLimitMessage] = useState('')
   const step = tickStep(duration)
   const majors: number[] = []
   for (let t = 0; t < duration; t += step) majors.push(t)
@@ -130,13 +131,20 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
       if (!track) return
       const point = pointToKeyframe(e.clientX, e.clientY, rect, duration)
       const kf = track.automation.length === 0 ? { ...point, value: 1 } : point
-      setAutomation(track.stemId, addKeyframe(track.automation, kf, duration))
+      const next = addKeyframe(track.automation, kf, duration)
+      if (next === track.automation && track.automation.length >= MAX_KEYFRAMES) {
+        setLimitMessage(`Maximum ${MAX_KEYFRAMES} keyframes per stem. Remove one first.`)
+        return
+      }
+      setLimitMessage('')
+      setAutomation(track.stemId, next)
       return
     }
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+      {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-300">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
         <div className={`${COLS} h-8 border-b border-line bg-white/[0.02]`}>

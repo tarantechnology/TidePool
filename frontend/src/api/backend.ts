@@ -17,6 +17,7 @@ export interface BackendConfig {
 export interface SyncTarget {
   config: BackendConfig
   projectId: string
+  revisions?: Record<string, number>
 }
 
 export interface BackendStem {
@@ -30,6 +31,7 @@ export interface BackendStem {
 
 /** A row of GET /api/projects/{id}/stems: the stem as saved right now. */
 export interface SavedStem extends BackendStem {
+  revision: number
   volume: number
   muted: boolean
   solo: boolean
@@ -96,6 +98,7 @@ function isSavedStem(raw: Partial<SavedStem> | null): raw is SavedStem {
     typeof raw.name === 'string' &&
     typeof raw.duration === 'number' &&
     typeof raw.audio_url === 'string' &&
+    Number.isInteger(raw.revision) && (raw.revision ?? -1) >= 0 &&
     inGainRange(raw.volume) &&
     typeof raw.muted === 'boolean' &&
     typeof raw.solo === 'boolean' &&
@@ -189,13 +192,20 @@ export async function sendStemPatch(
   { config, projectId }: SyncTarget,
   stemId: string,
   body: StemSyncPatch,
-): Promise<void> {
+  expectedRevision?: number,
+): Promise<number | undefined> {
   const path = `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}`
-  await request(config, path, {
+  const response = await request(config, path, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(expectedRevision === undefined ? body : { ...body, expected_revision: expectedRevision }),
   })
+  if (expectedRevision === undefined) return undefined
+  const result = await response.json() as { revision?: unknown }
+  if (!Number.isInteger(result.revision) || (result.revision as number) <= expectedRevision) {
+    throw new Error('Backend did not confirm the stem revision; reload before retrying')
+  }
+  return result.revision as number
 }
 
 export async function patchStem(config: BackendConfig, projectId: string, track: TrackState): Promise<void> {

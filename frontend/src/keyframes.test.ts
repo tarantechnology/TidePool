@@ -114,3 +114,9 @@ describe('pointToKeyframe', () => {
     expect(pointToKeyframe(999, 999, rect, 20)).toEqual({ t: 20, value: 0 })
   })
 })
+
+it('does not add a 65th keyframe, but permits updating an existing point', () => {
+  const points = Array.from({ length: 64 }, (_, i) => ({ t: i, value: 1 }))
+  expect(addKeyframe(points, { t: 65, value: .5 }, 100)).toBe(points)
+  expect(addKeyframe(points, { t: 10, value: .5 }, 100)[10].value).toBe(.5)
+})

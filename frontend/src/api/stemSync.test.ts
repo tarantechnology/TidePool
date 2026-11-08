@@ -197,13 +197,13 @@ describe('flush', () => {
     })
   })
 
-  it('finishes when a write fails, and the failure still shows', async () => {
+  it('rejects when a write fails, and the failure still shows', async () => {
     await realTimers(async () => {
       fetchMock.mockResolvedValue(new Response(null, { status: 500 }))
       const onError = vi.fn()
       const sync = new StemSync(target, [track('s1')], onError)
       sync.update([track('s1', { gain: 0.5 })])
-      await sync.flush()
+      await expect(sync.flush()).rejects.toThrow('Unsaved edits')
       expect(onError).toHaveBeenLastCalledWith(expect.stringContaining('500'))
     })
   })
@@ -553,7 +553,7 @@ describe('only job stems sync', () => {
   it('syncs to the project named by the loaded job', async () => {
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }))
     const row = { id: 's1', name: 'dog', duration: 2, audio_url: '/a' }
-    const saved = { ...row, volume: 1, muted: false, solo: false, automation: [], start_offset: 0, mute_ranges: [] }
+    const saved = { ...row, revision: 0, volume: 1, muted: false, solo: false, automation: [], start_offset: 0, mute_ranges: [] }
     fetchMock.mockImplementation(async (input) => {
       if (String(input).endsWith('/api/jobs/j1')) {
         return new Response(JSON.stringify({ status: 'completed', project_id: 'p9', stems: [row] }))
@@ -562,7 +562,7 @@ describe('only job stems sync', () => {
     })
     const source = new HttpStemSource(target.config, 'j1')
     await source.load()
-    expect(source.syncTarget).toEqual({ config: target.config, projectId: 'p9' })
+    expect(source.syncTarget).toEqual({ config: target.config, projectId: 'p9', revisions: { s1: 0 } })
     expect(source.syncIssue).toBeUndefined()
     fetchMock.mockClear()
     edit(source.syncTarget)
@@ -583,5 +583,22 @@ describe('only job stems sync', () => {
     await source.load()
     expect(source.syncTarget).toBeUndefined()
     expect(source.syncIssue).toContain('project_id')
+  })
+})
+
+describe('optimistic concurrency', () => {
+  it('sends the saved revision and advances it after each confirmed write', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{"revision":4}')).mockResolvedValueOnce(new Response('{"revision":5}'))
+    const sync = new StemSync({ ...target, revisions: { s1: 3 } }, [track('s1')], () => {})
+    sync.update([track('s1', { gain: .5 })]); await settle()
+    sync.update([track('s1', { gain: .25 })]); await settle()
+    expect(calls().map(c => (c.body as {expected_revision: number}).expected_revision)).toEqual([3, 4])
+  })
+  it('keeps the edit and rejects flush after a conflict', async () => {
+    fetchMock.mockResolvedValue(fail(409, 'Stem changed since it was loaded'))
+    const sync = new StemSync({ ...target, revisions: { s1: 3 } }, [track('s1')], () => {})
+    sync.update([track('s1', { gain: .5 })])
+    await expect(sync.flush()).rejects.toThrow('Unsaved edits')
+    expect(calls()[0].body).toMatchObject({ expected_revision: 3, volume: .5 })
   })
 })

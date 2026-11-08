@@ -27,6 +27,7 @@ export class StemSync {
   private failures = new Map<string, string>()
   private closed = false
   private after: Promise<unknown>
+  private revisions: Record<string, number> | undefined
 
   /** Writes wait for after, so a sync replacing another cannot overlap its writes. */
   constructor(
@@ -36,6 +37,7 @@ export class StemSync {
     after: Promise<unknown> = Promise.resolve(),
   ) {
     this.target = target
+    this.revisions = target.revisions ? { ...target.revisions } : undefined
     this.onError = onError
     this.after = after
     for (const track of baseline) {
@@ -67,6 +69,8 @@ export class StemSync {
 
   /** Send what is waiting on the debounce now, and resolve when it has landed. */
   async flush(): Promise<void> {
+    // Retry failed unsaved edits once when explicitly flushing.
+    for (const id of this.latest.keys()) if (!this.timers.has(id)) this.send(id)
     do {
       for (const [id, timer] of this.timers) {
         clearTimeout(timer)
@@ -76,6 +80,8 @@ export class StemSync {
       // A write that finishes behind a newer edit schedules that edit, so go again.
       await this.drained()
     } while (this.timers.size > 0)
+    const [failure] = this.failures.values()
+    if (failure) throw new Error(`Unsaved edits: ${failure}. Copy your edits, then refresh to resolve the conflict.`)
   }
 
   /** Resolves when no write of this sync is in flight. */
@@ -111,9 +117,10 @@ export class StemSync {
     const body = bodyOf(track)
     this.sending.add(id)
     const write: Promise<void> = this.after
-      .then(() => sendStemPatch(this.target, id, toSyncPatch(track)))
+      .then(() => sendStemPatch(this.target, id, toSyncPatch(track), this.revisions?.[id]))
       .then(
-        () => {
+        (revision) => {
+          if (revision !== undefined && this.revisions) this.revisions[id] = revision
           this.acked.set(id, body)
           this.failures.delete(id)
         },

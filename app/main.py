@@ -41,12 +41,13 @@ class Keyframe(BaseModel):
     time: float=Field(ge=0,allow_inf_nan=False)
     value: float=Field(ge=0,le=2,allow_inf_nan=False)
 class StemUpdate(BaseModel):
+    expected_revision: int | None=Field(default=None,ge=0)
     name: str | None=Field(default=None,min_length=1,max_length=200)
     volume: float | None=Field(default=None,ge=0,le=2,allow_inf_nan=False)
     muted: bool | None=None
     solo: bool | None=None
     start_offset: float | None=Field(default=None,ge=0,le=86400,allow_inf_nan=False)
-    automation: list[Keyframe] | None=None
+    automation: list[Keyframe] | None=Field(default=None,max_length=64)
     @model_validator(mode='after')
     def ordered(self):
         if self.automation and any(a.time>=b.time for a,b in zip(self.automation,self.automation[1:])): raise ValueError('Keyframe times must strictly increase')
@@ -136,12 +137,20 @@ def find_stem(pid,sid):
 
 @app.patch('/api/projects/{pid}/stems/{sid}')
 def update_stem(pid: str,sid: str,body: StemUpdate,authorization: str | None=Header(None)):
-    auth(pid,authorization); find_stem(pid,sid)
+    auth(pid,authorization)
     values=body.model_dump(exclude_unset=True,exclude_none=True)
+    expected=values.pop('expected_revision',None)
     if 'automation' in values: values['automation']=json.dumps(values['automation'])
-    if values:
-        with connect() as db: db.execute('UPDATE stems SET '+','.join(k+'=?' for k in values)+' WHERE project_id=? AND id=?',(*values.values(),pid,sid))
-    return stem(find_stem(pid,sid))
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
+        if not row: raise HTTPException(404,'Stem not found')
+        if expected is not None and row['revision'] != expected:
+            raise HTTPException(409,'Stem changed since it was loaded; reload to resolve the conflict')
+        if values:
+            db.execute('UPDATE stems SET '+','.join(k+'=?' for k in values)+',revision=revision+1 WHERE project_id=? AND id=?',(*values.values(),pid,sid))
+        row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
+    return stem(row)
 
 @app.get('/api/projects/{pid}/stems/{sid}/audio')
 def audio(pid: str,sid: str,authorization: str | None=Header(None)):
@@ -174,6 +183,7 @@ def webhook(body: Message):
         eid=start(body.project_id,'export',{'format':'mp4','include_video':True})
         return {'status':'accepted','operation':op,'export_id':eid,'message':'Export queued.'}
     with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         rows=db.execute('SELECT * FROM stems WHERE project_id=?',(body.project_id,)).fetchall()
         matches=[r for r in rows if op['stem_name'].casefold() in r['name'].casefold()]
         if len(matches)!=1: return {'status':'clarification','message':'Please identify exactly one matching stem.'}
@@ -181,11 +191,11 @@ def webhook(body: Message):
         if action=='mute_range':
             if op['end']>s['duration']+s['start_offset']: return {'status':'clarification','message':'The range extends beyond the stem.'}
             ranges=json.loads(s['mute_ranges']); ranges.append([op['start'],op['end']])
-            db.execute('UPDATE stems SET mute_ranges=? WHERE id=?',(json.dumps(ranges),s['id']))
-        elif action in ('mute','unmute'): db.execute('UPDATE stems SET muted=? WHERE id=?',(action=='mute',s['id']))
+            db.execute('UPDATE stems SET mute_ranges=?,revision=revision+1 WHERE id=?',(json.dumps(ranges),s['id']))
+        elif action in ('mute','unmute'): db.execute('UPDATE stems SET muted=?,revision=revision+1 WHERE id=?',(action=='mute',s['id']))
         else:
             volume=op['volume'] if action=='set_volume' else min(2,s['volume']+0.2)
-            db.execute('UPDATE stems SET volume=? WHERE id=?',(volume,s['id']))
+            db.execute('UPDATE stems SET volume=?,revision=revision+1 WHERE id=?',(volume,s['id']))
         db.execute('INSERT INTO messages(id,project_id,text) VALUES(?,?,?)',(uid(),body.project_id,'Edit applied to '+s['name']+'.'))
     return {'status':'applied','operation':op,'stem_id':s['id'],'message':'Edit applied to '+s['name']+'.'}
 

@@ -15,6 +15,7 @@ const AUTOMATION = [
 ]
 const saved: SavedStem = {
   id: 's1',
+  revision: 0,
   name: 'dog',
   duration: 4,
   audio_url: '/audio/s1',
@@ -36,7 +37,7 @@ const json = (body: unknown) => new Response(JSON.stringify(body))
 function backend({ job = {}, stems = [saved] as unknown }: { job?: object; stems?: unknown } = {}) {
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input)
-    if (init?.method === 'PATCH') return json({})
+    if (init?.method === 'PATCH') return json({ revision: 1 })
     if (url.endsWith('/api/jobs/j1')) return json({ status: 'completed', project_id: 'p1', stems: [snapshot], ...job })
     if (url.endsWith('/api/projects/p1/stems')) {
       return stems instanceof Response ? stems : json(stems)
@@ -108,7 +109,7 @@ describe('restoring saved state', () => {
     const { source } = await load()
     expect(requests()).toContain('http://api.test:8000/api/projects/p1/stems')
     expect(source.savedTracks).toEqual([toTrackState(saved)])
-    expect(source.syncTarget).toEqual({ config, projectId: 'p1' })
+    expect(source.syncTarget).toEqual({ config, projectId: 'p1', revisions: { s1: 0 } })
     expect(source.syncIssue).toBeUndefined()
   })
 
@@ -132,6 +133,7 @@ describe('restoring saved state', () => {
     const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')
     expect(JSON.parse(patch?.[1]?.body as string)).toEqual({
       volume: 0.8,
+      expected_revision: 0,
       muted: true,
       solo: true,
       automation: AUTOMATION,
@@ -152,7 +154,7 @@ describe('restoring saved state', () => {
     runner.apply(source.syncTarget!, applyAction(source.savedTracks!, { type: 'set_gain', stemId: 's1', value: 0.8 }))
     await vi.advanceTimersByTimeAsync(SYNC_DEBOUNCE_MS)
     const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')
-    expect(Object.keys(JSON.parse(patch?.[1]?.body as string)).sort()).toEqual(['automation', 'muted', 'solo', 'volume'])
+    expect(Object.keys(JSON.parse(patch?.[1]?.body as string)).sort()).toEqual(['automation', 'expected_revision', 'muted', 'solo', 'volume'])
   })
 })
 

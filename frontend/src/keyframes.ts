@@ -1,4 +1,4 @@
-import { clamp, MAX_GAIN } from './edits'
+import { clamp, MAX_GAIN, MAX_KEYFRAMES } from './edits'
 import type { Keyframe } from './types'
 
 // Pure keyframe edits. Every function returns a new array and keeps it sorted.
@@ -14,6 +14,7 @@ export function addKeyframe(keyframes: Keyframe[], kf: Keyframe, duration: numbe
   const next = { t: clamp(kf.t, 0, duration), value: clamp(kf.value, 0, MAX_GAIN) }
   const hit = keyframes.findIndex((k) => Math.abs(k.t - next.t) < MIN_KEYFRAME_SPACING - 1e-9)
   if (hit >= 0) return keyframes.map((k, i) => (i === hit ? { ...k, value: next.value } : k))
+  if (keyframes.length >= MAX_KEYFRAMES) return keyframes
   return [...keyframes, next].sort((a, b) => a.t - b.t)
 }
 

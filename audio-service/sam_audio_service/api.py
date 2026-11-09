@@ -144,12 +144,15 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             suffix = Path(audio.filename or "").suffix.lower() or ".bin"
             upload = workdir / ("upload" + suffix)
             size = 0
-            with upload.open("wb") as out:
-                while chunk := audio.file.read(1024 * 1024):
-                    size += len(chunk)
-                    if size > settings.max_input_bytes:
-                        raise InvalidMedia("audio exceeds AUDIO_MAX_INPUT_BYTES", details={"max_input_bytes": settings.max_input_bytes})
-                    out.write(chunk)
+            try:
+                with upload.open("wb") as out:
+                    while chunk := audio.file.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > settings.max_input_bytes:
+                            raise InvalidMedia("audio exceeds AUDIO_MAX_INPUT_BYTES", details={"max_input_bytes": settings.max_input_bytes})
+                        out.write(chunk)
+            except OSError as exc:  # e.g. ENOSPC on the spool directory: retryable, not a client error
+                raise StorageFailure(f"could not spool upload: {exc.strerror or exc}") from exc
             if size == 0:
                 raise InvalidMedia("audio upload is empty")
             decoded = decode(path=upload, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)

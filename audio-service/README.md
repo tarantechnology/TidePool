@@ -54,6 +54,13 @@ fp16 is reported to break separation quality and is refused; `bfloat16` is an op
 keyword-only arguments: 'proxies' and 'resume_download'` (found on our first real load); the `sam`
 extra pins both.
 
+**Running it on a Mac anyway (development only):** `scripts/build_macos_sam_env.sh` builds
+`audio-service/.venv-sam` by installing `sam-audio` and `perception_models` without their
+dependencies and guarding the `xformers` imports (the patches from upstream issue #29), then
+downloads `facebook/sam-audio-small`. `scripts/run_local_real.sh` at the repository root then starts
+the audio service on MPS with the span predictor and re-rankers off, the backend and the editor.
+Measured on an M1 Max 64 GB: about 1-1.5 s of processing per second of audio, ~18 GB of memory.
+
 **macOS is not a supported runtime for the real model** (verified 2026-11-06 on Apple Silicon,
 Python 3.12): `pip install ".[sam]"` fails because `perception_models` requires `decord`, which has
 no macOS/cp312 wheel; installing around it with `--no-deps` then fails at import time on

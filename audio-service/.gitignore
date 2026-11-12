@@ -5,3 +5,4 @@ __pycache__/
 benchmarks/out/
 fixtures/generated/
 output/
+.venv-sam/

@@ -19,14 +19,26 @@ Open **http://localhost:5173**. The API documentation is at http://localhost:800
 
 ### Without Docker
 
-With Python 3.11+, FFmpeg and Node.js installed:
+With FFmpeg and Node.js installed (and any Python 3.11+ on the machine):
 
 ```sh
-python3 -m venv .venv && source .venv/bin/activate
-scripts/dev_setup.sh                                  # API requirements, ./vision, detector weights
-python -m uvicorn app.main:app --reload --port 8000   # terminal 1
-cd frontend && npm ci && npm run dev                  # terminal 2, http://localhost:5173
+scripts/dev_setup.sh          # creates ./.venv from python3.12/3.11/3.13 if no 3.11+ env is active,
+                              # installs API requirements + ./vision, downloads detector weights
+source .venv/bin/activate     # (or audio-service/.venv if the script chose that one; it prints which)
 ```
+
+Then three terminals, all from the repo root with the environment activated:
+
+```sh
+# 1. audio service (mock separation: stems are filtered copies, no model download)
+cd audio-service && AUDIO_BACKEND=mock AUDIO_MEDIA_ROOT=$PWD/../storage AUDIO_PORT=8001 python -m sam_audio_service
+# 2. backend, talking to the audio service
+STORAGE_ROOT=$PWD/storage INFERENCE_ADAPTER=http SAM_AUDIO_SERVICE_URL=http://127.0.0.1:8001/separate python -m uvicorn app.main:app --port 8000
+# 3. editor, proxying /api to the backend
+cd frontend && npm ci && VITE_API_BASE_URL=/api npm run dev    # http://localhost:5173
+```
+
+Leave out terminal 1 and `INFERENCE_ADAPTER`/`SAM_AUDIO_SERVICE_URL` to run the backend's built-in fake adapter (stems are plain copies of the audio). The script never installs into a conda or system interpreter: it uses the active virtualenv if it is 3.11+, else `.venv`, else `audio-service/.venv`, else creates `.venv`; `PYTHON=/path/to/python` overrides.
 
 `scripts/dev_setup.sh` installs the object-detection package (`pip install -e ./vision`) into the same interpreter that runs the API, because the worker launches the detector as `python -m soundcanvas_cv` with that interpreter. It also downloads the default weights (`VISION_MODEL`, `yolo26n-seg.pt`, about 6 MB) to `$STORAGE_ROOT/vision`. Without the package the editor's object detection is reported as unavailable (`GET /api/projects/{id}/capabilities` → `vision.available: false`) rather than failing a job. Without cached weights the first analysis downloads them, so it needs network access once.
 

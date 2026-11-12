@@ -193,16 +193,19 @@ def test_preview_of_odd_dimension_video(client, tmp_path):
 def test_visual_analysis_job_orchestration(client, tmp_path, monkeypatch):
     import json
     from pathlib import Path
-    import app.worker as worker
     p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
     video=tmp_path/'source.mp4'
     subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=s=64x64:r=10:d=1','-f','lavfi','-i','sine=duration=1','-c:v','mpeg4','-c:a','aac','-shortest',str(video)],check=True)
     with video.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('source.mp4',f)}).status_code==200
-    def fake_run(*args):
+    import subprocess as sp
+    import app.detector as detector
+    monkeypatch.setattr(detector,'_import_error',None)  # Installed and importable.
+    def fake_spawn(args, timeout, **kwargs):
         assert 'soundcanvas_cv' in args and '--video-id' in args
         output=Path(args[args.index('--output-dir')+1]); output.mkdir(parents=True)
         (output/'detections.json').write_text(json.dumps({'analyzed_frames':10,'processed_duration_seconds':1,'frames':[]}))
-    monkeypatch.setattr(worker,'run',fake_run)
+        return sp.CompletedProcess(args,0,'','')
+    monkeypatch.setattr(detector,'_spawn',fake_spawn)
     response=client.post(f'/api/projects/{pid}/visual-analyze',headers=h); assert response.status_code==202
     job=wait(client,'/api/visual-jobs/'+response.json()['job_id'],h)
     assert job['status']=='completed' and job['result']['analyzed_frames']==10
@@ -288,7 +291,6 @@ def test_prepare_visual_copy_preserves_original_and_validates_timeline(client,tm
     p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
     with video.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('offset.mp4',f)}).status_code==200
     with core.connect() as db: old=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original']
-    assert client.post(f'/api/projects/{pid}/visual-analyze',headers=h).status_code==422
     started=client.post(f'/api/projects/{pid}/prepare-visual',headers=h);assert started.status_code==202
     job=wait(client,'/api/prepare-jobs/'+started.json()['job_id'],h);assert job['status']=='completed',job
     with core.connect() as db: new=db.execute('SELECT original,metadata FROM projects WHERE id=?',(pid,)).fetchone()

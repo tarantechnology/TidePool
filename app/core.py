@@ -31,7 +31,7 @@ def connect():
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
                 ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'))
-JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'))
+JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():
     with connect() as db:
@@ -50,7 +50,8 @@ def init():
             db.execute("ALTER TABLE projects ADD COLUMN uploaded_original TEXT")
             db.execute("UPDATE projects SET uploaded_original=original")
         db.execute("CREATE TABLE IF NOT EXISTS candidate_history (candidate_id TEXT PRIMARY KEY REFERENCES jobs(id), previous_rows TEXT NOT NULL, applied_revisions TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0)")
-        db.execute("UPDATE jobs SET status='queued', progress=0 WHERE status='processing'")
+        # Staged (vision) jobs restart from the queued stage; others keep their old 0 progress.
+        db.execute("UPDATE jobs SET status='queued', progress=CASE WHEN stage IS NULL THEN 0 ELSE 5 END, stage=CASE WHEN stage IS NULL THEN NULL ELSE 'queued' END WHERE status='processing'")
 
 def max_passes():
     """Upper bound for separation passes per request (MAX_PASSES, default 3)."""

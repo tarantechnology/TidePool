@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 from .core import MAX_UPLOAD, connect, digest, event, init, max_passes, probe, project_dir, run, stem, uid
 from .guidance import Guidance, SoundPrompt, EditScope, validate_timing, options, description
@@ -17,7 +17,7 @@ from .commands import parse
 from .agent import AgentRequest, AgentError, plan as agent_plan
 from .worker import enqueue, loop, stop
 from .refine import is_residual
-from .visual import file_sha256, prepare_payload, reject_media_refs, validate_timeline
+from .visual import UnfixableTimeline, file_sha256, prepare_payload, reject_media_refs, validate_timeline
 
 @asynccontextmanager
 async def lifespan(app):
@@ -53,13 +53,17 @@ def get_job(jid, kind, authorization):
     with connect() as db: row=db.execute('SELECT * FROM jobs WHERE id=? AND kind=?',(jid,kind)).fetchone()
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
-    d=dict(row); d.pop('payload'); output=json.loads(d.pop('output')) if d['output'] else None
+    d=dict(row); d.pop('payload')
+    if kind!='vision': d.pop('stage',None)
+    output=json.loads(d.pop('output')) if d['output'] else None
     d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':
         d['stems'] = output.get('stems', []) if isinstance(output, dict) else output or []
         d['inference'] = output.get('inference') if isinstance(output, dict) else None
     elif kind=='export': d['download_url']=f'/api/exports/{jid}/download' if output else None
     else: d['result']=output
+    if kind=='vision':
+        d['stage']=d.get('stage') or ('completed' if d['status']=='completed' else 'queued')
     return d
 
 class Keyframe(BaseModel):
@@ -234,9 +238,23 @@ def get_visual(pid: str, authorization: str | None=Header(None)):
 def analyze_visual(pid: str, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(409,'Upload a video first')
+    from .detector import status
+    vision=status()
+    if not vision['available']:
+        return JSONResponse({'detail':vision['reason'],'code':'vision_unavailable'},status_code=503)
+    prepare=False
     try: validate_timeline(p['original'], json.loads(p['metadata'])['frame_rate'])
-    except (ValueError, RuntimeError, KeyError, TypeError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {'job_id':start(pid,'vision',{}),'status':'queued'}
+    except UnfixableTimeline as exc: raise HTTPException(422,str(exc)) from exc
+    except ValueError as exc:
+        # Phone recordings (VFR, offset starts, rotation) get a compatible copy first.
+        with connect() as db:
+            if db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone():
+                raise HTTPException(409,f'{exc} Object detection needs a compatible video copy, which can only be prepared before separating sounds; existing layers were preserved.') from exc
+        prepare=True
+    except (RuntimeError, KeyError, TypeError) as exc: raise HTTPException(422,str(exc)) from exc
+    try: job=enqueue(pid,'vision',{'prepare':prepare},stage='queued')
+    except sqlite3.IntegrityError: raise HTTPException(409,'A job of this type is already active')
+    return {'job_id':job,'status':'queued','prepared':prepare}
 
 @app.post('/api/projects/{pid}/prepare-visual',status_code=202)
 def prepare_visual(pid: str, authorization: str | None=Header(None)):
@@ -298,7 +316,8 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
 def service_capabilities(pid: str, authorization: str | None=Header(None)):
     auth(pid,authorization)
     from .media import capabilities
-    return capabilities()
+    from .detector import status
+    return {**capabilities(),'vision':status()}
 
 @app.post('/api/projects/{pid}/process',status_code=202)
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):

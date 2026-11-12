@@ -10,12 +10,25 @@ Install Docker Desktop, start it, and run:
 docker compose up --build
 ```
 
-Open **http://localhost:5173**. The API documentation is at http://localhost:8000/docs. Data persists in `./storage`. The first build installs CPU vision dependencies; the first visual analysis downloads detector weights. A network connection and sufficient disk space are needed.
+Open **http://localhost:5173**. The API documentation is at http://localhost:8000/docs. Data persists in `./storage`. The first build installs CPU vision dependencies; the first visual analysis downloads detector weights to `./storage/vision`. A network connection and sufficient disk space are needed.
 
 1. Choose an MP4, MOV, WAV or MP3 and click **Create & upload**. Copy the project ID and access token shown in the project panel; they are needed to restore the project later.
 2. Enter comma-separated sound descriptions and start processing. The default local inference adapter **copies the entire audio into each test stem**; it does not separate sounds. This mode is useful for exercising the editor without a GPU.
 3. Play and edit the layers, then choose MP4, WAV or MP3 and export. For video object selection, run visual analysis, pause the video, and click a detected object. A sound prompt is still required.
 4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
+
+### Without Docker
+
+With Python 3.11+, FFmpeg and Node.js installed:
+
+```sh
+python3 -m venv .venv && source .venv/bin/activate
+scripts/dev_setup.sh                                  # API requirements, ./vision, detector weights
+python -m uvicorn app.main:app --reload --port 8000   # terminal 1
+cd frontend && npm ci && npm run dev                  # terminal 2, http://localhost:5173
+```
+
+`scripts/dev_setup.sh` installs the object-detection package (`pip install -e ./vision`) into the same interpreter that runs the API, because the worker launches the detector as `python -m soundcanvas_cv` with that interpreter. It also downloads the default weights (`VISION_MODEL`, `yolo26n-seg.pt`, about 6 MB) to `$STORAGE_ROOT/vision`. Without the package the editor's object detection is reported as unavailable (`GET /api/projects/{id}/capabilities` → `vision.available: false`) rather than failing a job. Without cached weights the first analysis downloads them, so it needs network access once.
 
 ## Use a rented cloud GPU from a Mac
 

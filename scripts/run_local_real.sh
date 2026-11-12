@@ -4,9 +4,13 @@
 #   scripts/run_local_real.sh stop     stop all three
 #   scripts/run_local_real.sh mock     same, but mock audio backend (instant, no real separation)
 # Logs: logs/audio.log logs/backend.log logs/frontend.log
+# Secrets/settings: ./.env (see .env.example), e.g. OPENAI_API_KEY=... enables the natural-language command bar.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 mkdir -p logs storage
+# Optional settings (OPENAI_API_KEY for the command bar, VISION_DEVICE, ...): put them in ./.env (gitignored).
+if [ -f .env ]; then set -a; . ./.env; set +a; fi
+export VISION_DEVICE="${VISION_DEVICE:-mps}"   # YOLO on the Apple GPU: ~30% faster than cpu on an M1 Max
 if [ "${1:-}" = stop ]; then
   pkill -f "sam_audio_service" ; pkill -f "uvicorn app.main:app" ; pkill -f "vite" ; echo "stopped"; exit 0
 fi

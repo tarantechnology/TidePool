@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { applyAction, envelopeAt, initialTracks, parsePrompt } from '../src/edits'
 import { buildFilterGraph } from '../src/export/ffmpeg'
 import type { Keyframe, MuteRange, Stem, TrackState } from '../src/types'
@@ -11,6 +11,9 @@ import type { Keyframe, MuteRange, Stem, TrackState } from '../src/types'
 // real filter. Lives in server/ because it needs Node types, which the browser
 // tsconfig does not load. Skipped where ffmpeg is not installed.
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0
+// Every case spawns ffmpeg twice; on a loaded machine one spawn can take several seconds, so
+// vitest's default 5 s budget is too tight for a test that is otherwise deterministic.
+vi.setConfig({ testTimeout: 30_000 })
 const SR = 48000
 const DUR = 6
 

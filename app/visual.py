@@ -9,7 +9,12 @@ from .core import probe, project_dir, run
 
 def file_sha256(path):
     with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        if hasattr(hashlib, 'file_digest'):  # Python 3.11+
+            return hashlib.file_digest(stream, 'sha256').hexdigest()
+        sha = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            sha.update(block)
+        return sha.hexdigest()
 
 
 def reject_media_refs(value):
@@ -172,7 +177,9 @@ def prepare_payload(project, payload):
         raise ValueError('Selection must be a JSON object')
     selection = raw.get('selection') if isinstance(raw.get('selection'), dict) else raw if raw.get('kind') == 'visual_selection' else None
     if selection is None:
-        payload['visual_prompt'] = raw  # Preserve legacy label/time-range metadata.
+        # Without a selected object nothing here can steer the model, and the stored
+        # detections document (every frame's RLE) must not cross the wire for nothing.
+        payload['visual_prompt'] = None
         return payload
     if not stored:
         raise ValueError('Save the matching detections with visual-metadata before selecting an object')

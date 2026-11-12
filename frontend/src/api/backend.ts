@@ -27,6 +27,14 @@ export interface BackendStem {
   audio_url: string
   start_offset?: number
   mute_ranges?: MuteRange[]
+  role?: string
+  source_stem_id?: string
+  prompt?: string
+  label?: string
+  spans?: unknown
+  sample_rate?: number
+  channels?: number
+  format?: string
 }
 
 /** A row of GET /api/projects/{id}/stems: the stem as saved right now. */
@@ -145,8 +153,8 @@ export function toStem(stem: BackendStem, url: string): Stem {
   // The backend has no kind field, and kinds are not guessed from names.
   return {
     id: stem.id,
-    label: stem.name,
-    kind: 'sfx',
+    label: stem.label?.trim() || stem.name,
+    kind: stem.role === 'residual' ? 'residual' : 'sfx',
     url,
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
@@ -244,7 +252,7 @@ export async function storeVisualMetadata(config: BackendConfig, projectId: stri
   await request(config, `/api/projects/${encodeURIComponent(projectId)}/visual-metadata`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(metadata)})
 }
 export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, append, visual_prompt: visualPrompt ?? {}})})
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), visual_prompt: visualPrompt ?? {}})})
   return ((await res.json()) as {job_id:string}).job_id
 }
 export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
@@ -314,7 +322,7 @@ export interface Capabilities {quality:boolean;visual:boolean;reason:string}
 export async function getCapabilities(config:BackendConfig,projectId:string):Promise<Capabilities> {
   return (await request(config,`/api/projects/${encodeURIComponent(projectId)}/capabilities`)).json() as Promise<Capabilities>
 }
-export interface CandidateInfo {mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number};warnings?:string[]}|null}
+export interface CandidateInfo {mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...options})})
   return ((await res.json()) as {candidate_id:string}).candidate_id

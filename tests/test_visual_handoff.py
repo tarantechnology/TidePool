@@ -156,6 +156,28 @@ def test_audio_error_details_are_preserved(setup, monkeypatch):
     assert work_once()
     job = client.get('/api/jobs/'+start.json()['job_id'],headers=h).json()
     assert job['status'] == 'failed' and 'INVALID_REQUEST: native frame is missing' in job['error']
+    assert job['error_code'] == 'INVALID_REQUEST' and job['retryable'] is None
+
+
+def test_detections_are_not_forwarded_without_a_selection(setup, monkeypatch):
+    """Stored masks cannot steer the model without a selected object, so they stay here."""
+    import app.media as media
+    from app.worker import work_once
+    client, pid, h, data, _selection = setup
+    sent = {}
+    def mock_post(url, files, data, **kwargs):
+        sent.update(json.loads(data['metadata']))
+        return httpx.Response(200,request=httpx.Request('POST',url),
+            json={'stems':[{'name':'MOCK copy','audio_base64':base64.b64encode(files['audio'][1].read()).decode()}],
+                  'model':{'is_mock':True},'warnings':[]})
+    monkeypatch.setattr(media.httpx,'post',mock_post)
+    assert client.put(f'/api/projects/{pid}/visual-metadata',headers=h,json=data).status_code == 200
+    start = client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['person speaking']})
+    assert start.status_code == 202, start.text
+    assert work_once()
+    assert client.get('/api/jobs/'+start.json()['job_id'],headers=h).json()['status'] == 'completed'
+    assert sent['visual_prompt'] is None, sent['visual_prompt']
+    assert 'source' not in sent
 
 
 @pytest.mark.parametrize('damage', ['frames', 'frame', 'objects', 'object', 'mask', 'interval', 'envelope'])

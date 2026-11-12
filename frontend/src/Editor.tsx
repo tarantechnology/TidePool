@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
+import { NO_PROJECT_HINT } from './agent/planOutcome'
+import { NO_PROJECT_STEMS, showsMockBadge } from './state/projectStems'
+import type { ProjectStemsState } from './state/projectStems'
 import { validateActions } from './agent/validate'
 import type { SyncTarget, VisualMetadata } from './api/backend'
 import type { VisualSelection } from './visual'
-import { loadFromSource } from './api/loadStems'
+import { loadFromSource, stemFailureMessage } from './api/loadStems'
 import { FileStemSource, isAudioFile, isVideoFile, MockStemSource } from './api/stemSources'
 import type { StemSource } from './api/stemSources'
 import { AudioEngine } from './audio/engine'
@@ -62,6 +65,8 @@ export default function Editor() {
   const [visual, setVisual] = useState<VisualMetadata | null>(null)
   const [visualSelection, setVisualSelection] = useState<VisualSelection | null>(null)
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
+  const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
+  const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
   const projectPanel = useRef<ProjectPanelHandle>(null)
@@ -91,8 +96,8 @@ export default function Editor() {
       .then((loadedStems) => eng.replaceStems(loadedStems))
       .then((loaded) => {
         if (cancelled || !loaded) return
-        setBaseStems(loaded)
-        setHistory(createHistory(createEditorState(initialTracks(loaded))))
+        setBaseStems(loaded.stems)
+        setHistory(createHistory(createEditorState(initialTracks(loaded.stems))))
         setEngine(eng)
         setStatus('ready')
       })
@@ -149,6 +154,7 @@ export default function Editor() {
         setStemsLabel(label)
         setSyncTarget(source.syncTarget ?? null)
         setSyncIssue(source.syncIssue ?? '')
+        setLoadError(stemFailureMessage(loaded.failures))
       } catch (err) {
         // The engine keeps the previous stems when a load fails.
         if (isLatest()) setLoadError(err instanceof Error ? err.message : String(err))
@@ -183,6 +189,7 @@ export default function Editor() {
   const loadVideo = useCallback(
     (file: File, withAudio: boolean) => {
       originalVideo.current = file
+      setHasLocalVideo(true)
       setVisual(null); setVisualSelection(null)
       setVideoSrc(URL.createObjectURL(file))
       setVideoDuration(null)
@@ -344,6 +351,7 @@ export default function Editor() {
             {status === 'ready' && (chipErrors[0] || stemsLabel)}
             {status === 'error' && 'Load failed'}
           </span>
+          {showsMockBadge(projectStems,stemsLabel) && <span className="text-xs text-amber-300">test stems — no AI separation</span>}
         </div>
       </header>
 
@@ -364,7 +372,7 @@ export default function Editor() {
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
             <div className="flex min-h-0 w-80 shrink-0 flex-col gap-2">
-              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setVideoSrc(url) }} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
+              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
               <details className="shrink-0 text-xs text-zinc-400"><summary className="cursor-pointer">Edit history</summary><EditLog log={log} /></details>
             </div>
           </div>
@@ -388,7 +396,7 @@ export default function Editor() {
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready'} agentLabel="GPT-6 Luna" onRun={runPrompt} />
+      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} agentLabel="GPT-6 Luna" onRun={runPrompt} />
     </div>
   )
 }

@@ -28,12 +28,13 @@ def build(project, payload, cid):
     payload['request_id']=cid
     inference={}; directory=project_dir(pid)/'stems'
     results=separate(source,directory,payload,report=inference)
-    targets=[(n,p) for n,p in results if n.lower()!='residual']
-    residuals=[(n,p) for n,p in results if n.lower()=='residual']
+    results=[r if isinstance(r,dict) else {'name':r[0],'path':r[1]} for r in results]
+    targets=[(r['name'],r['path']) for r in results if r['name'].lower()!='residual']
+    residuals=[(r['name'],r['path']) for r in results if r['name'].lower()=='residual']
     if len(targets)!=1 or len(residuals)!=1: raise ValueError('Preview requires one target and one residual; current layers were preserved.')
     source_info=probe(source)
-    for _, path in results:
-        info=probe(path)
+    for result in results:
+        info=probe(result['path'])
         if abs(info['duration']-source_info['duration'])>1/48000 or (info['sample_rate'],info['channels'])!=(source_info['sample_rate'],source_info['channels']):
             raise ValueError('Preview stems must match the source timeline and channels; existing layers were preserved.')
     rows=snapshot['rows']; by_id={r['id']:r for r in rows}
@@ -46,6 +47,10 @@ def build(project, payload, cid):
         return row
     target=edit_target(new_row(*targets[0],snapshot['target_id']),payload.get('edit_scope',{'action':'keep'}))
     residual=new_row(*residuals[0],snapshot['residual_id'])
+    target['role']='target'; residual['role']='residual'
+    if not snapshot['target_id']:
+        target['prompt']=payload['prompts'][0];target['label']=target['name'];target['source_stem_id']=None
+    residual['label']='everything else'
     replaced={snapshot['target_id'],snapshot['residual_id']}
     proposed=[dict(r) for r in rows if r['id'] not in replaced]+[target,residual]
     mix=directory/(uid()+'.wav'); original=directory/(uid()+'.wav')

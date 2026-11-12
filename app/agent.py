@@ -49,6 +49,10 @@ Use kind=separate for isolating a sound not already in a matching editable stem.
 Use kind=edit for existing stems only. Choose exact stemId from supplied stems. Actions: set_gain value 0..2; set_mute muted boolean; set_solo solo boolean; set_automation keyframes [{t,value}] replaces entire curve (preserve existing points as needed; linear interpolation); clear_automation; follow_intensity sourceStemIds,minValue,maxValue (follows loudness, not emotion). Gain automation multiplies the track fader. Timed mute uses mute_range with start/end and preserves automation. If several existing layers plausibly match, clarify with their names. For ambiguous sounds within the mixture suggest a time anchor or visible object. Never invent auditory attributes from appearance alone. No edits outside timeline. Do not mix a separation with edit actions. For clarify or separate actions must be empty. Null all fields irrelevant to an action. Use a short user-facing message.'''
 
 
+ALREADY_SEPARATED = {'kind': 'clarify', 'message': 'This project already has separated stems; '
+                     'describe an edit (mute, volume, automation) or create a new project to separate again.'}
+
+
 def _key():
     key = os.getenv('OPENAI_API_KEY', '').strip()
     if not key and os.getenv('OPENAI_API_KEY_FILE'):

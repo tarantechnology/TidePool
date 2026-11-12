@@ -31,7 +31,7 @@ The Mac runs the browser. The Linux GPU machine runs the editor, backend, CPU vi
    docker compose -f compose.cloud.yaml logs -f
    ```
 
-   Initial image builds and model downloads can take a while. The API waits for the audio service's readiness check. Model files persist in a Docker volume; projects persist in the VM's `./storage`. The defaults use the small model, CUDA and 10-second audio chunks; inspect `compose.cloud.yaml` for overrides.
+   Initial image builds and model downloads can take a while. The API waits for the audio service's readiness check. Model files persist in a Docker volume; projects persist in the VM's `./storage`. The defaults use the small model, CUDA and 10-second audio chunks, with one chunk window per model batch (`AUDIO_CHUNK_BATCH=1`; batch `k` costs roughly `k x` the activation memory and is unverified on the A40, see [audio-service/docs/chunk_concurrency.md](audio-service/docs/chunk_concurrency.md)); inspect `compose.cloud.yaml` for overrides.
 3. On your Mac, create an SSH tunnel, replacing the placeholders with your VM details:
 
    ```sh

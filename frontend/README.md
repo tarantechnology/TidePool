@@ -24,6 +24,7 @@ Open http://localhost:5173/#/app for the editor. The landing page is at `#/`.
 - **Timeline:** double-click a lane to add a keyframe, drag a marker to move it, and Alt-click a marker to delete it.
 - **Undo:** Cmd/Ctrl+Z, and Cmd/Ctrl+Shift+Z to redo.
 - **Media:** drop audio files or use **Import audio** to replace the stems. Load a video from the video panel, or drop it. The video is muted and follows the audio clock.
+- **AI commands:** the prompt bar needs a project, so it is disabled until a video is uploaded in **Project** or loaded in the video panel. Separation and planning run on the backend; the planner's own answer is shown as it is, including a question it asks back and a server that has no GPT configured.
 - **Prompts:** "Lower the siren volume to 30%" sets the fader, "Lower the siren by 20%" is relative, and adding "from 8 to 16 seconds" limits either to that range. Amounts it cannot read exactly (dB, "twice") get a question, not a guess. Also try "Make the siren louder whenever the argument gets intense". That follows how loud the dialogue is. It measures loudness, it does not detect emotion, and it needs stems of kind `dialogue`. Real stems start as SFX, so pick the kind from the dropdown in the track header first.
 
 ## Environment variables
@@ -51,6 +52,8 @@ To reach the backend from the browser, use one of these:
 
 - **Dev proxy:** set `VITE_API_BASE_URL=/api`. The dev server forwards `/api` to `BACKEND_URL`, unchanged. `BACKEND_URL` has to be in the shell, since Vite does not put `.env` values into its own config. This works on the dev server only, not for a deployed build.
 - **Direct:** set `VITE_API_BASE_URL` to the backend URL. Person 4 must add `CORSMiddleware` allowing http://localhost:5173 first, because the backend has none and browser calls with an Authorization header fail preflight without it.
+
+Stems that will not decode do not take the rest down: the others load and the status chip names the ones that failed. Stems from a job that reports mock output are badged "test stems — no AI separation" for as long as they are loaded.
 
 With a job loaded, the editor starts from the project's saved state and sends edits to the backend as you make them. If saved state cannot be read, the stems play but nothing is sent, and the status chip says why. Stem offsets and mute ranges from the backend play back as they export, and show on the timeline as read-only. See [docs/CONTRACTS.md](docs/CONTRACTS.md).
 

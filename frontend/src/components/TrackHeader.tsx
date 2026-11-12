@@ -17,6 +17,7 @@ const KIND_LABEL: Record<Stem['kind'], string> = {
   sfx: 'SFX',
   music: 'Music',
   ambience: 'Ambience',
+  residual: 'Residual',
 }
 const KINDS = Object.keys(KIND_LABEL) as StemKind[]
 

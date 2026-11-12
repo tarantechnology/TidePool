@@ -4,6 +4,7 @@ import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { separationCommand } from '../separationCommand'
 import type { Stem, TrackState } from '../types'
+import type { ProjectStemsState } from '../state/projectStems'
 import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, getPrepareVisual, startPrepareVisual, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, getVisualJob, getVisualMetadata, localCommand, startExport, startVisualAnalysis, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { pollJob, toJobStatus } from '../api/jobs'
 import { HttpStemSource } from '../api/stemSources'
@@ -17,6 +18,7 @@ const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black 
 const secondary = 'rounded-lg border border-line px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-40'
 interface Props {
   baseUrl: string
+  onProjectState: (state:ProjectStemsState)=>void
   onLoadStems: (source: StemSource, label: string) => Promise<void>
   onVideo: (url: string | null) => void
   onOriginalAudio: (url:string|null) => void
@@ -34,7 +36,7 @@ export interface ProjectPanelHandle {
 }
 
 /** Project credentials remain in component memory; the user may copy them for resuming. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -59,6 +61,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [editEnd,setEditEnd]=useState(1)
   const [capabilities,setCapabilities]=useState<Capabilities|null>(null)
   const [undoId,setUndoId]=useState('')
+  const [mockStems,setMockStems]=useState<boolean|null>(null)
+  const [candidateMock,setCandidateMock]=useState<boolean|null>(null)
+  const [candidateWarnings,setCandidateWarnings]=useState<string[]>([])
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
   const [candidateUrl,setCandidateUrl]=useState('')
@@ -74,18 +79,20 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [error, setError] = useState('')
   const abort = useRef<AbortController | null>(null)
   const attachedVideo = useRef<File | null>(null)
-  useEffect(() => () => abort.current?.abort(), [])
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
   useEffect(() => () => { if(currentUrl) URL.revokeObjectURL(currentUrl) },[currentUrl])
   useEffect(() => { if (selectedVisual) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual])
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
+  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings})},[projectId,mockStems,candidateWarnings,onProjectState])
   const config: BackendConfig = {baseUrl, token}
   const run = async (fn: () => Promise<void>) => {
     setError(''); setMessage(''); setBusy(true)
-    try { await fn() } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-    finally { setBusy(false) }
+    try { await fn() } catch (e) { if(mounted.current)setError(e instanceof Error ? e.message : String(e)) }
+    finally { if(mounted.current)setBusy(false) }
   }
   const loadVideo = async (cfg: BackendConfig, info: ProjectInfo) => {
     if (!info.metadata?.has_video) { onVideo(null); return }
@@ -102,6 +109,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await onLoadStems(new HttpStemSource(cfg, id), 'Project stems')
     setJobId(id)
     const model = job.inference?.model
+    setMockStems(model?.is_mock ?? null)
     const summary = model?.is_mock ? 'Ready — test stems; no AI separation was performed.' : model?.is_mock === false ? 'Stems ready to edit.' : 'Stems ready; model identity unavailable.'
     setMessage([summary, ...(job.inference?.warnings || [])].join(' '))
     return job.inference?.warnings || []
@@ -112,7 +120,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
     setProject(created); setToken(created.access_token); setResumeId(created.project_id); setResumeToken(created.access_token)
-    setJobId(''); setUndoId('');setAnchors([]); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+    setMockStems(null);setJobId(''); setUndoId('');setAnchors([]); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
@@ -148,11 +156,13 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
     const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview'})
     for (;;) {
+      if(!mounted.current)throw new Error('Preview cancelled')
       const job=await getCandidate(cfg,id)
       if(job.status==='failed')throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.')
       if(job.status==='completed') {
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
+        setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
         setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
         setMessage(['Preview ready. Listen to the target and edited mix, then Apply preview.',...(job.inference?.warnings || [])].join(' '));return
       }
@@ -328,7 +338,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if(!candidateId || !project) return
     await flush();const applied=await applyCandidate(config,candidateId)
     await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
-    setJobId(applied.job_id);setUndoId(candidateId);setCandidateId('');setRetryStems([])
+    setMockStems(candidateMock);setJobId(applied.job_id);setUndoId(candidateId);setCandidateId('');setRetryStems([])
     setProject(await getProject(config,project.project_id))
     setMessage('Preview applied. Existing layer edits were preserved.')
   })

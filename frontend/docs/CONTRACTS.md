@@ -13,7 +13,7 @@ Each contract below has one of three labels:
 Defined in `src/types.ts`.
 
 ```ts
-type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience'
+type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience' | 'residual'
 
 type MuteRange = [number, number]
 
@@ -38,6 +38,7 @@ Gains are multipliers from 0 to 2. Automation is piecewise linear in timeline se
 All additive. No existing field or union member changed.
 
 - `Stem` gained optional `startOffset` and `muteRanges`, and there is a new `MuteRange` type (see "Offsets and mute ranges"). Both come from the backend and are read-only in the editor.
+- `StemKind` gained `residual`, the only kind the backend sets itself: a stem whose `role` is `residual` gets it, and everything else keeps `sfx`. Kinds are still never guessed from names.
 - `EditAction` gained `follow_intensity`. It makes a stem's gain follow how loud the source stems are. That is a loudness proxy, not emotion detection. It is resolved to `set_automation` in the browser (`src/audio/resolve.ts`) because that needs decoded audio, so it never reaches an edit list or an exporter. `applyAction` treats an unresolved one as a no-op. `minValue` is the gain at low loudness and `maxValue` at high loudness. `maxValue` below `minValue` ducks.
 
 ## Edit list
@@ -129,7 +130,10 @@ Every call except project creation needs `Authorization: Bearer <project token>`
 |---|---|---|
 | `getJob`, `HttpStemSource`, `JobStatusCard` | `GET /api/jobs/{id}` | `{ status, progress, error, stems }`. `status` is `queued`, `processing`, `completed` or `failed`. `progress` is 0 to 100. |
 | `fetchStemBlobUrl` | `GET` the stem's `audio_url` | Path relative to the base URL. |
+| `processProject` | `POST /api/projects/{id}/process` | `{ prompts, visual_prompt }`. `visual_prompt` is always sent: `{}` means no selection. Leaving the field out makes the backend substitute the project's stored detections document, which is megabytes of masks. |
 | `sendStemPatch` through `StemSync`, `patchStem` | `PATCH /api/projects/{id}/stems/{stem_id}` | `{ volume, muted, solo, automation }`. `automation` is omitted for a curve with a step. An omitted field keeps its stored value, and an empty list clears it. |
+
+Stems may also carry `role` (`target` or `residual`), `source_stem_id`, `prompt`, `label`, `spans`, `sample_rate`, `channels` and `format`. All are optional, and the editor works without any of them: `role` picks the kind and identifies the pair a "remove X" needs, `label` is preferred for display, and the rest are ignored for now. A `remove` whose target or residual cannot be identified (the `fake` adapter returns no residual) loads the stems and reports it, rather than failing the edit.
 
 `project_id` on the job response is read from `get_job` in app/main.py, which returns the whole jobs row. INTEGRATION.md does not list it, so it needs confirming. Without it stems still load, edits stay in the browser, and the status chip says so.
 

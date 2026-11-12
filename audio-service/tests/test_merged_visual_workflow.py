@@ -350,30 +350,30 @@ def no_selection_run(backend_client, pedestrians_project) -> dict:
 
 
 def test_process_without_a_selection_runs_text_only(no_selection_run):
-    """No click, but stored detections: we can only run text, with no anchors, and we say so.
+    """No click, but stored detections: we can only run text, with no anchors.
 
     ``prepare_payload`` takes its ``selection is None`` branch and attaches **no**
     ``metadata.source``. With no selected object and no video reference there is nothing to
-    prompt with, so the request still succeeds with a warning — waste, not breakage.
+    prompt with, so Person 4 now sends ``visual_prompt: null`` and we have nothing to warn
+    about: the request is text-only by construction rather than by fallback.
     """
     record = no_selection_run["translations"][0]
     assert record["metadata"].source is None, "no selection, so the backend sends no source block"
     assert record["visual"] is None, "without a selected object there is nothing to prompt with"
     assert record["anchors"] == []
-    assert any("without a selected object" in w for w in record["warnings"]), record["warnings"]
+    assert not record["warnings"], record["warnings"]
     warnings = no_selection_run["job"]["inference"]["warnings"]
-    assert any("without a selected object" in w for w in warnings), warnings
+    assert not [w for w in warnings if "visual" in w or "selected object" in w], warnings
 
 
-@pytest.mark.xfail(strict=True, reason="Person 4 still forwards detections without a selection")
-def test_process_without_a_selection_should_not_forward_the_detections_document(no_selection_run, artefacts):
-    """The waste, pinned as a wish rather than as a fact.
+def test_process_without_a_selection_does_not_forward_the_detections_document(no_selection_run, artefacts):
+    """The waste, now fixed on Person 4's side.
 
-    ``app/visual.py`` currently does ``payload['visual_prompt'] = raw``, so the whole
-    detections document (every frame's RLE) crosses the wire for a request that cannot use
-    any of it. Pinning the *current* behaviour would make Person 4's fix break CI; pinning
-    the behaviour we want makes it flip this xfail to XPASS instead.
+    ``app/visual.py`` used to do ``payload['visual_prompt'] = raw``, so the whole detections
+    document (every frame's RLE) crossed the wire for a request that cannot use any of it.
+    It now sends ``visual_prompt: null`` when no selection accompanies the request.
     """
     detections, _selection, _video = artefacts
     forwarded = no_selection_run["translations"][0]["metadata"].visual_prompt
+    assert forwarded is None, "the raw detections document is still forwarded"
     assert set(forwarded or {}) != set(detections), "the raw detections document is still forwarded"

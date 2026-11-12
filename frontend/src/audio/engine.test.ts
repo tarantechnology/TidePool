@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Stem, TrackState } from '../types'
-import { AudioEngine, sourceStart } from './engine'
+import { AudioEngine, describeStemFailures, sourceStart } from './engine'
 import type { EngineEvent } from './engine'
 
 // Just enough of Web Audio to drive the engine's bookkeeping in Node. Sound
@@ -136,8 +136,9 @@ describe('AudioEngine', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('reports the measured duration of each stem', async () => {
-    const stems = await engine.replaceStems([stem('a', 7)])
-    expect(stems?.[0].duration).toBe(7)
+    const result = await engine.replaceStems([stem('a', 7)])
+    expect(result?.stems[0].duration).toBe(7)
+    expect(result?.failures).toEqual([])
     expect(engine.duration).toBe(7)
   })
 
@@ -185,13 +186,31 @@ describe('AudioEngine', () => {
     expect(events.at(-1)?.type).toBe('load')
   })
 
-  it('keeps the current stems if the new ones fail to load', async () => {
+  it('keeps the current stems when none of the new ones load', async () => {
     engine.seek(5)
     await expect(engine.replaceStems([stem('c', -1)])).rejects.toThrow('404')
     await expect(engine.replaceStems([stem('c', 0)])).rejects.toThrow('decode failed')
+    await expect(engine.replaceStems([stem('c', 0), stem('d', -1)])).rejects.toThrow(
+      /Could not load any stem: c \(decode failed\), d \(.*404\)/,
+    )
     expect(engine.getPeaks('a')).not.toBeNull()
     expect(engine.getTime()).toBe(5)
     expect(engine.duration).toBe(20)
+  })
+
+  it('loads the stems that decode and reports the ones that do not', async () => {
+    const result = await engine.replaceStems([stem('good', 6), stem('broken', 0), stem('missing', -1)])
+
+    expect(result?.stems.map((s) => s.id)).toEqual(['good'])
+    expect(engine.getPeaks('good')).not.toBeNull()
+    expect(engine.getPeaks('broken')).toBeNull()
+    expect(engine.duration).toBe(6)
+    expect(result?.failures.map((f) => f.stem.id)).toEqual(['broken', 'missing'])
+    expect(result?.failures[0].reason).toBe('decode failed')
+    expect(describeStemFailures(result?.failures ?? [])).toBe(
+      'broken (decode failed), missing (Failed to fetch stem missing: 404)',
+    )
+    expect(events.at(-1)?.type).toBe('load')
   })
 
   it('drops a decode in progress once a newer load has started', async () => {
@@ -208,7 +227,7 @@ describe('AudioEngine', () => {
       engine.replaceStems([stem('y', 2)]),
     ])
     expect(first).toBeNull()
-    expect(second?.[0].id).toBe('y')
+    expect(second?.stems[0].id).toBe('y')
     expect(engine.getPeaks('x')).toBeNull()
     expect(engine.duration).toBe(2)
   })
@@ -219,7 +238,7 @@ describe('AudioEngine', () => {
       engine.replaceStems([stem('y', 2)]),
     ])
     expect(first).toBeNull()
-    expect(second?.[0].id).toBe('y')
+    expect(second?.stems[0].id).toBe('y')
   })
 
   it('starts one set of sources when play is called twice during resume', async () => {

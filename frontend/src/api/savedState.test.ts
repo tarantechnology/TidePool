@@ -3,7 +3,7 @@ import { applyAction } from '../edits'
 import type { Stem, TrackState } from '../types'
 import { toTrackState } from './backend'
 import type { SavedStem } from './backend'
-import { loadFromSource } from './loadStems'
+import { loadFromSource, stemFailureMessage } from './loadStems'
 import { FileStemSource, HttpStemSource } from './stemSources'
 import type { StemSource } from './stemSources'
 import { StemSyncRunner, SYNC_DEBOUNCE_MS } from './stemSync'
@@ -222,7 +222,7 @@ describe('when saved state cannot be trusted', () => {
 
 describe('loadFromSource', () => {
   const stem: Stem = { id: 's1', label: 'dog', kind: 'sfx', url: 'blob:x', duration: 4 }
-  const engine = { replaceStems: vi.fn(async (stems: Stem[]) => stems) }
+  const engine = { replaceStems: vi.fn(async (stems: Stem[]) => ({ stems, failures: [] })) }
   const flush = vi.fn(async () => {})
   beforeEach(() => {
     engine.replaceStems.mockClear()
@@ -281,6 +281,44 @@ describe('loadFromSource', () => {
       expect(res, `overtaken at check ${overtakenAfter}`).toBeNull()
       expect(engine.replaceStems).toHaveBeenCalledTimes(overtakenAfter === 3 ? 1 : 0)
     }
+  })
+
+  it('keeps the stems that loaded, and reports the ones that did not', async () => {
+    const good: Stem = { ...stem, id: 's1' }
+    const bad: Stem = { ...stem, id: 's2', label: 'siren' }
+    const partial = {
+      replaceStems: async () => ({ stems: [good], failures: [{ stem: bad, reason: 'decode failed' }] }),
+    }
+    const source: StemSource = { load: async () => [good, bad] }
+
+    const res = await loadFromSource(source, partial, () => true, flush)
+
+    expect(res?.stems).toEqual([good])
+    // Tracks follow what is on the timeline, so nothing drives a missing stem.
+    expect(res?.tracks.map((t) => t.stemId)).toEqual(['s1'])
+    expect(stemFailureMessage(res?.failures ?? [])).toBe('Could not load siren (decode failed). The other stems are loaded.')
+  })
+
+  it('drops saved tracks for stems that did not load', async () => {
+    const good: Stem = { ...stem, id: 's1' }
+    const bad: Stem = { ...stem, id: 's2', label: 'siren' }
+    const source: StemSource = {
+      load: async () => [good, bad],
+      savedTracks: [
+        { stemId: 's1', gain: 0.5, muted: false, solo: false, automation: [] },
+        { stemId: 's2', gain: 0.5, muted: false, solo: false, automation: [] },
+      ],
+    }
+    const partial = {
+      replaceStems: async () => ({ stems: [good], failures: [{ stem: bad, reason: 'decode failed' }] }),
+    }
+
+    const res = await loadFromSource(source, partial, () => true, flush)
+    expect(res?.tracks.map((t) => t.stemId)).toEqual(['s1'])
+  })
+
+  it('says nothing when every stem loaded', async () => {
+    expect(stemFailureMessage([])).toBe('')
   })
 
   it('returns null when the engine reports a newer load', async () => {

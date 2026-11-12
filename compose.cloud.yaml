@@ -36,7 +36,11 @@ services:
       AUDIO_LOAD_VISUAL_RANKER: ${AUDIO_LOAD_VISUAL_RANKER:-false}
       AUDIO_JUDGE_ONLY: ${AUDIO_JUDGE_ONLY:-true}
       AUDIO_CHUNK_SECONDS: ${AUDIO_CHUNK_SECONDS:-10}
-      AUDIO_CHUNK_WORKERS: ${AUDIO_CHUNK_WORKERS:-2}
+      # Chunk windows per model batch. Batch k costs roughly k x the activation memory of
+      # one window and buys per-call overhead, not a k x speedup; nothing above 1 is
+      # confirmed on the A40, so stay at 1 until measured. The audio service batches
+      # windows instead of threading them (audio-service/docs/chunk_concurrency.md).
+      AUDIO_CHUNK_BATCH: ${AUDIO_CHUNK_BATCH:-1}
       AUDIO_MEDIA_ROOT: /data
       HF_TOKEN: ${HF_TOKEN:?Set HF_TOKEN to a token with approved model access}
     volumes:

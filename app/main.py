@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
-from .core import MAX_UPLOAD, connect, digest, init, probe, project_dir, run, stem, uid
+from .core import MAX_UPLOAD, connect, digest, event, init, probe, project_dir, run, stem, uid
 from .guidance import Guidance, SoundPrompt, EditScope, validate_timing, options, description
 from .commands import parse
 from .agent import AgentRequest, AgentError, plan as agent_plan
@@ -26,6 +26,21 @@ async def lifespan(app):
 app=FastAPI(title='SoundCanvas API',lifespan=lifespan)
 _preview_lock = threading.Lock()
 
+def build_preview(pid, original):
+    """Browser-compatible H.264 preview. yuv420p needs even dimensions, so round the
+    odd ones down while keeping the aspect ratio."""
+    path=project_dir(pid)/'extracted'/'preview.mp4'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    temp=path.with_name(uid()+'.mp4')
+    try:
+        run('ffmpeg','-v','error','-y','-i',str(original),'-map','0:v:0','-an',
+            '-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-c:v','libx264','-preset','veryfast','-pix_fmt','yuv420p','-movflags','+faststart',str(temp))
+        temp.replace(path)
+    except RuntimeError:
+        temp.unlink(missing_ok=True); raise
+    return path
+
 def auth(pid, authorization):
     with connect() as db: p=db.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone()
     if not p: raise HTTPException(404,'Project not found')
@@ -38,6 +53,7 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload'); output=json.loads(d.pop('output')) if d['output'] else None
+    d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':
         d['stems'] = output.get('stems', []) if isinstance(output, dict) else output or []
         d['inference'] = output.get('inference') if isinstance(output, dict) else None
@@ -62,14 +78,22 @@ class StemUpdate(BaseModel):
         if self.automation and any(a.time>=b.time for a,b in zip(self.automation,self.automation[1:])): raise ValueError('Keyframe times must strictly increase')
         if self.mute_ranges and any(not math.isfinite(a) or not math.isfinite(b) or a<0 or b<=a for a,b in self.mute_ranges): raise ValueError('Mute ranges must have finite, ordered nonnegative times')
         return self
+def max_prompts():
+    """Mirrors the audio service's AUDIO_MAX_PROMPTS so over-limit jobs fail fast."""
+    try: return max(1,int(os.getenv('MAX_PROMPTS','8')))
+    except ValueError: return 8
 class Process(BaseModel):
-    prompts: list[str | SoundPrompt]=Field(default_factory=list,max_length=20)
+    prompts: list[str | SoundPrompt]=Field(default_factory=list,max_length=1000)
     visual_prompt: dict | None=None
     guidance: Guidance=Field(default_factory=Guidance)
     edit_scope: EditScope=Field(default_factory=EditScope)
     profile: Literal["preview", "quality"]="preview"
     append: bool=False
     reranking_candidates: int=Field(default=1,ge=1,le=4)
+    @model_validator(mode='after')
+    def within_prompt_cap(self):
+        if len(self.prompts)>max_prompts(): raise ValueError(f'At most {max_prompts()} prompts per job')
+        return self
 
 class CandidateRequest(BaseModel):
     stem_id: str | None=None
@@ -117,6 +141,9 @@ async def upload(pid: str, file: UploadFile=File(...), authorization: str | None
         info.update(video_id=pid, source_sha256=file_sha256(path))
         if ext in ('.mp4','.mov') and not info['has_video']: raise ValueError('Expected a video stream')
         run('ffmpeg','-v','error','-y','-i',str(path),'-vn','-ac','2','-ar','48000','-c:a','pcm_f32le',str(audio))
+        if info['has_video']:
+            try: build_preview(pid,path)
+            except RuntimeError as exc: event('preview_failed',project_id=pid,error=str(exc))
         from .media import inspect_audio
         info['audio_quality']=inspect_audio(audio)
         if info['channels']>2: info['audio_quality']['findings'].append('Processing downmixes this multichannel source to stereo; the original upload is preserved.')
@@ -166,17 +193,13 @@ def preview(pid: str, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(404,'Project has no video')
     path=project_dir(pid)/'extracted'/'preview.mp4'
-    # A single process owns the worker and media cache; avoid duplicate transcodes.
-    with _preview_lock:
-        if not path.exists():
-            temp=path.with_name(uid()+'.mp4')
-            try:
-                run('ffmpeg','-v','error','-y','-i',p['original'],'-map','0:v:0','-an',
-                    '-c:v','libx264','-preset','veryfast','-pix_fmt','yuv420p','-movflags','+faststart',str(temp))
-                temp.replace(path)
-            except RuntimeError as exc:
-                temp.unlink(missing_ok=True)
-                raise HTTPException(422,str(exc)) from exc
+    if not path.exists():
+        # Projects uploaded before previews were built at upload time, and retries after a
+        # failed upload transcode. One process owns the media cache; avoid duplicate work.
+        with _preview_lock:
+            if not path.exists():
+                try: build_preview(pid,p['original'])
+                except RuntimeError as exc: raise HTTPException(422,str(exc)) from exc
     return FileResponse(path,media_type='video/mp4',content_disposition_type='inline')
 
 @app.get('/api/projects/{pid}/visual-metadata')

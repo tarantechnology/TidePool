@@ -7,6 +7,17 @@ more permissive direct-call behavior below is unchanged. See [current integratio
 and real-model validation status](../../vision/docs/ISSUE4.md); genuine visual-guided
 SAM Audio inference remains unverified.
 
+**Status update (2026-11-11), Contracts A + D:** the merged backend
+(`integration/cloud-editor-gpu`) is now verified to send `metadata.source`
+(`asset_id`, `original_ref`, `sha256`, `duration`, `frame_rate`) and
+`metadata.visual_prompt = {"selection": ..., "detections": ...}` — the **envelope** shape
+(D.3) — for every visually guided job, and that payload translates into a real
+`VisualInput` with per-frame masks end to end on Person 2's real artefacts
+(`audio-service/tests/test_merged_visual_workflow.py`). The exact payload, the
+`AUDIO_MEDIA_ROOT` requirement and the remaining gaps are documented in
+[Merged workflow (PR #15/#18)](../audio_integration_handoff.md#merged-workflow-pr-1518).
+Still unverified: real visually guided inference, which needs a CUDA GPU.
+
 **Status: PROPOSED, awaiting team agreement.** Every contract below is Person 1's proposal,
 not an agreed interface. Nothing here requires another team to change code today: the audio
 service already accepts exactly what Person 4's worker sends and returns a superset of what
@@ -86,11 +97,15 @@ storage, and this contract is only the identity + locator block that travels in 
 | `frame_rate` | number | **consumed today** as `metadata.source.frame_rate` | Native CFR frame rate of `original_ref`. Used to map mask frame indices to seconds when the detections document does not carry `fps`. |
 | `width`, `height`, `has_video` | int, int, bool | advisory | Person 4 already returns these from `probe()` on upload; Person 2 carries `width`/`height` (aliases `frame_width`/`frame_height`). |
 
-**Compatibility.** Person 4 today stores media at
+**Compatibility.** Person 4 stores media at
 `STORAGE_ROOT/projects/<project_id>/original/<uid><ext>` and the extracted audio at
-`.../extracted/audio.wav`, and returns `probe()` output as `metadata` from `/upload`. All
-that is missing for Contract A is **forwarding** those paths (plus a digest) into the
-`metadata` our service receives — see Open Question 2 in the handoff doc. Person 2's exports
+`.../extracted/audio.wav`, and returns `probe()` output as `metadata` from `/upload`.
+**Implemented since PR #15:** `app/visual.py::project_source` forwards exactly
+`{asset_id, original_ref, sha256, duration, frame_rate}` as `metadata.source` for visually
+guided jobs (`audio_ref` is still not sent; `POST /separate` uploads the bytes instead), and
+`app/worker.py` re-verifies the digest when the queued job starts. The `file://` refs resolve
+only because `compose.audio.yaml` mounts the same `./storage` at the same absolute path
+`/data` in both containers (`STORAGE_ROOT` == `AUDIO_MEDIA_ROOT`). Person 2's exports
 deliberately contain no absolute local paths, so `original_ref` has to come from Person 4,
 not from Person 2.
 
@@ -358,7 +373,10 @@ selected object — this is the shape that **can** drive the model:
 ```
 
 **3. Envelope** — the recommended shape, because it carries the selection, the per-frame
-masks and the video locator together:
+masks and the video locator together. **This is what Person 4's backend sends today**, as
+`{"selection": ..., "detections": ...}`, with the video locator arriving separately in
+`metadata.source.original_ref`; `detections_ref`, `video_ref` and `time_ranges` are
+accepted but unused by the merged workflow:
 
 ```json
 {

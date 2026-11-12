@@ -5,7 +5,7 @@ import type { VisualSelection } from '../visual'
 import { separationCommand } from '../separationCommand'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, getPrepareVisual, startPrepareVisual, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, getVisualJob, getVisualMetadata, localCommand, startExport, startVisualAnalysis, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { pollJob, toJobStatus } from '../api/jobs'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -14,6 +14,7 @@ import type { StemSource } from '../api/stemSources'
 
 import { SoundGuidance } from './SoundGuidance'
 import { CandidateComparison } from './CandidateComparison'
+import { GuidedByChip, ObjectsPanel } from './ObjectsPanel'
 import { PassesSelect } from './PassesSelect'
 
 const field = 'w-full rounded-lg border border-line bg-white/[0.04] px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500'
@@ -29,6 +30,11 @@ interface Props {
   onVisual: (metadata: VisualMetadata | null) => void
   selectedVisual: VisualSelection | null
   onClearSelection: () => void
+  /** Select an object from the object list, the same way a click on the video does. */
+  onSelectVisual: (selection: VisualSelection) => void
+  onSeek: (seconds: number) => void
+  /** The detections the editor is showing, for the object list. */
+  visual: VisualMetadata | null
 }
 
 export interface ProjectPanelHandle {
@@ -39,7 +45,7 @@ export interface ProjectPanelHandle {
 }
 
 /** Project credentials remain in component memory; the user may copy them for resuming. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -77,6 +83,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [offset, setOffset] = useState('0')
   const [clearRanges, setClearRanges] = useState(false)
   const [messages, setMessages] = useState<Array<{id:string;text:string}>>([])
+  const [resumeVisual, setResumeVisual] = useState<{projectId:string;jobId:string}|null>(null)
   const [passes, setPasses] = useState(1)
   const [retryPasses, setRetryPasses] = useState(1)
   const [refining, setRefining] = useState(false)
@@ -152,7 +159,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const original=info.metadata ? await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(info.project_id)}/original-audio`, 3_600_000) : null
     onOriginalAudio(original)
     const visualJob = info.latest_visual_job
-    if (visualJob && (visualJob.status === 'queued' || visualJob.status === 'processing')) await finishAnalysis(cfg, info.project_id, visualJob.id)
+    // The Objects section follows it, without holding up the rest of the restore.
+    setResumeVisual(visualJob && (visualJob.status === 'queued' || visualJob.status === 'processing') ? {projectId:info.project_id,jobId:visualJob.id} : null)
     const latest = info.latest_job
     if (latest && (latest.status === 'queued' || latest.status === 'processing')) await track(cfg, latest.id)
     else if (info.last_completed_job_id) { await onLoadStems(new HttpStemSource(cfg,info.last_completed_job_id), 'Project stems'); setMessage('Project restored.') }
@@ -256,42 +264,20 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); throw e }
     finally { setBusy(false) }
   }}))
-  const finishAnalysis = async (cfg: BackendConfig, projectId: string, id: string) => {
-    for (;;) {
-      const job=await getVisualJob(cfg,id)
-      if (job.status === 'failed') throw new Error(job.error || 'Visual analysis failed')
-      if (job.status === 'completed') break
-      setMessage(`Analyzing video: ${job.status}`); await new Promise(resolve => setTimeout(resolve,1000))
-    }
-    const metadata=asVisualMetadata(await getVisualMetadata(cfg,projectId))
+  const visualAnalyzed = (metadata: VisualMetadata) => {
     onVisual(metadata); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('Analysis complete')
-    const count=metadata.frames.reduce((n, f) => n+f.objects.filter(o => o.track_id !== null && o.mask).length,0)
-    setMessage(count ? `Analysis ready for the first ${metadata.processed_duration_seconds.toFixed(1)} seconds. Pause and click an object in the video.` : 'Analysis completed, but no tracked objects with masks were found.')
   }
-  const prepareVisual = () => run(async () => {
+  /** After the backend re-encoded a compatible copy: reload the video, and the original audio if nothing was separated yet. */
+  const reloadPreparedMedia = async () => {
     if (!project) return
-    setMessage('Preparing a compatible video copy…')
-    const id=await startPrepareVisual(config,project.project_id)
-    for (;;) {
-      const job=await getPrepareVisual(config,id)
-      if (job.status === 'failed') throw new Error(job.error || 'Preparing video failed')
-      if (job.status === 'completed') break
-      setMessage(`Preparing video copy: ${job.status}`); await new Promise(resolve=>setTimeout(resolve,1000))
-    }
     const info=await getProject(config,project.project_id); setProject(info)
-    const original=await fetchStemBlobUrl(config,`/api/projects/${encodeURIComponent(project.project_id)}/original-audio`,3_600_000)
-    onOriginalAudio(original)
-    await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}]},'Original audio')
+    if (!jobId) {
+      const original=await fetchStemBlobUrl(config,`/api/projects/${encodeURIComponent(project.project_id)}/original-audio`,3_600_000)
+      onOriginalAudio(original)
+      await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}]},'Original audio')
+    }
     await loadVideo(config,info); onVisual(null); onClearSelection(); setSelection(null)
-    setMessage('Compatible copy ready. Finding objects…')
-    const visualId=await startVisualAnalysis(config,project.project_id)
-    await finishAnalysis(config,project.project_id,visualId)
-  })
-  const analyze = () => run(async () => {
-    if (!project) return
-    const id=await startVisualAnalysis(config,project.project_id)
-    await finishAnalysis(config,project.project_id,id)
-  })
+  }
   const finishExport = async (id: string, extension: string) => {
     for (;;) {
       const info=await getExport(config,id)
@@ -394,18 +380,20 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   return <section className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-line bg-ink-900/80 p-3 text-zinc-200" aria-label="Project controls">
     <div className="mb-2 flex items-center justify-between"><h2 className="text-sm font-semibold">Project</h2><span className="text-[10px] text-zinc-500">{project?.status || 'New'}</span></div>
     <div className="space-y-2">
+      {/* First in the panel: it is short and scrolls, and detection status must be seen without scrolling. */}
+      {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
       <label className="block text-xs">Media<input className={`${field} mt-1`} type="file" accept=".mp4,.mov,.wav,.mp3" onChange={e => setFile(e.target.files?.[0] || null)} /></label>
       <button className={button} disabled={busy || !file} onClick={()=>{if(file) void uploadMedia(file)}}>Create & upload</button>
       {project && <details className="text-xs"><summary className="cursor-pointer">Project credentials</summary><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e => e.currentTarget.select()} /></label><p className="text-zinc-500">Copy these to resume this project later.</p></details>}
       <details className="text-xs"><summary className="cursor-pointer">Resume a project</summary><div className="mt-2 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={resume}>Resume</button></div></details>
       {project && <>
         <label className="block text-xs">Sound description<input className={`${field} mt-1`} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="dog barking" /></label>
-        {project.metadata?.has_video && <button className={secondary} disabled={busy} onClick={analyze}>Find objects in video</button>}
-        <details className="text-xs"><summary className="cursor-pointer">Visual selection options</summary><p className="text-zinc-400">Experimental. A visible object may be silent; listen before applying an edit.</p>{project.metadata?.has_video && !jobId && <><p className="mt-1 text-zinc-400">If object detection requires normalization, prepare a re-encoded copy. The uploaded file is kept.</p><button className={`${secondary} mt-1`} disabled={busy} onClick={prepareVisual}>Prepare compatible copy</button></>}<p className="my-1 text-zinc-400">Click Find objects, then pause and select an object. Advanced: import matching detection and selection JSON files.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</details>
+        <details className="text-xs"><summary className="cursor-pointer">Advanced: import detections</summary><p className="my-1 text-zinc-400">Import detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</details>
         <SoundGuidance duration={project.metadata?.duration || 1} anchors={anchors} onChange={setAnchors}/>
         <label className="block text-xs">Edit after separation<select aria-label="Edit after separation" className={field} value={editAction} onChange={e=>setEditAction(e.target.value as EditScope['action'])}><option value="keep">Keep isolated layer</option><option value="mute">Mute target</option><option value="lower">Lower target 50%</option></select></label>
         <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
         {editAction==='mute' && <div className="text-xs"><label><input type="checkbox" checked={timedEdit} onChange={e=>setTimedEdit(e.target.checked)}/>Mute only an edit interval</label>{timedEdit && <div className="flex gap-1"><label>Edit start<input aria-label="Edit start" className={field} type="number" min={0} value={editStart} onChange={e=>setEditStart(Number(e.target.value))}/></label><label>Edit end<input aria-label="Edit end" className={field} type="number" min={0} value={editEnd} onChange={e=>setEditEnd(Number(e.target.value))}/></label></div>}</div>}
+        {selection !== null && <GuidedByChip selection={selection as {label?:unknown;track_id?:unknown}} start={Number(rangeStart)} end={Number(rangeEnd)} onClear={()=>{setSelection(null);onClearSelection();setSelectionName('')}}/>}
         <div className="flex gap-1"><button className={button} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Preview</button><button className={secondary} disabled={busy || !prompt.trim() || !capabilities?.quality} onClick={()=>void process(true)}>Quality retry</button></div>
         {!capabilities?.quality && <p className="text-xs text-zinc-400">{capabilities?.reason || 'Checking quality retry availability…'}</p>}
         {project.metadata?.audio_quality?.findings.map(f=><p key={f} className="text-xs text-amber-300">{f}</p>)}

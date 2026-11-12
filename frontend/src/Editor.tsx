@@ -64,6 +64,8 @@ export default function Editor() {
   const [compareOriginal, setCompareOriginal] = useState(false)
   const [visual, setVisual] = useState<VisualMetadata | null>(null)
   const [visualSelection, setVisualSelection] = useState<VisualSelection | null>(null)
+  const [seekTo, setSeekTo] = useState<{ time: number; n: number } | null>(null)
+  const seekVideo = useCallback((time: number) => setSeekTo((prev) => ({ time, n: (prev?.n ?? 0) + 1 })), [])
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
   const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
@@ -369,10 +371,11 @@ export default function Editor() {
               visual={visual}
               onSelection={setVisualSelection}
               selection={visualSelection}
+              seekTo={seekTo}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
             <div className="flex min-h-0 w-80 shrink-0 flex-col gap-2">
-              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
+              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} />
               <details className="shrink-0 text-xs text-zinc-400"><summary className="cursor-pointer">Edit history</summary><EditLog log={log} /></details>
             </div>
           </div>

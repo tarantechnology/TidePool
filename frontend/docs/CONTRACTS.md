@@ -135,7 +135,11 @@ Every call except project creation needs `Authorization: Bearer <project token>`
 | `processProject` | `POST /api/projects/{id}/process` | `{ prompts, passes?, visual_prompt }`. `visual_prompt` is always sent: `{}` means no selection. Leaving the field out makes the backend substitute the project's stored detections document, which is megabytes of masks. |
 | `createCandidate` | `POST /api/projects/{id}/candidates` | `{ stem_id, prompt, reranking_candidates, guidance, edit_scope, visual_prompt, profile, passes? }`. |
 | `startRefine`, `runRefine` | `POST /api/projects/{id}/stems/{stem_id}/refine` | Optional `{ passes }`. 202 `{ job_id }`, polled through `GET /api/jobs/{id}`. 409 with a string `detail` when the stem cannot be refined. |
-| `getCapabilities` | `GET /api/projects/{id}/capabilities` | `{ quality, visual, reason, max_passes?, refine? }`. |
+| `getCapabilities` → `toCapabilities` | `GET /api/projects/{id}/capabilities` | `{ quality, visual, reason, vision?, max_passes?, refine? }`. `vision` is ASSUMED, being added to the backend: `{ available, reason, model, weights_cached, device }`. `max_passes` and `refine` come from backends with multi-pass separation and are passed through only when they have the right type. Absent `vision` fields map to `null` (`weights_cached` becomes `weightsCached`), and a missing `vision` block, or one without a boolean `available`, means "status unknown": Find objects stays enabled and the backend answers. |
+| `startVisualAnalysis` | `POST /api/projects/{id}/visual-analyze` | 202 `{ job_id, status, prepared? }`. `prepared: true` means the backend re-encoded a compatible copy first; the editor then reloads the video (and the original audio, if nothing was separated) and says so in the status. 503 `{ detail, code: "vision_unavailable" }` shows "Detector not installed — detail" and disables the button; 409 shows the detail ("already active", "Upload a video first"); 422 means the media cannot be analysed and offers **Prepare compatible copy**. `prepared` and the 503 are ASSUMED. |
+| `getVisualJob` through `followVisualJob` | `GET /api/visual-jobs/{id}` | `{ status, stage?, progress?, error? }`. `stage` is `preparing` or `detecting` (ASSUMED; anything else is ignored), `progress` 0 to 100, clamped. Polled with `pollJob`, so Cancel and unmounting stop it and three failed polls in a row end it. |
+| `getVisualMetadata` | `GET /api/projects/{id}/visual-metadata` | The detections document (`vision/schemas/detections.schema.json`), checked by `asVisualMetadata`. |
+| `startPrepareVisual`, `getPrepareVisual` | `POST /api/projects/{id}/prepare-visual`, `GET /api/prepare-jobs/{id}` | Manual re-encode, offered after a 422. Refused by the backend once the project has stems. |
 | `sendStemPatch` through `StemSync`, `patchStem` | `PATCH /api/projects/{id}/stems/{stem_id}` | `{ volume, muted, solo, automation }`. `automation` is omitted for a curve with a step. An omitted field keeps its stored value, and an empty list clears it. |
 
 Stems may also carry `role` (`target` or `residual`), `source_stem_id`, `prompt`, `label`, `spans`, `sample_rate`, `channels` and `format`. All are optional, and the editor works without any of them: `role` picks the kind and identifies the pair a "remove X" needs, `label` is preferred for display, and the rest are ignored for now. A `remove` whose target or residual cannot be identified (the `fake` adapter returns no residual) loads the stems and reports it, rather than failing the edit.
@@ -200,4 +204,13 @@ The preview also applies a 0.7 master gain that neither exporter applies, so pre
 
 ### Person 2 (vision)
 
-1. Nothing in the editor consumes masks or click-to-select yet. `PUT /api/projects/{id}/visual-metadata` is the documented hand-off, and it is unused here.
+The editor reads the detections document from `GET /visual-metadata` (or an imported JSON file, sent with `PUT`). `src/objects.ts` derives everything shown from it:
+
+- **Object list:** one row per `track_id` that has a `mask` in at least one frame; untracked or maskless objects cannot guide separation, so they are neither listed nor drawn. First and last seen are frame timestamps, the label is the one the track had most often. The tests use `src/fixtures/detections.trimmed.json`, frames 9 to 24 of `audio-service/fixtures/vision/detections.json`.
+- **Selecting from the list** builds the same `visual_selection` a click on the video builds (`selectVisual` at the track's first frame), but the interval covers the track's frames, clamped to what `app/visual.py` accepts: frame-aligned, 0.1 to 30 s, inside the processed media. A click on the video keeps its interval of about a second around the clicked frame.
+- **Overlay colours** come from `trackColor(track_id)`, a stable hash, so the list swatch, box and mask match.
+
+Open questions:
+
+1. The `vision` capability block, `prepared` on `POST /visual-analyze`, the 503 `vision_unavailable` response and `stage` on visual jobs are coded to the contract being implemented now. Each is optional here, and the editor falls back to the old behaviour without it.
+2. Whether a track-length interval (up to 30 s) is the right default for a list pick, or whether separation works better on a shorter window.

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/engine'
 import type { VisualMetadata } from '../api/backend'
 import { frameAt, selectVisual } from '../visual'
+import { overlayBoxes, readShowObjects, trackColor, writeShowObjects } from '../objects'
 import type { VisualSelection } from '../visual'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { MaskOverlay } from './MaskOverlay'
@@ -21,9 +22,11 @@ interface Props {
   onSelection: (selection: VisualSelection) => void
   selection: VisualSelection | null
   onVisualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
+  /** Seek requests from outside, such as the object list. `n` makes a repeat of the same time count. */
+  seekTo?: { time: number; n: number } | null
 }
 
-export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, onSelection, selection, onVisualAction }: Props) {
+export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, onSelection, selection, onVisualAction, seekTo }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
   const picker = useRef<HTMLInputElement>(null)
@@ -31,6 +34,15 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
   const [sound, setSound] = useState('')
   const [actionPending, setActionPending] = useState(false)
   const [bounds, setBounds] = useState({width:0,height:0,videoWidth:0,videoHeight:0})
+  const [showObjects, setShowObjects] = useState(readShowObjects)
+  useEffect(() => {
+    if (!seekTo) return
+    // With stems loaded the engine is the clock and the video follows it.
+    if (engine?.duration) { engine.pause(); engine.seek(seekTo.time) }
+    const el=video.current
+    // Without stems the overlay follows the video's own timeupdate.
+    if (el) { el.pause(); el.currentTime=seekTo.time }
+  }, [seekTo, engine])
   useEffect(() => {
     const el=video.current
     if (!el) return
@@ -82,16 +94,30 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
           const w=bounds.width, h=bounds.height
           const scale=Math.min(w/(bounds.videoWidth || visual.width), h/(bounds.videoHeight || visual.height))
           const vw=(bounds.videoWidth || visual.width)*scale, vh=(bounds.videoHeight || visual.height)*scale
+          const left=(w-vw)/2, top=(h-vh)/2
           const current=engine?.duration ? t : previewTime
           const frame=frameAt(visual,current)
-          return <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">{selection && frame?.objects.filter(o=>o.track_id===selection.track_id && o.mask).map(o=><MaskOverlay key={o.detection_id} mask={o.mask} style={{left:(w-vw)/2,top:(h-vh)/2,width:vw,height:vh}}/>)}{frame?.objects.map(obj => {
-            const [x1,y1,x2,y2]=obj.bbox_normalized
-            if (obj.track_id === null || !obj.mask) return null
-            return <button key={obj.detection_id} type="button" title={`Select ${obj.label}`} aria-label={`Select ${obj.label}`} className="pointer-events-auto absolute border-2 border-accent bg-accent/10 hover:bg-accent/30" style={{left:(w-vw)/2+x1*vw,top:(h-vh)/2+y1*vh,width:(x2-x1)*vw,height:(y2-y1)*vh}} onClick={() => {const selected=selectVisual(visual,current,obj); if(selected) { video.current?.pause(); engine?.pause(); setSound(''); onSelection(selected) }}}><span className="absolute top-0 left-0 bg-black/80 px-1 text-[10px] text-white">{obj.label}</span></button>
-          })}</div>
+          const selectedTrack=selection?.track_id ?? null
+          // With Show objects off, only the selected object stays visible.
+          const boxes=overlayBoxes(frame,selectedTrack).filter(b=>showObjects || b.selected)
+          return <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">
+            {selectedTrack !== null && boxes.filter(b=>b.selected).map(b=><MaskOverlay key={`mask-${b.object.detection_id}`} mask={b.object.mask} color={trackColor(b.trackId).rgb} style={{left,top,width:vw,height:vh}}/>)}
+            {boxes.map(b => {
+              const [x1,y1,x2,y2]=b.box
+              return <button key={b.object.detection_id} type="button" title={`Select ${b.label}`} aria-label={`Select ${b.label}`} aria-pressed={b.selected}
+                className={`pointer-events-auto absolute rounded-[2px] ${b.selected ? 'border-[3px] shadow-[0_0_0_1px_rgb(0_0_0/0.6)]' : 'border-2 opacity-80 hover:opacity-100'}`}
+                style={{left:left+x1*vw,top:top+y1*vh,width:(x2-x1)*vw,height:(y2-y1)*vh,borderColor:b.color,background:b.selected ? 'transparent' : 'rgb(0 0 0 / 0.05)'}}
+                onClick={() => {const selected=selectVisual(visual,current,b.object); if(selected) { video.current?.pause(); engine?.pause(); setSound(''); onSelection(selected) }}}>
+                <span className={`absolute top-0 left-0 whitespace-nowrap px-1 font-mono text-[10px] leading-4 text-black ${b.selected ? 'font-semibold' : ''}`} style={{background:b.color}}>{b.label}</span>
+              </button>
+            })}
+          </div>
         })()}
+        {visual && <label className="absolute top-2 left-2 z-10 flex cursor-pointer items-center gap-1 rounded-full border border-line bg-black/70 px-2 py-0.5 font-mono text-[10px] text-zinc-300">
+          <input type="checkbox" className="accent-accent" checked={showObjects} onChange={e => { setShowObjects(e.target.checked); writeShowObjects(e.target.checked) }} />Show objects
+        </label>}
         {selection && <div className="absolute bottom-3 left-3 z-10 w-64 space-y-2 rounded-xl border border-line bg-ink-950/95 p-3 text-xs text-zinc-100 shadow-xl" aria-label="Selected object actions">
-          <p className="text-amber-300">Experimental visual guidance. Visibility does not prove sound.</p><p>Selected: <strong>{selection.label}</strong> ({selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s)</p>
+          <p className="text-amber-300">Experimental visual guidance. Visibility does not prove sound.</p><p>Selected: <strong>{selection.label}{selection.track_id !== null ? ` #${selection.track_id}` : ''}</strong> ({selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s)</p>
           <label className="block">Describe its sound<input aria-label="Selected object sound" className="mt-1 w-full rounded border border-line bg-black px-2 py-1" value={sound} onChange={e=>setSound(e.target.value)} /></label>
           <div className="flex gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !sound.trim()} className="rounded border border-line px-2 py-1 capitalize disabled:opacity-40" onClick={()=>{setActionPending(true);void onVisualAction(selection,sound,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action === 'lower' ? 'Preview lower' : `Preview ${action}`} </button>)}</div>
         </div>}

@@ -320,13 +320,19 @@ export async function localCommand(config: BackendConfig, projectId: string, tex
 export interface VisualObject { detection_id: string; track_id: number | null; label: string; bbox_normalized: number[]; mask?: unknown; [key:string]: unknown }
 export interface VisualFrame { frame_index:number; timestamp_seconds:number; valid_until_seconds:number; objects:VisualObject[] }
 export interface VisualMetadata { schema_version:string; video_id:string; analysis_id:string; source_sha256:string; source:string; width:number; height:number; fps:number; processed_frames:number; processed_duration_seconds:number; frames:VisualFrame[] }
-export async function startVisualAnalysis(config: BackendConfig, projectId: string): Promise<string> {
+/** POST /visual-analyze answers 202 with the job, and says whether it had to re-encode a compatible copy first. */
+export interface VisualAnalysisStart { jobId: string; prepared: boolean }
+export async function startVisualAnalysis(config: BackendConfig, projectId: string): Promise<VisualAnalysisStart> {
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-analyze`,{method:'POST'})
-  return ((await res.json()) as {job_id:string}).job_id
+  const body=(await res.json()) as {job_id?:unknown;prepared?:unknown}
+  if (typeof body?.job_id !== 'string' || !body.job_id) throw new Error('Backend did not return a visual job id')
+  return {jobId:body.job_id, prepared:body.prepared === true}
 }
-export async function getVisualJob(config: BackendConfig, jobId: string): Promise<BackendJob> {
-  const res=await request(config,`/api/visual-jobs/${encodeURIComponent(jobId)}`)
-  return res.json() as Promise<BackendJob>
+/** A visual job also reports which stage it is in. Both fields are optional. */
+export interface VisualJob extends BackendJob { stage?: string }
+export async function getVisualJob(config: BackendConfig, jobId: string, signal?: AbortSignal): Promise<VisualJob> {
+  const res=await request(config,`/api/visual-jobs/${encodeURIComponent(jobId)}`,{},signal)
+  return res.json() as Promise<VisualJob>
 }
 export async function getVisualMetadata(config: BackendConfig, projectId: string): Promise<VisualMetadata> {
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-metadata`)
@@ -354,18 +360,40 @@ export async function startPrepareVisual(config: BackendConfig, projectId:string
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/prepare-visual`,{method:'POST'})
   return ((await res.json()) as {job_id:string}).job_id
 }
-export async function getPrepareVisual(config:BackendConfig, jobId:string):Promise<BackendJob> {
-  const res=await request(config,`/api/prepare-jobs/${encodeURIComponent(jobId)}`)
+export async function getPrepareVisual(config:BackendConfig, jobId:string, signal?:AbortSignal):Promise<BackendJob> {
+  const res=await request(config,`/api/prepare-jobs/${encodeURIComponent(jobId)}`,{},signal)
   return res.json() as Promise<BackendJob>
 }
 
 export interface Anchor {token:"+"|"-";start:number;end:number}
 export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
 export interface PreviewOptions {guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
-/** max_passes and refine come from backends with multi-pass separation; older ones omit them. */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;max_passes?:number;refine?:boolean}
+/** The object detector, as GET /capabilities reports it. Absent fields are null, not guessed. */
+export interface VisionCapability {available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
+/**
+ * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
+ * max_passes and refine come from backends with multi-pass separation; older ones omit them.
+ */
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;vision?:VisionCapability;max_passes?:number;refine?:boolean}
+const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
+export function toVisionCapability(raw:unknown):VisionCapability|undefined {
+  if(!raw || typeof raw!=='object') return undefined
+  const v=raw as Record<string,unknown>
+  if(typeof v.available!=='boolean') return undefined
+  return {available:v.available,reason:text(v.reason),model:text(v.model),weightsCached:typeof v.weights_cached==='boolean'?v.weights_cached:null,device:text(v.device)}
+}
+export function toCapabilities(raw:unknown):Capabilities {
+  const c=(raw && typeof raw==='object' ? raw : {}) as Record<string,unknown>
+  const vision=toVisionCapability(c.vision)
+  return {
+    quality:c.quality===true,visual:c.visual===true,reason:typeof c.reason==='string'?c.reason:'',
+    ...(vision?{vision}:{}),
+    ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
+    ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),
+  }
+}
 export async function getCapabilities(config:BackendConfig,projectId:string):Promise<Capabilities> {
-  return (await request(config,`/api/projects/${encodeURIComponent(projectId)}/capabilities`)).json() as Promise<Capabilities>
+  return toCapabilities(await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/capabilities`)).json())
 }
 export interface CandidateInfo {mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {

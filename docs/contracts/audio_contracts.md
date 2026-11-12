@@ -153,6 +153,7 @@ Full request:
     "residual_name": "residual",
     "stereo_mode": "duplicate",
     "chunk_seconds": 20,
+    "passes": 2,
     "seed": 7,
     "return_mode": "base64"
   },
@@ -178,6 +179,7 @@ Full request:
 | `options.residual_name` | string | `"residual"` | The residual stem's `name`. |
 | `options.stereo_mode` | `duplicate` \| `per_channel` | `AUDIO_STEREO_MODE` (`duplicate`) | SAM Audio is mono. `duplicate` = one mono pass copied to the source channel count. `per_channel` = one pass per channel (2× cost, keeps the stereo image). |
 | `options.chunk_seconds` | number ≥ 0 | `AUDIO_CHUNK_SECONDS` (0 for mock, 20 for the real model) | `0` = whole file in one pass. Overlapping windows with a linear crossfade otherwise; anchors are re-based per window. Disabled automatically for visually prompted requests so frames stay aligned. |
+| `options.passes` | int 1–`AUDIO_MAX_PASSES` (3, at most 5) | `1` | Multi-pass separation for when the model only attenuates the sound. Pass 1 separates the mixture → t₁; pass k ≥ 2 runs the **same** prompt (text, anchors, visual prompt) on that prompt's residual `mixture − (t₁+…+tₖ₋₁)` → tₖ; the stem is `t₁+…+tₖ`. Several prompts each run their own chain from the mixture; the residual stem is still `mixture − all targets` (`residual: "model"` uses the last pass's model residual). Chunking, `stereo_mode`, anchors and visual intervals apply unchanged to every pass. **Early stop:** if pass k extracts < −30 dB of pass 1's energy it is discarded and the chain stops with the warning `"pass {k} extracted negligible energy; stopped after {k-1} pass(es)"`; a silent pass 1 (`"pass 1 extracted negligible energy; stopped after 1 pass(es)"`) or a silent residual also stops it. Must be a JSON integer; out of range → `INVALID_REQUEST`. Cost: up to n× per prompt; `elapsed_seconds` covers all passes. |
 | `options.seed` | int ≥ 0 | `null` | Forwarded to the backend for reproducibility. |
 | `options.return_mode` | `base64` \| `file` | `base64` | `base64` inlines the WAV in `stems[].audio_base64` (Person 4's contract today). `file` writes WAVs under `AUDIO_OUTPUT_ROOT` and returns `stems[].audio_ref` instead — proposed for large payloads. |
 | `asset_id` | string | `null` | Echoed as `source.asset_id` / `stems[].source_asset_id`. Superseded by `source.asset_id`; both are accepted. |
@@ -200,7 +202,7 @@ the executed integration test. Everything else is additive.
 
 **Status: proposed, awaiting team agreement.** Implemented by `contracts.SeparationResponse`.
 HTTP 200. `null` fields are omitted from the wire response
-(`response_model_exclude_none=True`).
+(`response_model_exclude_none=True`), except `stems[].refinement`, which residual stems always carry as `null`. `GET /capabilities` reports `defaults.passes` (1) and `limits.max_passes` (`AUDIO_MAX_PASSES`).
 
 ```json
 {
@@ -219,7 +221,8 @@ HTTP 200. `null` fields are omitted from the wire response
       "sample_count": 576000,
       "format": "wav/pcm_f32le",
       "spans": [[2.35, 5.8], [7.1, 10.95]],
-      "source_asset_id": "7f3c9d2e1a5b4c6d8e0f1a2b3c4d5e6f"
+      "source_asset_id": "7f3c9d2e1a5b4c6d8e0f1a2b3c4d5e6f",
+      "refinement": {"passes_requested": 2, "passes_run": 2, "per_pass_energy_db": [-8.412, -24.03], "stopped_early": false}
     },
     {
       "name": "residual",
@@ -244,6 +247,7 @@ HTTP 200. `null` fields are omitted from the wire response
     "reranking_candidates": 1,
     "stereo_mode": "duplicate",
     "chunked": false,
+    "passes": 2,
     "elapsed_seconds": 34.812,
     "is_mock": false
   },
@@ -281,6 +285,8 @@ A committed copy with truncated base64 lives at
 | `stems[].format` | string | proposed | `"wav/pcm_f32le"` by default; optional PCM16 can clip. |
 | `stems[].spans` | `[[start, end], ...]` \| null | proposed | Seconds on the source timeline where the target is believed active: predicted spans when `predict_spans`, otherwise the `+` anchors. A **UI hint**, not a trim instruction — audio outside a span is in the file and usually near-silent. |
 | `stems[].source_asset_id` | string \| null | proposed | Echo of the request's asset id. |
+| `stems[].refinement` | object \| null | proposed | Multi-pass bookkeeping (`options.passes`). Target stems: `{"passes_requested": n, "passes_run": k, "per_pass_energy_db": [e₁, …, eₖ], "stopped_early": bool}` where eᵢ = 10·log10(energy of tᵢ / energy of the mixture), floored at −120, one entry per pass **kept** (a pass discarded by early stop is not listed). Present on every target stem, also for `passes: 1`. Residual stems: always `null` — the one field emitted even though it is null. |
+| `model.passes` | int | proposed | Most passes run for any prompt (≥ 1). |
 | `model.*` | object | proposed | What actually ran: `backend` (`mock`\|`sam`), `model_id`, `device`, `dtype`, the effective `predict_spans` / `reranking_candidates` / `stereo_mode`, whether chunking kicked in, wall-clock `elapsed_seconds`, and `is_mock`. |
 | `model.is_mock` | bool | proposed | **`true` means the stems are band-pass filtered copies of the mixture, not separation.** Any UI that can show mock output must surface this. |
 | `source.*` | object | proposed | What we measured after decoding: `duration`, `sample_rate` (48000), `channels`, `sample_count`, `asset_id`. |

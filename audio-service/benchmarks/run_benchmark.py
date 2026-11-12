@@ -21,6 +21,7 @@ Examples::
     python -m benchmarks.run_benchmark --seconds 10 --repeat 3
     python -m benchmarks.run_benchmark --url http://127.0.0.1:8001/separate
     python -m benchmarks.run_benchmark --backend sam --latency-seconds 60
+    python -m benchmarks.run_benchmark --backend sam --passes 2           # multi-pass SI-SDR
 """
 from __future__ import annotations
 
@@ -77,8 +78,11 @@ class Outcome:
 
 
 # ------------------------------------------------------------------------------ modes
-def _metadata(prompt: str) -> dict[str, Any]:
-    """The request body. Shaped exactly like Person 4's backend sends it (prompts only)."""
+def _metadata(prompt: str, passes: int = 1) -> dict[str, Any]:
+    """The request body. Shaped exactly like Person 4's backend sends it (prompts only);
+    ``--passes`` > 1 adds ``options.passes`` (multi-pass separation)."""
+    if passes > 1:
+        return {"prompts": [prompt], "options": {"passes": passes}}
     return {"prompts": [prompt]}
 
 
@@ -91,10 +95,10 @@ def _split_stems(names: list[str], roles: list[str]) -> tuple[int, int | None]:
     return target, residual
 
 
-def run_engine(engine: Engine, fixture: Fixture, *, repeat: int) -> Outcome:
+def run_engine(engine: Engine, fixture: Fixture, *, repeat: int, passes: int = 1) -> Outcome:
     mixture = fixture.mixture
     audio = DecodedAudio(samples=mixture, sample_rate=fixture.sample_rate, source_sample_rate=fixture.sample_rate, source_channels=fixture.channels)
-    metadata = SeparationMetadata.model_validate(_metadata(fixture.prompt))
+    metadata = SeparationMetadata.model_validate(_metadata(fixture.prompt, passes))
     latencies: list[float] = []
     result = None
     for _ in range(max(1, repeat)):
@@ -114,11 +118,11 @@ def run_engine(engine: Engine, fixture: Fixture, *, repeat: int) -> Outcome:
     )
 
 
-def run_http(url: str, fixture: Fixture, *, repeat: int, timeout: float) -> Outcome:
+def run_http(url: str, fixture: Fixture, *, repeat: int, timeout: float, passes: int = 1) -> Outcome:
     import httpx
 
     wav = encode_wav_pcm16(fixture.mixture, fixture.sample_rate)
-    payload = json.dumps(_metadata(fixture.prompt))
+    payload = json.dumps(_metadata(fixture.prompt, passes))
     latencies: list[float] = []
     body: dict[str, Any] = {}
     for _ in range(max(1, repeat)):
@@ -268,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repeat", type=int, default=1, help="separations per fixture; latency is the median (default: 1)")
     parser.add_argument("--fixtures", default=",".join(QUALITY_FIXTURES), help="comma-separated quality fixtures to run")
     parser.add_argument("--speech-mode", choices=("auto", "say", "synthetic"), default="auto", help="'auto' uses macOS `say` when present (default)")
+    parser.add_argument("--passes", type=int, default=1, help="options.passes: rerun each prompt on its residual this many times (default: 1); "
+                        "compare SI-SDR across runs with --passes 1/2/3")
     parser.add_argument("--timeout", type=float, default=600.0, help="HTTP timeout in seconds (default: 600)")
     parser.add_argument("--write-fixtures", nargs="?", const="", default=None, metavar="DIR",
                         help="also write the fixture WAVs + manifest.json for other teams (default dir: fixtures/generated)")
@@ -278,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.repeat < 1:
         raise SystemExit("--repeat must be >= 1")
+    if not 1 <= args.passes <= 5:
+        raise SystemExit("--passes must be between 1 and 5")
     names = tuple(name.strip() for name in args.fixtures.split(",") if name.strip())
     fixtures = build_all(args.seconds, speech_mode=args.speech_mode, names=names)
     if args.latency_seconds > 0:
@@ -289,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         settings = load_settings()
         settings.backend = args.backend
+        settings.max_passes = max(settings.max_passes, args.passes)  # in-process: lift AUDIO_MAX_PASSES for the run
         settings.validate()
         try:
             engine = Engine(settings)
@@ -305,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     warnings: list[str] = []
     for fixture in fixtures:
         print(f"-> {fixture.name}: prompt {fixture.prompt!r}, {fixture.duration:.1f}s, {fixture.channels}ch", flush=True)
-        outcome = run_http(args.url, fixture, repeat=args.repeat, timeout=args.timeout) if args.url else run_engine(engine, fixture, repeat=args.repeat)  # type: ignore[arg-type]
+        outcome = run_http(args.url, fixture, repeat=args.repeat, timeout=args.timeout, passes=args.passes) if args.url else run_engine(engine, fixture, repeat=args.repeat, passes=args.passes)  # type: ignore[arg-type]
         metrics = measure(fixture, outcome)
         for item in outcome.warnings:
             if item not in warnings:
@@ -342,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         "backend": backend_info,
         "is_mock": bool(backend_info.get("is_mock")),
         "mock_disclaimer": MOCK_DISCLAIMER if backend_info.get("is_mock") else None,
-        "settings": {"seconds": args.seconds, "latency_seconds": args.latency_seconds, "repeat": args.repeat, "speech_mode": args.speech_mode},
+        "settings": {"seconds": args.seconds, "latency_seconds": args.latency_seconds, "repeat": args.repeat, "speech_mode": args.speech_mode, "passes": args.passes},
         "environment": {"platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "numpy": np.__version__},
         "fixtures": rows,
         "warnings": warnings,

@@ -4,7 +4,7 @@ Base URL `http://localhost:8000`; OpenAPI and executable examples are at `/docs`
 
 ## Person 1: audio AI
 
-Set `INFERENCE_ADAPTER=http` and `SAM_AUDIO_SERVICE_URL` to your endpoint. The worker POSTs multipart form data: `audio` is 48 kHz, stereo, signed 16-bit PCM WAV; `metadata` is a JSON string such as `{"prompts":["dog"],"visual_prompt":{"track_id":"42"}}`. Return HTTP 200 with JSON:
+Set `INFERENCE_ADAPTER=http` and `SAM_AUDIO_SERVICE_URL` to your endpoint. The worker POSTs multipart form data: `audio` is 48 kHz, stereo, float32 PCM WAV; `metadata` is a JSON string such as `{"prompts":["dog"],"visual_prompt":{"track_id":"42"}}`. Return HTTP 200 with JSON:
 
 ```json
 {"stems":[{"name":"dog","audio_base64":"<base64-encoded WAV bytes>"}]}
@@ -40,3 +40,76 @@ The stem PATCH also accepts `mute_ranges` as an array of `[start, end]` timeline
 ## AI command planner
 
 `POST /api/projects/{id}/agent` requires the project bearer token and takes `{"prompt":"make the music quieter","stems":[{"id":"...","label":"music","kind":"music","duration":10}],"tracks":[{"stemId":"...","gain":1,"muted":false,"solo":false,"automation":[]}],"duration":10,"has_project_stems":true}`. It returns a structured `kind` of `edit`, `separate` or `clarify`. The frontend validates action IDs, values, and timeline boundaries before applying them. The backend derives whether a project already has stems from its database. Configure `OPENAI_API_KEY` or `OPENAI_API_KEY_FILE` only in the backend environment; `OPENAI_AGENT_MODEL` defaults to `gpt-6-luna`. Media and bearer tokens are not included in the OpenAI request.
+
+To add a sound without replacing current edits, submit `{"prompts":["dog barking"],"append":true}` to `/process`. The worker separates the existing unshifted `residual` stem and atomically replaces only that stem with its target and new residual, inheriting the residual mix settings. Concurrent residual edits fail the job without deleting existing layers. The `GET /api/projects/{id}/original-audio` endpoint serves the authenticated extracted original for A/B comparison. The audio service accepts bounded multipart metadata up to 64 MiB by default (`AUDIO_MAX_METADATA_BYTES`) for visual masks.
+
+`POST /api/projects/{id}/prepare-visual` queues a re-encoded compatible copy for a video with invalid start times, rotation or frame timing. Poll `/api/prepare-jobs/{job_id}`. It retains the uploaded original file, atomically updates the project to use the normalized copy, clears prior detections, and rejects projects with existing stems. Exports use the copy after preparation.
+
+### Previewing a different separation
+
+The guided candidate contract below supersedes the earlier text-only two-layer retry.
+
+### Guided candidates (current contract)
+
+The editor uses candidates for new separations and visual actions as well as replacement
+retries. `/process` remains a direct-apply compatibility API for string-prompt clients.
+Both requests accept `guidance`, `edit_scope`, and `profile`. `/process.prompts` also accepts
+`{"text":"dog barking","name":"dog","anchors":[...]}` objects.
+
+```json
+{
+  "prompt": "dog barking",
+  "stem_id": null,
+  "guidance": {"anchors": [{"token":"+","start":3,"end":4}]},
+  "edit_scope": {"action":"mute","interval":{"start":10,"end":15}},
+  "profile": "preview",
+  "visual_prompt": {}
+}
+```
+
+All times are finite source-timeline seconds. Intervals must be ordered and within the
+extracted audio. `-` anchors indicate absence. Guidance never becomes an edit range.
+Anchors guide overlapping inference windows, not persistent speaker identity. The example
+separates the dog across the source, then adds `[10,15]` to the target's mute ranges while
+preserving automation. Whole-layer actions are `keep`, `mute`, or `lower` (50%);
+only `mute` accepts an interval. An edit through `/process` requires one target.
+
+Omitting `stem_id` previews from the original when there are no stems, or splits the
+current unshifted residual in a multitrack project. A supplied `stem_id` replaces a target
+only when there are exactly two layers. Replacing an older multitrack target is rejected:
+it needs an earlier source snapshot, not arbitrary recombination of current stems.
+
+Candidate status returns protected `audio_url` (isolated target), `mix_url` (proposed mix),
+`original_url` (mix before this edit), sanitized `provenance`, and actual `inference` settings.
+The comparisons use the same timeline without automatic loudness normalization. Candidate
+records retain source hash/reference, all stem revisions and edits, complete visual guidance,
+explicit anchors, requested options, random seed, and resulting audio references.
+
+Apply is one SQLite transaction. It rejects changed media, changed layer sets/revisions,
+missing audio, repeat applies, and active media replacement jobs. It returns a completed
+`job_id` suitable for the existing stem loader. `POST /api/candidates/{id}/undo` restores the
+previous audio and edits only if every revision still matches the applied preview. Revisions
+advance on undo; intervening edits require a new preview. The additive `candidate_history`
+table preserves previous references across restarts. No old stem files are deleted.
+`uploaded_original` preserves the upload separately from a normalized working copy;
+`GET /api/projects/{id}/uploaded-original` serves it with project authorization. For older
+projects, migration initializes this field to their currently referenced original.
+
+`GET /api/projects/{id}/capabilities` exposes a whitelist of usable options, never internal
+paths, credentials, service addresses or raw load errors. `preview` requests one candidate;
+`quality` requests two judge-ranked candidates. Both use 10 s windows, 2 s overlap, batch
+two, automatic spans off, and a mixture-derived residual. Quality controls stay disabled
+when the text judge is unavailable. Ranking expresses preference, not calibrated confidence.
+
+The planner separates `description`, `guidance`, `edit_scope`, and existing-layer actions.
+The backend reloads authoritative stems/edits, validates every generated operation, and
+rejects generated anchor/edit timestamps absent from the supplied instruction. Existing
+layer timed mutes use `mute_range` operations and append ranges without replacing automation.
+Multiple plausible layer matches produce a clarification listing the matches.
+
+Uploads and candidate mixes use float32 WAV intermediates; originals remain available.
+Upload metadata reports peak/RMS findings, channel downmixing and incompatible visual timing.
+These findings do not imply restoration of clipped or absent information. Visual guidance
+is experimental: native frame/mask/track/source checks remain enforced, the UI displays the
+selected mask, and visible intervals no longer automatically create positive sound anchors.
+Unusable visual input fails explicitly; suspicious output offers a text-plus-time retry.

@@ -73,7 +73,8 @@ def test_audio_mute_export(client,tmp_path):
     eid=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}).json()['export_id']
     result=wait(client,'/api/exports/'+eid,h); assert result['status']=='completed',result
     out=tmp_path/'muted.wav'; out.write_bytes(client.get(result['download_url'],headers=h).content)
-    with wave.open(str(out),'rb') as w: assert not any(w.readframes(w.getnframes()))
+    samples=subprocess.check_output(['ffmpeg','-v','error','-i',str(out),'-f','f32le','-'])
+    assert not any(samples)
 
 
 def test_revision_conflict_and_automation_limit(client, tmp_path):
@@ -204,3 +205,114 @@ def test_agent_requires_project_access_and_sanitizes_model_output(client, monkey
     assert captured['model']=='gpt-6-luna' and captured['store'] is False
     response['output'][0]['content'][0]['text']='not json'
     assert client.post(f'/api/projects/{pid}/agent',headers=h,json=body).status_code==502
+
+
+def test_add_separation_preserves_existing_layers_and_edits(client, tmp_path, monkeypatch):
+    import shutil
+    import app.worker as worker
+    def separate(source, directory, payload, report=None):
+        directory.mkdir(exist_ok=True, parents=True)
+        result=[]
+        for name in (payload['prompts'][0], 'residual'):
+            path=directory/(worker.uid()+'.wav'); shutil.copyfile(source,path); result.append((name,path))
+        return result
+    monkeypatch.setattr(worker,'separate',separate)
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'input.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('input.wav',f)}).status_code==200
+    first=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['voice']}).json()['job_id']
+    first_stems=wait(client,'/api/jobs/'+first,h)['stems']; voice=first_stems[0]; residual=first_stems[1]
+    assert client.patch(f"/api/projects/{pid}/stems/{voice['id']}",headers=h,json={'volume':.4}).status_code==200
+    assert client.patch(f"/api/projects/{pid}/stems/{residual['id']}",headers=h,json={'volume':.8}).status_code==200
+    second=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog'],'append':True}).json()['job_id']
+    result=wait(client,'/api/jobs/'+second,h); assert result['status']=='completed',result
+    stems={s['name']:s for s in result['stems']}
+    assert set(stems)=={'voice','dog','residual'}
+    assert stems['voice']['id']==voice['id'] and stems['voice']['volume']==.4
+    assert stems['dog']['volume']==.8 and stems['residual']['volume']==.8
+    assert stems['residual']['id']!=residual['id']
+
+
+def test_add_separation_fails_if_residual_changed_during_inference(client, tmp_path, monkeypatch):
+    import shutil
+    import app.worker as worker
+    def separate(source,directory,payload,report=None):
+        if payload['prompts']==['dog']:
+            with worker.connect() as db: db.execute("UPDATE stems SET revision=revision+1 WHERE name='residual'")
+        result=[]
+        for name in (payload['prompts'][0], 'residual'):
+            path=directory/(worker.uid()+'.wav'); shutil.copyfile(source,path); result.append((name,path))
+        return result
+    monkeypatch.setattr(worker,'separate',separate)
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'input.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('input.wav',f)}).status_code==200
+    first=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['voice']}).json()['job_id'];wait(client,'/api/jobs/'+first,h)
+    second=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog'],'append':True}).json()['job_id']
+    result=wait(client,'/api/jobs/'+second,h);assert result['status']=='failed' and 'preserved' in result['error']
+    assert {s['name'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}=={'voice','residual'}
+
+
+def test_prepare_visual_copy_preserves_original_and_validates_timeline(client,tmp_path):
+    from pathlib import Path
+    import app.core as core
+    from app.visual import validate_timeline
+    video=tmp_path/'offset.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=blue:s=64x64:r=10:d=1','-f','lavfi','-i','sine=duration=1','-c:v','mpeg4','-c:a','aac','-avoid_negative_ts','make_zero','-shortest',str(video)],check=True)
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    with video.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('offset.mp4',f)}).status_code==200
+    with core.connect() as db: old=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original']
+    assert client.post(f'/api/projects/{pid}/visual-analyze',headers=h).status_code==422
+    started=client.post(f'/api/projects/{pid}/prepare-visual',headers=h);assert started.status_code==202
+    job=wait(client,'/api/prepare-jobs/'+started.json()['job_id'],h);assert job['status']=='completed',job
+    with core.connect() as db: new=db.execute('SELECT original,metadata FROM projects WHERE id=?',(pid,)).fetchone()
+    assert old!=new['original'] and Path(old).exists() and Path(new['original']).exists()
+    import json
+    validate_timeline(new['original'],json.loads(new['metadata'])['frame_rate'])
+    assert client.get(f'/api/projects/{pid}/original-audio',headers=h).status_code==200
+
+
+def test_retry_preview_preserves_edits_and_rejects_stale_apply(client, tmp_path, monkeypatch):
+    import shutil
+    import app.worker as worker
+    def separate(source, directory, payload, report=None):
+        directory.mkdir(exist_ok=True, parents=True)
+        result = []
+        for name in (payload['prompts'][0], 'residual'):
+            path = directory / (worker.uid() + '.wav')
+            shutil.copyfile(source, path)
+            result.append((name, path))
+        return result
+    monkeypatch.setattr(worker, 'separate', separate)
+    project = client.post('/api/projects').json()
+    pid = project['project_id']
+    headers = {'Authorization': 'Bearer ' + project['access_token']}
+    audio = tmp_path / 'input.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=1',str(audio)],check=True)
+    with audio.open('rb') as f:
+        assert client.post(f'/api/projects/{pid}/upload', headers=headers, files={'file':('input.wav',f)}).status_code == 200
+    job = client.post(f'/api/projects/{pid}/process', headers=headers, json={'prompts':['voice']}).json()['job_id']
+    before = wait(client, '/api/jobs/' + job, headers)['stems']
+    stem_id = before[0]['id']
+    assert client.patch(f'/api/projects/{pid}/stems/{stem_id}',headers=headers,json={'volume':.4,'muted':True}).status_code == 200
+    def generate():
+        response = client.post(f'/api/projects/{pid}/candidates',headers=headers,json={'stem_id':stem_id,'prompt':'narration'})
+        assert response.status_code == 202, response.text
+        cid = response.json()['candidate_id']
+        result = wait(client, '/api/candidates/' + cid, headers)
+        assert result['status'] == 'completed', result
+        assert 'path' not in str(result)
+        assert client.get(result['audio_url'],headers=headers).status_code == 200
+        assert client.get(result['audio_url']).status_code == 401
+        return cid
+    first = generate()
+    assert [s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=headers).json()] == [s['id'] for s in before]
+    client.patch(f'/api/projects/{pid}/stems/{stem_id}',headers=headers,json={'volume':.7})
+    assert client.post(f'/api/candidates/{first}/apply',headers=headers).status_code == 409
+    second = generate()
+    assert client.post(f'/api/candidates/{second}/apply',headers=headers).status_code == 200
+    after = client.get(f'/api/projects/{pid}/stems',headers=headers).json()
+    assert [s['id'] for s in after] == [s['id'] for s in before]
+    assert after[0]['volume'] == .7 and after[0]['muted']
+    assert client.post(f'/api/candidates/{second}/apply',headers=headers).status_code == 409

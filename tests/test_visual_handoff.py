@@ -181,12 +181,14 @@ def test_misaligned_visual_stem_fails_the_job(setup, monkeypatch, damage):
     client, _, headers, _, _ = setup
     def mock_post(url, files, **kwargs):
         original = files['audio'][1].read()
+        # Uploaded intermediates are float WAV; make a PCM fixture for wave on Python <3.15.
+        original = subprocess.run(['ffmpeg','-v','error','-i','pipe:0','-c:a','pcm_s16le','-f','wav','pipe:1'],input=original,capture_output=True,check=True).stdout
         with wave.open(io.BytesIO(original)) as source:
             params = source.getparams()
             samples = source.readframes(source.getnframes())
         result = io.BytesIO()
         with wave.open(result, 'wb') as output:
-            output.setparams(params)
+            output.setparams(params._replace(nframes=len(samples)//(params.nchannels*params.sampwidth)))
             if damage == 'one_sample_short': samples = samples[:-params.nchannels * params.sampwidth]
             if damage == 'sample_rate': output.setframerate(24000)
             if damage == 'channels': output.setnchannels(1)

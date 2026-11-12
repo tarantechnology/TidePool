@@ -61,6 +61,11 @@ export class AudioEngine {
     this.master.connect(this.ctx.destination)
   }
 
+  /** Used for A/B playback; does not change or save layer edits. */
+  setOutputMuted(muted: boolean): void {
+    this.master.gain.value = muted ? 0 : 0.7
+  }
+
   subscribe(listener: EngineListener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)

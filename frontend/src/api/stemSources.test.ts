@@ -154,7 +154,7 @@ describe('backend client', () => {
 
   it('reports the status for validation arrays and non-JSON errors', async () => {
     fetchMock.mockResolvedValueOnce(json({ detail: [{ msg: 'bad' }] }, 422))
-    await expect(getJob(config, 'j1')).rejects.toThrow(/^Backend returned 422$/)
+    await expect(getJob(config, 'j1')).rejects.toThrow(/^Backend returned 422: bad$/)
     fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }))
     await expect(getJob(config, 'j1')).rejects.toThrow(/^Backend returned 500$/)
   })

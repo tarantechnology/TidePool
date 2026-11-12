@@ -61,17 +61,17 @@ def env(tmp_path, monkeypatch):
     return load_settings(), video
 
 
-def test_selection_alone_gives_anchors_only(env):
+def test_selection_alone_does_not_imply_sound(env):
     settings, _ = env
     t = translate_visual_prompt(selection_doc(), source=None, source_duration=1.0, settings=settings, backend_supports_visual=True)
-    assert t.visual is None and t.anchors == [("+", 0.2, 0.8)]
+    assert t.visual is None and t.anchors == []
     assert any("per-frame masks" in w for w in t.warnings)
 
 
 def test_detections_without_video_reference(env):
     settings, _ = env
     t = translate_visual_prompt({"selection": selection_doc(), "detections": detections_doc()}, source=None, source_duration=1.0, settings=settings, backend_supports_visual=True)
-    assert t.visual is None and t.anchors == [("+", 0.2, 0.8)]
+    assert t.visual is None and t.anchors == []
     assert any("original video was not referenced" in w for w in t.warnings)
 
 
@@ -146,7 +146,7 @@ def test_interval_is_clamped_to_processed_window(env):
     raw = {"selection": selection_doc(start=0.2, end=5.0), "detections": detections_doc()}  # processed window is 1.0 s
     t = translate_visual_prompt(raw, source=src, source_duration=10.0, settings=settings, backend_supports_visual=True)
     assert t.visual is not None and t.visual.interval == (0.2, 1.0)
-    assert t.anchors == [("+", 0.2, 1.0)] and any("clamped" in w for w in t.warnings)
+    assert t.anchors == [] and any("clamped" in w for w in t.warnings)
 
 
 def test_sparse_and_unmasked_observations_are_rejected(env):
@@ -201,3 +201,15 @@ def test_decodes_only_masks_within_selection(env, monkeypatch):
     assert sorted(result.visual.frame_masks) == list(range(2,8))
     assert len(calls)==12  # decode plus validation, only 6 selected frames each
     assert not any('mask ignored' in warning for warning in result.warnings)
+
+
+def test_visual_near_silence_warns_instead_of_claiming_success(env, monkeypatch):
+    from sam_audio_service.backends.base import BackendResult
+    from sam_audio_service.backends.mock import MockBackend
+    settings, video = env
+    monkeypatch.setattr(MockBackend, 'separate', lambda self, mixture, prompt, options: BackendResult(target=np.zeros_like(mixture)))
+    rate=48000
+    signal=np.full((2,rate), .1, dtype=np.float32)
+    meta=SeparationMetadata(prompts=['person'],source={'original_ref':video.as_uri(),'sha256':'a'*64},visual_prompt={'selection':selection_doc(),'detections':detections_doc()})
+    result=Engine(settings).separate(DecodedAudio(signal,rate,rate,2),meta)
+    assert any('Very little sound' in warning for warning in result.warnings)

@@ -56,7 +56,7 @@ class Settings:
     predict_spans: bool = field(default_factory=lambda: _bool("AUDIO_PREDICT_SPANS", False))
     reranking_candidates: int = field(default_factory=lambda: _int("AUDIO_RERANKING_CANDIDATES", 1))
     # 0 disables chunking. Long inputs are otherwise processed in overlapping windows.
-    # Unset => 20 s for the real model (upstream recommends 10-30 s windows and memory
+    # Unset => 10 s for the real model (upstream recommends 10-30 s windows and memory
     # scales with window length), 0 for the mock, which has no memory ceiling.
     chunk_seconds: float = 0.0
     chunk_seconds_env: float | None = field(default_factory=lambda: _opt_float("AUDIO_CHUNK_SECONDS"), repr=False)
@@ -64,13 +64,13 @@ class Settings:
     # How many chunk windows go into ONE model batch. This is the only supported way to
     # process several windows at once: the model is shared and must not be entered from
     # two threads (docs/chunk_concurrency.md). Batch k costs roughly k x activation memory.
-    chunk_batch: int = 1
+    chunk_batch: int = 2
     chunk_batch_env: int | None = field(default_factory=lambda: _opt_int("AUDIO_CHUNK_BATCH"), repr=False)
     # Deprecated alias kept so existing compose files keep working: AUDIO_CHUNK_WORKERS
     # used to spawn threads; it now simply sets ``chunk_batch``.
     chunk_workers: int | None = field(default_factory=lambda: _opt_int("AUDIO_CHUNK_WORKERS"), repr=False)
     # "duplicate": run mono separation and duplicate to source channel count (1 pass).
-    # "per_channel": separate each channel independently (N passes, keeps stereo image).
+    # "per_channel": separate each channel independently (N passes; independent estimates may alter stereo image).
     stereo_mode: str = field(default_factory=lambda: os.getenv("AUDIO_STEREO_MODE", "duplicate"))
 
     # Limits.
@@ -95,9 +95,11 @@ class Settings:
     # reproduces the official notebook (object zeroed). A/B documented in sam_audio.py.
     visual_mask_mode: str = field(default_factory=lambda: os.getenv("AUDIO_VISUAL_MASK_MODE", "keep_object"))
     # The PE-A-Frame span predictor is multi-billion-parameter; off it is, no span prediction.
-    load_span_predictor: bool = field(default_factory=lambda: _bool("AUDIO_LOAD_SPAN_PREDICTOR", True))
+    load_span_predictor: bool = field(default_factory=lambda: _bool("AUDIO_LOAD_SPAN_PREDICTOR", False))
     # CLAP/Judge/ImageBind re-rankers; only used when reranking_candidates > 1.
     load_rankers: bool = field(default_factory=lambda: _bool("AUDIO_LOAD_RANKERS", True))
+    load_visual_ranker: bool = field(default_factory=lambda: _bool("AUDIO_LOAD_VISUAL_RANKER", True))
+    judge_only: bool = field(default_factory=lambda: _bool("AUDIO_JUDGE_ONLY", False))
     ode_method: str = field(default_factory=lambda: os.getenv("AUDIO_ODE_METHOD", "midpoint"))
     ode_step_size: float = field(default_factory=lambda: _float("AUDIO_ODE_STEP_SIZE", 2 / 32))
     # Frames and masks are pre-resized to this; the vision encoder resizes to 336 anyway.
@@ -117,7 +119,7 @@ class Settings:
                     "remove AUDIO_CHUNK_WORKERS.", self.chunk_batch_env, self.chunk_workers,
                 )
             self.chunk_batch = self.chunk_batch_env
-        elif self.chunk_workers is not None and self.chunk_batch == 1:
+        elif self.chunk_workers is not None:
             log.warning(
                 "AUDIO_CHUNK_WORKERS is deprecated: chunk windows are batched, not threaded. "
                 "Using it as AUDIO_CHUNK_BATCH=%s; set AUDIO_CHUNK_BATCH instead.", self.chunk_workers,
@@ -127,7 +129,7 @@ class Settings:
         if self.chunk_seconds_env is not None:
             self.chunk_seconds = self.chunk_seconds_env
         elif self.backend == "sam":
-            self.chunk_seconds = 20.0
+            self.chunk_seconds = 10.0
 
     def validate(self) -> None:
         if self.backend not in {"mock", "sam"}:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
@@ -25,6 +26,8 @@ from typing import Any
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from pydantic import ValidationError
 
 from . import CONTRACT_VERSION, __version__
@@ -135,8 +138,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         source = SourceInfo(asset_id=metadata.asset_id, duration=round(audio.duration, 6), sample_rate=audio.sample_rate, channels=audio.channels, sample_count=audio.frames)
         return SeparationResponse(stems=stems, model=ModelInfo(**result.model), source=source, request_id=request_id, warnings=result.warnings)
 
-    @app.post("/separate", response_model=SeparationResponse, response_model_exclude_none=True)
-    def separate(audio: UploadFile = File(...), metadata: str = Form("{}")) -> SeparationResponse:
+    def _separate_upload(audio: StarletteUploadFile, metadata: str) -> SeparationResponse:
         meta = _parse_metadata(metadata)
         # Spool to a real file: MP4/MOV with a trailing moov atom cannot be demuxed from a pipe.
         with tempfile.TemporaryDirectory(prefix="sam-audio-req-") as tmp:
@@ -157,6 +159,18 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                 raise InvalidMedia("audio upload is empty")
             decoded = decode(path=upload, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
             return _respond(decoded, meta, workdir)
+
+    @app.post("/separate", response_model=SeparationResponse, response_model_exclude_none=True,
+              openapi_extra={"requestBody":{"required":True,"content":{"multipart/form-data":{"schema":{"type":"object","required":["audio"],"properties":{"audio":{"type":"string","format":"binary"},"metadata":{"type":"string"}}}}}}})
+    async def separate(request: Request) -> SeparationResponse:
+        # Detection RLE masks routinely exceed Starlette's 1 MiB default form-field limit.
+        # Bound metadata explicitly; uploaded files have a separate streaming size limit.
+        limit = int(os.getenv("AUDIO_MAX_METADATA_BYTES", str(64 * 1024 * 1024)))
+        async with request.form(max_files=1, max_fields=2, max_part_size=limit) as form:
+            audio, metadata = form.get("audio"), form.get("metadata", "{}")
+            if not isinstance(audio, StarletteUploadFile) or not isinstance(metadata, str):
+                raise InvalidRequest("multipart request requires an audio file and metadata string")
+            return await run_in_threadpool(_separate_upload, audio, metadata)
 
     @app.post("/v1/separate", response_model=SeparationResponse, response_model_exclude_none=True)
     def separate_ref(body: SeparationRequest) -> SeparationResponse:

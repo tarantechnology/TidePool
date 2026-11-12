@@ -37,6 +37,10 @@ def init():
         ''')
         if "revision" not in {row[1] for row in db.execute("PRAGMA table_info(stems)")}:
             db.execute("ALTER TABLE stems ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+        if "uploaded_original" not in {row[1] for row in db.execute("PRAGMA table_info(projects)")}:
+            db.execute("ALTER TABLE projects ADD COLUMN uploaded_original TEXT")
+            db.execute("UPDATE projects SET uploaded_original=original")
+        db.execute("CREATE TABLE IF NOT EXISTS candidate_history (candidate_id TEXT PRIMARY KEY REFERENCES jobs(id), previous_rows TEXT NOT NULL, applied_revisions TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0)")
         db.execute("UPDATE jobs SET status='queued', progress=0 WHERE status='processing'")
 
 def digest(token): return hashlib.sha256(token.encode()).hexdigest()

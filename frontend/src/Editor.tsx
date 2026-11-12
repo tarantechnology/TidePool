@@ -57,6 +57,8 @@ export default function Editor() {
   const [syncIssue, setSyncIssue] = useState('')
   const [dragging, setDragging] = useState(false)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
+  const [originalSrc, setOriginalSrc] = useState<string | null>(null)
+  const [compareOriginal, setCompareOriginal] = useState(false)
   const [visual, setVisual] = useState<VisualMetadata | null>(null)
   const [visualSelection, setVisualSelection] = useState<VisualSelection | null>(null)
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
@@ -115,6 +117,19 @@ export default function Editor() {
     return () => URL.revokeObjectURL(videoSrc)
   }, [videoSrc])
 
+  useEffect(() => { if (!originalSrc) return; return () => URL.revokeObjectURL(originalSrc) }, [originalSrc])
+  useEffect(() => {
+    if (!engine || !originalSrc || !compareOriginal) return
+    const audio=new Audio(originalSrc); audio.volume=0.7
+    engine.setOutputMuted(true)
+    const sync=() => { const t=engine.getTime(); if (Math.abs(audio.currentTime-t)>0.25) audio.currentTime=t }
+    const play=() => { sync(); void audio.play().catch(e=>setLoadError(`Original playback failed: ${String(e)}`)) }
+    const off=engine.subscribe(e=>{ if(e.type==='play') play(); else {audio.pause();sync();if(e.type==='seek' && engine.isPlaying()) play()} })
+    if (engine.isPlaying()) play()
+    const timer=window.setInterval(()=>{if(engine.isPlaying()) sync()},500)
+    return () => {window.clearInterval(timer);off();audio.pause();engine.setOutputMuted(false)}
+  }, [engine,originalSrc,compareOriginal])
+
   /** Replace every stem. Undo history and the edit log describe the old ones, so they go too. */
   const loadStems = useCallback(
     async (source: StemSource, label: string) => {
@@ -164,7 +179,6 @@ export default function Editor() {
    * belongs to that video. Best effort, since decoding depends on codec and
    * browser. A failure keeps the current stems and reports in the status chip.
    */
-  const takeVideoAudio = status === 'ready' && (stemsLabel === MOCK_LABEL || stemsLabel === VIDEO_AUDIO_LABEL)
 
   const loadVideo = useCallback(
     (file: File, withAudio: boolean) => {
@@ -178,7 +192,7 @@ export default function Editor() {
     [loadStems],
   )
 
-  const onPickVideo = useCallback((file: File) => loadVideo(file, takeVideoAudio), [loadVideo, takeVideoAudio])
+  const onPickVideo = useCallback((file: File) => { setCompareOriginal(false); loadVideo(file, false); void projectPanel.current?.uploadMedia(file) }, [loadVideo])
 
   const onPick = (e: ChangeEvent<HTMLInputElement>) => {
     loadFiles(Array.from(e.target.files ?? []))
@@ -192,8 +206,8 @@ export default function Editor() {
     const files = Array.from(e.dataTransfer.files)
     const video = files.find(isVideoFile)
     const hasAudio = files.some(isAudioFile)
-    if (video) loadVideo(video, !hasAudio && takeVideoAudio)
-    if (hasAudio || !video) loadFiles(files)
+    if (video) onPickVideo(video)
+    else if (hasAudio || !video) loadFiles(files)
   }
 
   const dispatch = useCallback((action: EditAction, coalesceKey?: string) => {
@@ -211,7 +225,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate') return {message:plan.remove ? `Separated and muted ${plan.description}. Export when ready.` : `Separated ${plan.description}.`,ok:true}
+      if (plan.kind === 'separate') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
@@ -286,6 +300,7 @@ export default function Editor() {
         </a>
         <div className="flex items-center gap-3">
           <Transport engine={engine} playing={playing} duration={duration} />
+          {originalSrc && stemsLabel === 'Project stems' && <button className={HEADER_BUTTON} onClick={()=>setCompareOriginal(v=>!v)} aria-pressed={compareOriginal}>{compareOriginal ? 'Listening: original' : 'Compare original'}</button>}
           {isDurationMismatch(videoDuration, duration) && (
             <span className="font-mono text-[10px] text-amber-300">
               Video {videoDuration?.toFixed(1)}s, audio {duration.toFixed(1)}s
@@ -301,6 +316,8 @@ export default function Editor() {
           >
             Import audio
           </button>
+          <button className={HEADER_BUTTON} disabled={!canUndo(history)} onClick={()=>setHistory(h=>undo(h))} title="Undo (⌘Z)">Undo</button>
+          <button className={HEADER_BUTTON} disabled={!canRedo(history)} onClick={()=>setHistory(h=>redo(h))} title="Redo (⇧⌘Z)">Redo</button>
           <button
             disabled={status !== 'ready'}
             onClick={() => downloadText(serializeEditList(tracks), 'soundcanvas-edit-list.json')}
@@ -343,9 +360,11 @@ export default function Editor() {
               onError={setLoadError}
               visual={visual}
               onSelection={setVisualSelection}
+              selection={visualSelection}
+              onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
             <div className="flex min-h-0 w-80 shrink-0 flex-col gap-2">
-              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setVideoSrc(url) }} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
+              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setVideoSrc(url) }} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
               <details className="shrink-0 text-xs text-zinc-400"><summary className="cursor-pointer">Edit history</summary><EditLog log={log} /></details>
             </div>
           </div>

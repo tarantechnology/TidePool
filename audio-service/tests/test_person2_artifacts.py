@@ -162,7 +162,7 @@ def test_translate_real_documents(artefacts, probe, settings):
     assert visual.source_sha256 == detections["source_sha256"]
     assert visual.object_id == f"track:{selection['track_id']}"
     assert visual.label == selection["label"]
-    assert ("+", *visual.interval) in translation.anchors
+    assert translation.anchors == []
 
     # Exactly the selected track's masked observations, decoded at native resolution.
     expected = _masked_frame_indices(detections, selection)

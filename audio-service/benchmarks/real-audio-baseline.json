@@ -1,0 +1,326 @@
+{
+  "method": "real clean speech + real music mixed at equal RMS",
+  "speech_dataset": "hf-internal-testing/librispeech_asr_dummy validation",
+  "music_source": "Hungarian_Dance_number_5_-_Allegro_in_F_sharp_minor_(string_orchestra).ogg",
+  "duration_seconds": 6.0,
+  "clips": 3,
+  "results": [
+    {
+      "clip": "1272-128104-0002",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 1,
+      "candidates": 1,
+      "si_sdri_db": 4.920830906461097,
+      "latency_seconds": 3.154,
+      "reconstruction_error": 3.0516646802425385e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 3.077,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0002",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 2,
+      "candidates": 1,
+      "si_sdri_db": 5.052153181220131,
+      "latency_seconds": 3.117,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 2.98,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0002",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 1,
+      "candidates": 1,
+      "si_sdri_db": 4.906306532110326,
+      "latency_seconds": 3.152,
+      "reconstruction_error": 3.0516646802425385e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 3.103,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0002",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 2,
+      "candidates": 1,
+      "si_sdri_db": 5.034806601462157,
+      "latency_seconds": 3.698,
+      "reconstruction_error": 3.0516646802425385e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 3.476,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0002",
+      "method": "demucs_vocals",
+      "error": "Demucs failed: rogress=progress)\n  File \"/usr/local/lib/python3.12/dist-packages/torch/hub.py\", line 712, in download_url_to_file\n    u = urlopen(req)\n        ^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urllib/request.py\", line 215, in urlopen\n    return opener.open(url, data, timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urllib/request.py\", line 515, in open\n    response = self._open(req, data)\n               ^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urlli"
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 1,
+      "candidates": 1,
+      "si_sdri_db": 7.936532741971696,
+      "latency_seconds": 3.172,
+      "reconstruction_error": 3.0517112463712692e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 3.119,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 2,
+      "candidates": 1,
+      "si_sdri_db": 8.198961932237466,
+      "latency_seconds": 3.304,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 3.256,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 1,
+      "candidates": 1,
+      "si_sdri_db": 7.9260958349274215,
+      "latency_seconds": 3.846,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 3.709,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 2,
+      "candidates": 1,
+      "si_sdri_db": 8.18540409060018,
+      "latency_seconds": 6.595,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 6.363,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "demucs_vocals",
+      "error": "Demucs failed: rogress=progress)\n  File \"/usr/local/lib/python3.12/dist-packages/torch/hub.py\", line 712, in download_url_to_file\n    u = urlopen(req)\n        ^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urllib/request.py\", line 215, in urlopen\n    return opener.open(url, data, timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urllib/request.py\", line 515, in open\n    response = self._open(req, data)\n               ^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urlli"
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 1,
+      "candidates": 1,
+      "si_sdri_db": 7.793733953114405,
+      "latency_seconds": 7.515,
+      "reconstruction_error": 3.0516646802425385e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 7.299,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 2,
+      "candidates": 1,
+      "si_sdri_db": 7.757764175511165,
+      "latency_seconds": 9.105,
+      "reconstruction_error": 3.0516996048390865e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 8.895,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 1,
+      "candidates": 1,
+      "si_sdri_db": 7.7739721402068325,
+      "latency_seconds": 6.494,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 6.222,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 2,
+      "candidates": 1,
+      "si_sdri_db": 7.750403578383652,
+      "latency_seconds": 6.604,
+      "reconstruction_error": 3.0516472179442644e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 6.401,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "demucs_vocals",
+      "error": "Demucs failed: rogress=progress)\n  File \"/usr/local/lib/python3.12/dist-packages/torch/hub.py\", line 712, in download_url_to_file\n    u = urlopen(req)\n        ^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urllib/request.py\", line 215, in urlopen\n    return opener.open(url, data, timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urllib/request.py\", line 515, in open\n    response = self._open(req, data)\n               ^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/urlli"
+    }
+  ],
+  "caveat": "Small constructed mixtures, one LibriSpeech subset and one music recording; not a substitute for diverse real-video listening tests. Some latency measurements overlapped another GPU experiment; do not compare timings.",
+  "demucs_note": "Comparison failed because the official model checkpoint server presented an expired TLS certificate; no Demucs scores are available."
+}

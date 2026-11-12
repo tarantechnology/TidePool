@@ -7,7 +7,7 @@ from pathlib import Path
 from .core import connect, event, project_dir, probe, run, stem, uid
 from .media import separate, export
 from .messaging import provider
-from .visual import project_source
+from .visual import project_source, file_sha256, validate_timeline
 
 stop = threading.Event()
 
@@ -36,17 +36,69 @@ def work_once():
                     raise ValueError('Uploaded media hash changed after the visual job was queued')
                 payload['source']=source
             payload['request_id']=job['id']
+            baseline=payload.pop('_baseline',None)
+            append=payload.pop('_append',None)
+            residual=None
+            if append:
+                with connect() as db: residual=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,append['id'])).fetchone()
+                if not residual or residual['revision'] != append['revision']: raise ValueError('Residual stem changed while separation was queued; retry after reloading.')
             inference={}
-            results=separate(p['audio'],project_dir(pid)/'stems',payload,report=inference)
+            results=separate(residual['path'] if residual else p['audio'],project_dir(pid)/'stems',payload,report=inference)
+            if append and sum(name.lower()=='residual' for name,_ in results)!=1: raise ValueError('Inference must return exactly one residual to add a sound; existing stems were preserved.')
             items=[]
             for name,path in results:
                 info=probe(path); items.append((uid(),pid,name,str(path),info['duration']))
             with connect() as db:
-                db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
-                db.executemany('INSERT INTO stems(id,project_id,name,path,duration) VALUES(?,?,?,?,?)',items)
+                db.execute('BEGIN IMMEDIATE')
+                if baseline is not None and {r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))} != baseline:
+                    raise ValueError('Layers changed during processing; existing edits were preserved. Generate another preview.')
+                if append:
+                    current=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,append['id'])).fetchone()
+                    if not current or current['revision'] != append['revision']: raise ValueError('Residual stem changed during separation; existing stems were preserved. Reload and retry.')
+                    db.execute('DELETE FROM stems WHERE project_id=? AND id=?',(pid,append['id']))
+                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,start_offset,volume,muted,solo,automation,mute_ranges) VALUES(?,?,?,?,?,?,?,?,?,?,?)', [(*item,current['start_offset'],current['volume'],current['muted'],current['solo'],current['automation'],current['mute_ranges']) for item in items])
+                else:
+                    db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
+                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration) VALUES(?,?,?,?,?)',items)
+                if payload.get('edit_scope',{}).get('action','keep') != 'keep':
+                    from .guidance import edit_target
+                    for item in items:
+                        if item[2].lower() == 'residual': continue
+                        row=db.execute('SELECT * FROM stems WHERE id=?',(item[0],)).fetchone()
+                        edited=edit_target(row,payload['edit_scope'])
+                        db.execute('UPDATE stems SET volume=?,muted=?,mute_ranges=? WHERE id=?',(edited['volume'],edited['muted'],edited['mute_ranges'],item[0]))
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
+        elif job['kind']=='candidate':
+            from .candidates import build
+            output=build(p,payload,job['id'])
+            with connect() as db:
+                db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
+        elif job['kind']=='normalize':
+            # Work on a new copy; keep the uploaded original and old audio untouched.
+            from fractions import Fraction
+            info=json.loads(p['metadata']); fps=Fraction(info['frame_rate']).limit_denominator(1001)
+            video=project_dir(pid)/'original'/(uid()+'.mp4')
+            audio=project_dir(pid)/'extracted'/(uid()+'.wav')
+            try:
+                run('ffmpeg','-v','error','-y','-i',p['original'],'-map','0:v:0','-map','0:a:0',
+                    '-vf',f'fps={fps.numerator}/{fps.denominator},setpts=PTS-STARTPTS',
+                    '-af','asetpts=PTS-STARTPTS','-c:v','libx264','-preset','veryfast','-crf','18',
+                    '-pix_fmt','yuv420p','-c:a','alac','-movflags','+faststart',str(video))
+                run('ffmpeg','-v','error','-y','-i',str(video),'-vn','-ac','2','-ar','48000','-c:a','pcm_f32le',str(audio))
+                info=probe(video); info.update(video_id=pid,source_sha256=file_sha256(video))
+                validate_timeline(video,info['frame_rate'])
+                (project_dir(pid)/'extracted'/'preview.mp4').unlink(missing_ok=True)
+                with connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    current=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()
+                    if current['original'] != p['original'] or db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone():
+                        raise ValueError('Project changed while preparing the video; existing media and layers were preserved.')
+                    db.execute("UPDATE projects SET original=?,audio=?,metadata=?,visual=NULL,status='uploaded' WHERE id=?",(str(video),str(audio),json.dumps(info),pid))
+                    db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'prepared':True}),job['id']))
+            except Exception:
+                video.unlink(missing_ok=True); audio.unlink(missing_ok=True); raise
         elif job['kind']=='vision':
             directory=project_dir(pid)/'extracted'/('vision-'+job['id'])
             model=os.getenv('VISION_MODEL','yolo26n-seg.pt')

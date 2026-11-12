@@ -54,7 +54,7 @@ class VisualPrompt(BaseModel):
     not sufficient model input, so the model-facing requirement is a *mask video*: a
     losslessly encoded video with the same frame count, frame rate and resolution as the
     source video where pixels > 127 belong to the selected object. Frames where the object
-    is absent are all zero. Time ranges additionally become ``+`` span anchors.
+    is absent are all zero. Visible intervals do not imply audible sound; supply explicit anchors separately.
     Unknown extra fields (bboxes, scores, ...) are accepted and ignored.
     """
 
@@ -85,6 +85,7 @@ class InferenceOptions(BaseModel):
     residual_name: str = Field(default="residual", min_length=1, max_length=200)
     stereo_mode: Literal["duplicate", "per_channel"] | None = None
     chunk_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    chunk_batch: int | None = Field(default=None, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0)
     output_format: Literal["pcm_f32le", "pcm_s16le"] = "pcm_f32le"
     # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
@@ -234,6 +235,11 @@ class ModelInfo(BaseModel):
     stereo_mode: str
     chunked: bool
     elapsed_seconds: float
+    chunk_seconds: float = 0
+    chunk_overlap_seconds: float = 2
+    requested_chunk_batch: int = 1
+    effective_chunk_batch: int = 1
+    peak_memory_bytes: int | None = None
     is_mock: bool = False
 
 

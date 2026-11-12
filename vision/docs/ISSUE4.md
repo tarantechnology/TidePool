@@ -1,9 +1,8 @@
 # Issue #4: project-owned visual/audio handoff
 
-Implementation and local validation, 2026-11-07. **Real visual-guided SAM Audio
-separation remains blocked. Keep [Issue #4](https://github.com/AkhilNam/SoundCanvas/issues/4)
-open.** A passing mock test proves transport, mask/frame preparation and editing;
-it does not establish an association between an object and a sound.
+**Update, 2026-11-12:** A normalized four-second excerpt of a real uploaded video passed object tracking, mask handoff, SAM Audio Large CUDA inference, muting and MP4 export. A seeded comparison produced a near-silent visual target, so this demonstrates execution only; it does not demonstrate that the selected object was correctly isolated or that visual guidance improves on text. The service now warns on near-silent visual results. Keep [Issue #4](https://github.com/AkhilNam/SoundCanvas/issues/4) open pending representative ground-truth and listening evaluation.
+
+The historical notes below document the 2026-11-07 validation and blockers at that time.
 
 ## What was missing and what changed
 

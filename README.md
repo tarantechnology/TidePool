@@ -41,7 +41,7 @@ The Mac runs the browser. The Linux GPU machine runs the editor, backend, CPU vi
    Keep SSH open and visit **http://localhost:5173** on your Mac. The editor uses its same-origin `/api` proxy. Use a separate tunnel to `8000` if you need API docs.
 4. When finished, run `docker compose -f compose.cloud.yaml down` on the VM. GPU rental charges may continue until you stop or terminate the VM. Back up `./storage` and any needed Docker volumes before deleting the VM.
 
-The cloud Compose configuration has been checked syntactically, but a real GPU deployment and gated model download have not been validated in this environment. Check service logs if model access, GPU drivers, memory or container startup fails. Real visual-guided audio isolation remains unverified; see [vision/docs/ISSUE4.md](vision/docs/ISSUE4.md). The backend returns inference model identity and warnings so the editor can distinguish mock results.
+The cloud Compose configuration has been checked syntactically; that Compose deployment has not been tested end to end. A separate manual RunPod A40 deployment has run SAM Audio Large and the pretrained audio judge. Check service logs if model access, GPU drivers, memory or container startup fails. Real visual-guided audio isolation quality remains unverified; see [vision/docs/ISSUE4.md](vision/docs/ISSUE4.md). The backend returns inference model identity and warnings so the editor can distinguish mock results.
 
 ## APIs and tests
 
@@ -57,4 +57,31 @@ This is a development MVP. Keep project tokens and uploaded media private; use a
 
 Set `OPENAI_API_KEY` or `OPENAI_API_KEY_FILE` on the backend to enable GPT-6 Luna in the editor command bar. `OPENAI_AGENT_MODEL` defaults to `gpt-6-luna`. Project authentication is required. The request sends the command, timeline state and stem names to OpenAI; it does not send uploaded media or project tokens. The backend asks for a structured plan and the editor validates each edit before applying it.
 
-Commands can request separation of a sound in a new project or edit existing stems. Creating new stems currently replaces existing ones, so the planner asks for a new project instead of discarding edits. It cannot perform effects or infer audio content or timestamps that the editor does not provide. OpenAI usage incurs charges and requires model access.
+Commands can request separation of a sound or edit existing stems. Adding a sound separates the remaining residual while preserving previous layers and their edits. A project needs one unshifted residual stem to add another sound. It cannot perform effects or infer audio content or timestamps that the editor does not provide. OpenAI usage incurs charges and requires model access.
+
+The editor can analyze the first 30 seconds of a video for tracked objects. Select a highlighted object to isolate, mute, or lower a described sound. Visual prompting requires constant-frame-rate, unrotated media whose audio and video both start at zero; Incompatible uploads are rejected before analysis; open Visual selection options and choose Prepare compatible copy to re-encode a separate copy before creating any stems. The uploaded file is retained, and export uses the prepared copy. A 4-second excerpt from a real uploaded video passed visual handoff and export on SAM Audio Large, but the selected visual target was nearly silent, so isolation quality remains unverified. The editor warns for near-silent visual results and provides an original/edited comparison.
+
+### Describe, guide, preview, apply
+
+Describe one sound, optionally mark **I hear it here** by dragging the guidance timeline,
+and choose the edit separately. A guidance interval shows where the sound occurs; the
+edit interval controls when its isolated layer is muted. For example, “mute the dog from
+10 to 15 seconds” preserves other sounds and existing automation.
+
+**Preview** lets you switch between the current mix, proposed edited mix, and isolated
+target at the same position without loudness normalization. **Apply preview** accepts it;
+**Undo applied preview** restores the prior audio if no intervening edits occurred.
+**Quality retry** uses two pretrained judge-ranked candidates when the service supports it.
+Judge preference is not confidence in correctness. A time anchor guides overlapping model
+windows and cannot establish speaker identity across a long recording.
+
+New sounds are previewed from the current residual. **Try another separation** replaces
+a target only in a two-layer project; replacing an older multitrack target requires its
+earlier source snapshot. Stale candidates fail safely. Visual guidance remains experimental:
+the selected mask is displayed, visibility does not imply audibility, and suspicious results
+offer an explicit text-plus-time retry before any edit is applied.
+
+The existing A40 profile remains SAM Audio Large, 10-second windows, 2-second overlap,
+batch two, one candidate, automatic spans disabled. Longer windows and independent stereo
+channels remain benchmark options. See [guided contracts](INTEGRATION.md#guided-candidates-current-contract)
+and [benchmark procedure](audio-service/benchmarks/GUIDED.md).

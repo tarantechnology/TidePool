@@ -84,3 +84,53 @@ INFERENCE_FAILURE: RuntimeError: Given groups=1, weight of size [16, 32, 3], exp
 ```
 
 Windows are now batched instead of threaded: the engine hands up to `AUDIO_CHUNK_BATCH` windows to the backend in one processor batch and one `model.separate` call, and the backend serializes all model access with a lock. `AUDIO_CHUNK_WORKERS` keeps working as a deprecated alias for `AUDIO_CHUNK_BATCH`. The full analysis, the memory implications and the operator guidance are in [`docs/chunk_concurrency.md`](docs/chunk_concurrency.md). Do not include private media or credentials in bug reports.
+
+### Optional candidate ranking and label-free benchmark
+
+The service can generate several candidates and use Meta's pretrained audio judge to
+choose one. This costs extra GPU memory and inference time; it is a preference score,
+not a guarantee of better quality. On an A40, to avoid also loading the much larger
+visual ranker and the CLAP ensemble, set `AUDIO_LOAD_RANKERS=true`,
+`AUDIO_JUDGE_ONLY=true`, and `AUDIO_LOAD_VISUAL_RANKER=false`. Send
+`options.reranking_candidates` greater than one. The service returns a clear error
+if ranking is unavailable rather than claiming to rank candidates. Visual requests
+without a visual ranker use the text judge and still need a sound description.
+
+For an automatic reference-based experiment without hand-labeling, install `pyarrow`,
+`soundfile`, `scipy`, and `httpx` alongside this package. Download the validation
+parquet from `hf-internal-testing/librispeech_asr_dummy` and supply a local music file:
+
+```sh
+python benchmarks/real_audio.py --speech-parquet /path/to/validation.parquet \
+  --music /path/to/music.wav --out ./benchmark-real --clips 3 --repeat 2
+```
+
+The script mixes known clean speech with music and compares the separation to the
+known speech using SI-SDR improvement. Add `--candidates 2` to measure ranking;
+add `--demucs-python /path/to/python` to compare an installed Demucs model. Its
+checkpoint must be obtainable from its trusted official source. These constructed
+mixtures do not measure object association or cover all real-world material, so
+compare several recordings and listen as well. The script sends constructed mixtures
+to the specified inference URL (localhost by default).
+
+A small A40 run is recorded in `benchmarks/real-audio-baseline.json` and
+`benchmarks/real-audio-judge.json`: three six-second mixtures, two descriptions,
+and a single matched seed averaged 6.88 dB SI-SDR improvement without ranking and
+6.89 dB with two candidates. This sample is far too small to demonstrate a reliable
+quality advantage. The Demucs comparison could not run because its official
+checkpoint server presented an expired TLS certificate at the time of testing.
+
+### Guided preview configuration
+
+The default SAM window is now 10 seconds, with 2-second overlap and batch two. Requests
+can set `options.chunk_batch` without mutating shared service settings; the engine still
+serializes model access. Responses report requested/effective batch size, window/overlap,
+and peak allocated GPU bytes. Batched GPU OOM retries sequentially and reports that fallback.
+Automatic span prediction and its heavyweight loader are disabled by default.
+
+The editor's Quality retry uses two judge-ranked candidates. A 20-second/batch-one retry
+and per-channel stereo separation are benchmark options, not promoted UI profiles.
+See [the guided benchmark procedure](benchmarks/GUIDED.md) for the five-category corpus,
+provenance, fixed splits/seeds, metrics, regression gate and staged rollback procedure.
+Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
+invalid visual guidance fails instead of silently changing to text-only inference.

@@ -13,9 +13,13 @@ def separate(audio, directory, payload, report=None):
             report.update(model={'backend':'fake','is_mock':True}, warnings=['Fake adapter copies audio; no source separation performed'])
         # Deterministic fixtures, not source separation: each stem is a copy.
         results = []
-        for name in (payload.get('prompts') or ['Audio']):
+        names=payload.get('prompts') or ['Audio']
+        if payload.get('request_id') and payload.get('profile'): names=[*names,'residual']
+        for name in names:
+            if isinstance(name,dict): name=name.get('name') or name['text']
             path = directory / (uid() + '.wav')
-            run('ffmpeg','-v','error','-y','-i',str(audio),'-c:a','pcm_s16le',str(path))
+            extra=['-af','volume=0'] if name=='residual' and payload.get('profile') else []
+            run('ffmpeg','-v','error','-y','-i',str(audio),*extra,'-c:a','pcm_f32le',str(path))
             results.append((name, path))
         return results
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
@@ -31,7 +35,11 @@ def separate(audio, directory, payload, report=None):
             error = response.json()['error']
             message = f"{error['code']}: {error['message']}"
         except (ValueError, KeyError, TypeError):
-            message = f'Audio service HTTP {response.status_code}'
+            try:
+                detail = response.json().get('detail')
+                message = f'Audio service HTTP {response.status_code}: {detail}' if isinstance(detail, str) else f'Audio service HTTP {response.status_code}'
+            except (ValueError, AttributeError):
+                message = f'Audio service HTTP {response.status_code}'
         raise RuntimeError(message)
     result = response.json()
     if report is not None:
@@ -84,5 +92,40 @@ def export(stems, original, destination, fmt, include_video):
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
     if include_video: args += ['-map','0:v:0','-c:v','copy','-c:a','aac','-t',str(duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
-    else: args += ['-c:a','pcm_s16le']
+    else: args += ['-c:a','pcm_f32le']
     run(*args,str(destination))
+
+
+def capabilities():
+    """Whitelist public capability fields; never expose URLs, paths or load errors."""
+    if os.getenv('INFERENCE_ADAPTER','fake') != 'http':
+        return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Fake adapter: no AI separation or judge ranking.'}
+    from urllib.parse import urlsplit, urlunsplit
+    url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL',''))
+    try:
+        response=httpx.get(urlunsplit((url.scheme,url.netloc,'/capabilities','','')),timeout=5)
+        response.raise_for_status(); data=response.json(); model=data.get('model',{})
+        quality=bool(model.get('loaded') and model.get('text_ranker_loaded') and not data.get('is_mock'))
+        return {'preview':True,'quality':quality,'visual':bool(data.get('prompting_modes',{}).get('visual')),
+                'experimental_visual':True,'reason':'' if quality else 'Quality retry requires the pretrained text ranker to be loaded.',
+                'profiles':{'preview':{'candidates':1,'chunk_seconds':10,'chunk_batch':2},'quality':{'candidates':2,'chunk_seconds':10,'chunk_batch':2}},
+                'long_window_promoted':False,'automatic_spans':False}
+    except (httpx.HTTPError,ValueError,TypeError,AttributeError):
+        return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.'}
+
+
+def inspect_audio(path):
+    import re
+    import subprocess
+    result=subprocess.run(['ffmpeg','-v','info','-i',str(path),'-af','astats=metadata=0:reset=0','-f','null','-'],capture_output=True,text=True,timeout=600,check=True)
+    text=result.stderr.split('Overall')[-1]
+    def level(name):
+        match=re.search(name+r':\s*([-+\w.]+)',text)
+        if not match: return None
+        value=float(match[1])
+        return value if __import__('math').isfinite(value) else None
+    peak,rms=level('Peak level dB'),level('RMS level dB')
+    findings=[]
+    if rms is None or rms < -70: findings.append('Audio is silent or nearly silent. Choose an audible recording.')
+    if peak is not None and peak >= -.01: findings.append('Audio reaches full scale and may be clipped. Separation cannot restore missing waveform detail.')
+    return {'peak_dbfs':peak,'rms_dbfs':rms,'findings':findings}

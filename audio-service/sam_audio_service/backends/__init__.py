@@ -20,6 +20,8 @@ def create_backend(settings: Settings) -> Backend:
             mask_mode=settings.visual_mask_mode,  # type: ignore[arg-type]  # validated in Settings.validate
             load_span_predictor=settings.load_span_predictor,
             load_rankers=settings.load_rankers,
+            load_visual_ranker=settings.load_visual_ranker,
+            judge_only=settings.judge_only,
             ode_method=settings.ode_method,
             ode_step_size=settings.ode_step_size,
             frame_size=settings.frame_size,

@@ -1,0 +1,71 @@
+{
+  "enabled_by_default": false,
+  "rankers_loaded": false,
+  "results": [
+    {
+      "split": "tuning",
+      "target_si_sdri_db": 2.0188729667517884,
+      "background_si_sdri_db": 3.763817151846466,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 9.799543852886505e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": true,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 9.713,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 24660912128,
+        "is_mock": false
+      },
+      "warnings": [],
+      "seconds": 10.619612234062515
+    },
+    {
+      "split": "heldout",
+      "target_si_sdri_db": 14.019163598093327,
+      "background_si_sdri_db": 14.102521307999538,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.03986067870591041,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": true,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.249,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 24662443008,
+        "is_mock": false
+      },
+      "warnings": [],
+      "seconds": 7.164902058895677
+    }
+  ],
+  "ready": true,
+  "load_peak_driver_mib": 21541,
+  "promoted": false,
+  "limitations": "Two examples only. Batch one and rankers disabled differ from the main batch-two benchmark, so this is a fit/execution check, not an isolated estimate of the span predictor quality gain.",
+  "configuration": {
+    "model_id": "facebook/sam-audio-large",
+    "load_span_predictor": true,
+    "load_rankers": false,
+    "chunk_seconds": 10,
+    "chunk_batch": 1,
+    "predict_spans": true,
+    "seed": 1731
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "status": "completed",
+  "error": null,
+  "inference": {
+    "model": {
+      "backend": "sam",
+      "model_id": "facebook/sam-audio-large",
+      "device": "cuda",
+      "dtype": "float32",
+      "predict_spans": false,
+      "reranking_candidates": 1,
+      "stereo_mode": "duplicate",
+      "chunked": false,
+      "elapsed_seconds": 19.36,
+      "chunk_seconds": 10.0,
+      "chunk_overlap_seconds": 2.0,
+      "requested_chunk_batch": 2,
+      "effective_chunk_batch": 1,
+      "peak_memory_bytes": 26520120832,
+      "is_mock": false
+    },
+    "warnings": [
+      "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise",
+      "chunking disabled for visually prompted request so frames stay aligned"
+    ],
+    "source": {
+      "asset_id": "429c2b580b8844dabe161c4554c52e0b",
+      "duration": 12.010667,
+      "sample_rate": 48000,
+      "channels": 2,
+      "sample_count": 576512
+    },
+    "request_id": "57bca5a0283a453fb59388351c328cf6",
+    "contract_version": "2025-11-draft-1"
+  },
+  "provenance": {
+    "source_sha256": "ab7fad193be2adcda79656d9afe057bbe52f05b1e1fbf81a3ae507260e5742f4",
+    "source_kind": "original",
+    "stem_revisions": {},
+    "prompt": "person speaking",
+    "anchors": [],
+    "visual_guidance": true,
+    "edit_scope": {
+      "action": "keep",
+      "interval": null
+    },
+    "profile": "preview",
+    "requested_options": {
+      "reranking_candidates": 1,
+      "predict_spans": false,
+      "chunk_seconds": 10,
+      "chunk_batch": 2,
+      "residual": "mixture_minus_targets",
+      "output_format": "pcm_f32le",
+      "seed": 735968922
+    }
+  },
+  "note": "Execution and mask/timing only. This existing asset does not establish visual sound attribution accuracy."
+}

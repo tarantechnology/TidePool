@@ -151,3 +151,17 @@ def test_readiness_requires_loaded_model(settings):
 def test_readiness_after_model_load(client):
     response = client.get('/ready')
     assert response.status_code == 200 and response.json()['status'] == 'ready'
+
+
+def test_large_visual_metadata_can_cross_multipart_boundary(client, wav_path):
+    # Masks can exceed Starlette's 1 MiB default form-field cap.
+    metadata = {'prompts':['sound'], 'padding':'x' * (1024 * 1024 + 100)}
+    response = _post(client, wav_path.read_bytes(), metadata)
+    assert response.status_code == 200, response.text
+
+
+def test_multiple_candidates_require_a_real_ranker(client, wav_path):
+    response = _post(client, wav_path.read_bytes(), {'prompts': ['voice'], 'options': {'reranking_candidates': 2}})
+    assert response.status_code == 400
+    assert response.json()['error']['code'] == 'UNSUPPORTED_OPERATION'
+    assert 'ranking is not enabled' in response.json()['detail']

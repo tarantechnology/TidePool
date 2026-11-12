@@ -72,7 +72,7 @@ async function request(
   if (res.ok) return res
   // FastAPI errors are {"detail": "message"}, or an array for validation errors.
   const body = (await res.json().catch(() => null)) as { detail?: unknown } | null
-  const detail = typeof body?.detail === 'string' ? `: ${body.detail}` : ''
+  const detail = typeof body?.detail === 'string' ? `: ${body.detail}` : Array.isArray(body?.detail) ? ': '+body.detail.map((e:{msg?:string})=>e.msg || 'Invalid input').join('; ') : ''
   throw new Error(`Backend returned ${res.status}${detail}`)
 }
 
@@ -219,7 +219,7 @@ export interface ProjectInfo {
   access_token?: string
   status: string
   filename?: string | null
-  metadata?: { has_video: boolean; duration: number } | null
+  metadata?: { has_video: boolean; duration: number; audio_quality?:{findings:string[]} } | null
   latest_job?: { id: string; status: string } | null
   latest_visual_job?: { id: string; status: string } | null
   last_completed_job_id?: string | null
@@ -243,8 +243,8 @@ export async function uploadProject(config: BackendConfig, projectId: string, fi
 export async function storeVisualMetadata(config: BackendConfig, projectId: string, metadata: unknown): Promise<void> {
   await request(config, `/api/projects/${encodeURIComponent(projectId)}/visual-metadata`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(metadata)})
 }
-export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(visualPrompt ? {visual_prompt: visualPrompt} : {})})})
+export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, append, visual_prompt: visualPrompt ?? {}})})
   return ((await res.json()) as {job_id:string}).job_id
 }
 export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
@@ -292,8 +292,43 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { kind:'edit'|'separate'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string }
-export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean}):Promise<AgentPlan> {
+export interface AgentPlan { edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string }
+export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
+}
+
+export async function startPrepareVisual(config: BackendConfig, projectId:string):Promise<string> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/prepare-visual`,{method:'POST'})
+  return ((await res.json()) as {job_id:string}).job_id
+}
+export async function getPrepareVisual(config:BackendConfig, jobId:string):Promise<BackendJob> {
+  const res=await request(config,`/api/prepare-jobs/${encodeURIComponent(jobId)}`)
+  return res.json() as Promise<BackendJob>
+}
+
+export interface Anchor {token:"+"|"-";start:number;end:number}
+export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
+export interface PreviewOptions {guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality"}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string}
+export async function getCapabilities(config:BackendConfig,projectId:string):Promise<Capabilities> {
+  return (await request(config,`/api/projects/${encodeURIComponent(projectId)}/capabilities`)).json() as Promise<Capabilities>
+}
+export interface CandidateInfo {mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number};warnings?:string[]}|null}
+export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...options})})
+  return ((await res.json()) as {candidate_id:string}).candidate_id
+}
+export async function getCandidate(config:BackendConfig,id:string):Promise<CandidateInfo> {
+  const res=await request(config,`/api/candidates/${encodeURIComponent(id)}`);return res.json() as Promise<CandidateInfo>
+}
+export async function applyCandidate(config:BackendConfig,id:string):Promise<{job_id:string}> {
+  return (await request(config,`/api/candidates/${encodeURIComponent(id)}/apply`,{method:'POST'})).json() as Promise<{job_id:string}>
+}
+export async function undoCandidate(config:BackendConfig,id:string):Promise<{job_id:string}> {
+  return (await request(config,`/api/candidates/${encodeURIComponent(id)}/undo`,{method:'POST'})).json() as Promise<{job_id:string}>
+}
+
+export async function addMuteRange(config:BackendConfig,projectId:string,stem:SavedStem,start:number,end:number):Promise<void> {
+  await request(config,`/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stem.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_revision:stem.revision,mute_ranges:[...(stem.mute_ranges || []),[start,end]]})})
 }

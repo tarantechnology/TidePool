@@ -12,6 +12,7 @@ is shared and not re-entrant, so parallelism belongs in the batch dimension. See
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 import uuid
@@ -93,7 +94,7 @@ class Engine:
     def translate_visual(self, prompt: PromptSpec, shared: dict[str, Any] | None, metadata: SeparationMetadata, source_duration: float, warnings: list[str], workdir: Path | None = None) -> tuple[VisualInput | None, list[Anchor]]:
         """Translate Person 2's visual guidance into what the model actually consumes.
 
-        Time ranges / selection intervals become ``+`` span anchors. Per-frame masks plus a
+        Explicit sound time ranges become ``+`` anchors; visible selection intervals do not. Masks plus a
         reference to the original video become a VisualInput. Anything else is accepted
         but cannot steer the model, so it is reported as a warning rather than an error.
         """
@@ -134,9 +135,10 @@ class Engine:
         if audio.frames == 0:
             raise InvalidRequest("audio is empty")
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
-        if self.settings.chunk_batch > 1 and backend_options.seed is not None:
+        batch = metadata.options.chunk_batch or self.settings.chunk_batch
+        if batch > 1 and backend_options.seed is not None:
             warnings.append(
-                f"seeded inference is reproducible for AUDIO_CHUNK_BATCH={self.settings.chunk_batch}; "
+                f"seeded inference is reproducible for AUDIO_CHUNK_BATCH={batch}; "
                 "a different chunk batch size draws different noise"
             )
         if self.backend.is_mock:
@@ -147,17 +149,32 @@ class Engine:
         stems: list[StemArrays] = []
         model_residuals: list[np.ndarray] = []
         chunked = False
+        effective_batch = batch
         with self._lock:
             self.ensure_loaded()  # under the lock so concurrent first requests load the model once
+            torch = sys.modules.get('torch')
+            cuda = torch.cuda if torch is not None and torch.cuda.is_available() and str(self.backend.info().get('device','')).startswith('cuda') else None
+            if cuda: cuda.reset_peak_memory_stats()
             for spec in prompts:
                 visual, visual_anchors = self.translate_visual(spec, metadata.visual_prompt, metadata, audio.duration, warnings, workdir)
+                raw_visual=spec.visual_prompt.model_dump(exclude_none=True) if spec.visual_prompt else metadata.visual_prompt
+                if raw_visual and (raw_visual.get('selection') or raw_visual.get('kind')=='visual_selection' or raw_visual.get('mask_video_ref')) and visual is None:
+                    raise InvalidRequest('Visual guidance could not be used. Try text plus explicit sound time anchors. ' + '; '.join(warnings[-3:]))
                 if not spec.text and visual is None:
                     raise InvalidRequest("prompt has no text and its visual guidance could not be used for separation: " + ("; ".join(warnings[-3:]) or "no visual guidance given"))
+                if any(a.end > audio.duration + 1e-6 for a in spec.anchors):
+                    raise InvalidRequest('anchor extends beyond the source audio timeline')
                 anchors: list[Anchor] = [(a.token, a.start, min(a.end, audio.duration)) for a in spec.anchors if a.start < audio.duration] + visual_anchors
                 if anchors and not self.backend.supports_spans:
                     warnings.append("backend ignores span anchors")
                     anchors = []
                 prompt = BackendPrompt(text=spec.text, anchors=anchors or None, visual=visual)
+                if backend_options.reranking_candidates > 1:
+                    info=self.backend.info()
+                    if self.backend.is_mock or not (info.get('text_ranker_loaded') or (visual is not None and info.get('visual_ranker_loaded'))):
+                        raise UnsupportedOperation('Candidate ranking is not enabled on the audio service. Use one candidate or enable the pretrained ranker.')
+                    if visual is not None and not info.get('visual_ranker_loaded'):
+                        warnings.append('Visual ranker unavailable; candidates are ranked using the sound description.')
                 if visual is not None and chunk_seconds and audio.duration > chunk_seconds:
                     warnings.append("chunking disabled for visually prompted request so frames stay aligned")
                 channel_inputs = [mixture[c] for c in range(mixture.shape[0])] if stereo_mode == "per_channel" else [to_mono(mixture)]
@@ -166,21 +183,34 @@ class Engine:
                     if visual is not None:
                         result, was_chunked = self._separate_interval(signal, prompt, backend_options, visual.interval), False
                     else:
-                        result, was_chunked = self._separate_signal(signal, prompt, backend_options, chunk_seconds, audio.duration)
+                        result, was_chunked = self._separate_signal(signal, prompt, backend_options, chunk_seconds, audio.duration, batch)
                     chunked = chunked or was_chunked
                     if result.extra.get("parallel_oom_retry"):
+                        effective_batch = 1
                         warnings.append("GPU memory was insufficient for parallel chunks; processing retried sequentially")
                     outs.append(result)
                 target = np.stack([sanitise(o.target) for o in outs]) if stereo_mode == "per_channel" else np.repeat(sanitise(outs[0].target)[None, :], mixture.shape[0], axis=0)
                 target = target[:, : audio.frames].astype(np.float32)
                 if target.shape[1] < audio.frames:
                     target = np.pad(target, ((0, 0), (0, audio.frames - target.shape[1])))
+                if visual is not None:
+                    # A near-silent result can indicate the visible object was not
+                    # audible or the model failed to associate it with the sound.
+                    lo = max(0, round(visual.interval[0] * audio.sample_rate))
+                    hi = min(audio.frames, round(visual.interval[1] * audio.sample_rate))
+                    if hi > lo:
+                        input_rms = float(np.sqrt(np.mean(mixture[:, lo:hi].astype(np.float64) ** 2)))
+                        target_rms = float(np.sqrt(np.mean(target[:, lo:hi].astype(np.float64) ** 2)))
+                        if input_rms > 1e-5 and target_rms < input_rms * 0.01:
+                            warnings.append('Very little sound was isolated from the selected object. Listen to the result and try text plus an explicit sound time anchor. No edit has been applied.')
                 spans = [[float(s), float(e)] for s, e in (outs[0].spans or [])] if outs[0].spans is not None else ([[a[1], a[2]] for a in anchors if a[0] == "+"] or None)
                 if outs[0].residual is not None:
                     res = np.stack([o.residual for o in outs]) if stereo_mode == "per_channel" else np.repeat(outs[0].residual[None, :], mixture.shape[0], axis=0)
                     model_residuals.append(res[:, : audio.frames].astype(np.float32))
                 label = spec.visual_prompt.label if spec.visual_prompt and spec.visual_prompt.label else None
                 stems.append(StemArrays(spec.display_name, "target", target, spec.text or None, label or spec.display_name, spans))
+
+            peak_memory = int(cuda.max_memory_allocated()) if cuda else None
 
         residual_mode = metadata.options.residual
         if residual_mode == "mixture_minus_targets":
@@ -205,6 +235,11 @@ class Engine:
             "reranking_candidates": backend_options.reranking_candidates,
             "stereo_mode": stereo_mode,
             "chunked": chunked,
+            "chunk_seconds": chunk_seconds,
+            "chunk_overlap_seconds": self.settings.chunk_overlap_seconds,
+            "peak_memory_bytes": peak_memory,
+            "requested_chunk_batch": batch,
+            "effective_chunk_batch": effective_batch if chunked else 1,
             "elapsed_seconds": round(elapsed, 3),
             "is_mock": self.backend.is_mock,
         }
@@ -277,7 +312,7 @@ class Engine:
         spans = [(a + s0 / sr, b + s0 / sr) for a, b in out.spans] if out.spans else [(s0 / sr, s1 / sr)]
         return BackendResult(target=target, residual=residual, spans=[(round(a, 3), round(b, 3)) for a, b in spans], extra=out.extra)
 
-    def _separate_signal(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, chunk_seconds: float, duration: float) -> tuple[BackendResult, bool]:
+    def _separate_signal(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, chunk_seconds: float, duration: float, chunk_batch: int | None = None) -> tuple[BackendResult, bool]:
         sr = self.backend.sample_rate
         n = len(signal)
         if not chunk_seconds or duration <= chunk_seconds:
@@ -345,7 +380,7 @@ class Engine:
                     flush()
             flush()
 
-        batch_size = max(1, self.settings.chunk_batch)
+        batch_size = max(1, chunk_batch or self.settings.chunk_batch)
         retried_sequentially = False
         try:
             run_windows(batch_size)

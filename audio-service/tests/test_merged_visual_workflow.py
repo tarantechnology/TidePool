@@ -214,7 +214,7 @@ def test_merged_workflow_builds_a_visual_input_with_per_frame_masks(selection_ru
     assert visual.frame_rate == pytest.approx(detections["fps"])
     assert visual.object_id == f"track:{selection['track_id']}"
     assert visual.label == selection["label"]
-    assert ("+", *_interval(selection)) in record["anchors"]
+    assert record["anchors"] == []  # visible presence is not audible presence
     assert set(visual.frame_masks) == _masked_frame_indices(detections, selection)
     assert len(visual.frame_masks) == MASKED_FRAMES
 

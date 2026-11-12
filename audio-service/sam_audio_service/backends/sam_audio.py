@@ -151,6 +151,8 @@ class SamAudioBackend(Backend):
         mask_mode: MaskMode = "keep_object",
         load_span_predictor: bool = True,
         load_rankers: bool = True,
+        load_visual_ranker: bool = True,
+        judge_only: bool = False,
         ode_method: str = "midpoint",
         ode_step_size: float = 2 / 32,
         frame_size: int = 336,
@@ -166,6 +168,8 @@ class SamAudioBackend(Backend):
         self.mask_mode: MaskMode = mask_mode
         self.load_span_predictor = load_span_predictor
         self.load_rankers = load_rankers
+        self.load_visual_ranker = load_visual_ranker
+        self.judge_only = judge_only
         self.frame_size = frame_size
         self.ode_opt: dict[str, Any] = {"method": ode_method, "options": {"step_size": ode_step_size}}
         self.ffmpeg, self.ffprobe, self.ffmpeg_timeout = ffmpeg, ffprobe, ffmpeg_timeout
@@ -224,6 +228,16 @@ class SamAudioBackend(Backend):
         model = model.eval().to(device=device)
         if dtype is not torch.float32:
             model = model.to(dtype=dtype)
+        if self.load_rankers and self.judge_only:
+            # Loading both checkpoints before moving SAM to the GPU can exhaust a
+            # 50 GB host even when the models fit in VRAM. Load the judge afterwards.
+            try:
+                from sam_audio.model.config import JudgeRankerConfig
+                from sam_audio.ranking.judge import JudgeRanker
+                model.text_ranker = JudgeRanker(JudgeRankerConfig()).eval().to(device=device)
+            except Exception as exc:
+                self._release(torch)
+                raise InferenceFailure(f"loading the audio judge failed: {type(exc).__name__}: {exc}") from exc
         self._torch, self._model, self._processor = torch, model, processor
         self._device, self._dtype = device, dtype
         self._parameters = sum(p.numel() for p in model.parameters())
@@ -282,6 +296,11 @@ class SamAudioBackend(Backend):
         if not self.load_rankers:
             kwargs["text_ranker"] = None
             kwargs["visual_ranker"] = None
+        else:
+            if not self.load_visual_ranker:
+                kwargs["visual_ranker"] = None
+            if self.judge_only:
+                kwargs["text_ranker"] = None
         token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
         if token:
             kwargs["token"] = token
@@ -449,7 +468,7 @@ class SamAudioBackend(Backend):
             predict_spans = bool(options.predict_spans and self.supports_span_prediction and anchors is None)
             candidates = max(1, int(options.reranking_candidates or 1))
             notes: list[str] = []
-            if visual is not None and self.mask_mode == "notebook" and candidates > 1:
+            if visual is not None and self.mask_mode == "notebook" and candidates > 1 and getattr(model, "visual_ranker", None) is not None:
                 # The ImageBind re-ranker scores audio against the masked video; with the
                 # object zeroed out that comparison is meaningless, so re-ranking is off.
                 notes.append("reranking disabled: notebook mask mode removes the object the visual re-ranker needs")

@@ -763,7 +763,7 @@ def test_factory_wires_settings_into_the_backend(monkeypatch, fake_sam):
     from sam_audio_service.config import load_settings
 
     settings = load_settings()
-    assert settings.chunk_seconds == 20.0  # sam default when AUDIO_CHUNK_SECONDS is unset
+    assert settings.chunk_seconds == 10.0  # sam default when AUDIO_CHUNK_SECONDS is unset
     created = create_backend(settings)
     assert created.mask_mode == "notebook" and created.frame_size == 224
     assert created.load_span_predictor is False and created.load_rankers is False
@@ -784,3 +784,11 @@ def test_explicit_chunk_seconds_wins(monkeypatch):
     from sam_audio_service.config import load_settings
 
     assert load_settings().chunk_seconds == 30.0
+
+
+def test_judge_only_defers_text_ranker_until_after_main_model_moves():
+    from sam_audio_service.backends.sam_audio import SamAudioBackend
+    backend = SamAudioBackend(model_id='m', device='cpu', load_rankers=True,
+                              load_visual_ranker=False, judge_only=True)
+    kwargs = backend._model_kwargs()
+    assert kwargs['text_ranker'] is None and kwargs['visual_ranker'] is None

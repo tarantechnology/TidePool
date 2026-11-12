@@ -3,7 +3,7 @@
 Person 2 owns detection, segmentation, tracking and selection. This module only maps
 what they produce onto what SAM Audio can actually consume:
 
-* a time interval            -> ``+`` span anchors (works with text prompts alone)
+* explicit auditory time ranges -> ``+`` span anchors (works with text prompts alone)
 * per-frame instance masks + the original video -> a masked-video visual prompt
 
 Accepted ``visual_prompt`` shapes (all lenient; unknown fields are ignored with a warning):
@@ -204,12 +204,10 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
         label = label or selection.get("label") or selection.get("class_name")
         object_id = object_id or selection.get("object_id")
         interval = _interval(selection, source_duration)
-        if interval:
-            anchors.append(("+", *interval))
-        else:
+        if not interval:
             warnings.append("selection has no usable interval on the source timeline")
         if detections is None and not mask_video_ref:
-            warnings.append("selection carries one mask for the clicked frame only; per-frame masks (detections document or mask_video_ref) are needed for visual prompting, so text + span anchors are used")
+            warnings.append("selection carries one mask for the clicked frame only; per-frame masks (detections document or mask_video_ref) are needed for visual prompting, so supply text plus explicit sound anchors")
 
     if not video_ref and not mask_video_ref and detections is None and not selection:
         # Generic / legacy shapes
@@ -259,14 +257,14 @@ def translate_visual_prompt(raw: dict[str, Any] | None, *, source: SourceRef | N
                         raise InvalidRequest("selected track is outside the source audio duration")
                     if interval[1] - interval[0] > settings.max_visual_interval_seconds:
                         raise UnsupportedOperation(f"visual prompt interval is limited to {settings.max_visual_interval_seconds:.0f}s; choose a shorter interval")
-                    anchors.append(("+", *interval))
+                    # Visibility is not evidence of audible sound.
             if interval and interval[1] - interval[0] > settings.max_visual_interval_seconds:
                 raise UnsupportedOperation(f"visual prompt interval is limited to {settings.max_visual_interval_seconds:.0f}s; choose a shorter interval")
             frame_masks, span = _frame_masks(detections, track_id, detection_id, warnings, interval)
             if frame_masks:
                 if interval is None and span:
                     interval = (max(0.0, span[0]), min(span[1], source_duration))
-                    anchors.append(("+", *interval))
+                    # Visibility is not evidence of audible sound.
                 frame_size = (int(detections["width"]), int(detections["height"])) if detections.get("width") and detections.get("height") else None
                 frame_rate = frame_rate or detections.get("fps")
                 object_id = object_id or (f"track:{track_id}" if track_id is not None else detection_id)

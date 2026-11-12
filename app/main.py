@@ -12,10 +12,11 @@ from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
 from .core import MAX_UPLOAD, connect, digest, init, probe, project_dir, run, stem, uid
+from .guidance import Guidance, SoundPrompt, EditScope, validate_timing, options, description
 from .commands import parse
 from .agent import AgentRequest, AgentError, plan as agent_plan
 from .worker import enqueue, loop, stop
-from .visual import file_sha256, prepare_payload, reject_media_refs
+from .visual import file_sha256, prepare_payload, reject_media_refs, validate_timeline
 
 @asynccontextmanager
 async def lifespan(app):
@@ -62,8 +63,23 @@ class StemUpdate(BaseModel):
         if self.mute_ranges and any(not math.isfinite(a) or not math.isfinite(b) or a<0 or b<=a for a,b in self.mute_ranges): raise ValueError('Mute ranges must have finite, ordered nonnegative times')
         return self
 class Process(BaseModel):
-    prompts: list[str]=Field(default_factory=list,max_length=20)
+    prompts: list[str | SoundPrompt]=Field(default_factory=list,max_length=20)
     visual_prompt: dict | None=None
+    guidance: Guidance=Field(default_factory=Guidance)
+    edit_scope: EditScope=Field(default_factory=EditScope)
+    profile: Literal["preview", "quality"]="preview"
+    append: bool=False
+    reranking_candidates: int=Field(default=1,ge=1,le=4)
+
+class CandidateRequest(BaseModel):
+    stem_id: str | None=None
+    guidance: Guidance=Field(default_factory=Guidance)
+    edit_scope: EditScope=Field(default_factory=EditScope)
+    profile: Literal["preview", "quality"]="preview"
+    visual_prompt: dict | None=None
+    prompt: str=Field(min_length=1,max_length=200)
+    reranking_candidates: int=Field(default=1,ge=1,le=4)
+
 class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
     include_video: bool=True
@@ -100,8 +116,14 @@ async def upload(pid: str, file: UploadFile=File(...), authorization: str | None
         info=probe(path)
         info.update(video_id=pid, source_sha256=file_sha256(path))
         if ext in ('.mp4','.mov') and not info['has_video']: raise ValueError('Expected a video stream')
-        run('ffmpeg','-v','error','-y','-i',str(path),'-vn','-ac','2','-ar','48000','-c:a','pcm_s16le',str(audio))
-        with connect() as db: db.execute("UPDATE projects SET filename=?,original=?,audio=?,metadata=?,status='uploaded' WHERE id=?",(Path(file.filename or '').name,str(path),str(audio),json.dumps(info),pid))
+        run('ffmpeg','-v','error','-y','-i',str(path),'-vn','-ac','2','-ar','48000','-c:a','pcm_f32le',str(audio))
+        from .media import inspect_audio
+        info['audio_quality']=inspect_audio(audio)
+        if info['channels']>2: info['audio_quality']['findings'].append('Processing downmixes this multichannel source to stereo; the original upload is preserved.')
+        if info['has_video']:
+            try: validate_timeline(path,info['frame_rate'])
+            except (ValueError,RuntimeError,TypeError) as exc: info['audio_quality']['findings'].append(str(exc))
+        with connect() as db: db.execute("UPDATE projects SET filename=?,original=?,uploaded_original=?,audio=?,metadata=?,status='uploaded' WHERE id=?",(Path(file.filename or '').name,str(path),str(path),str(audio),json.dumps(info),pid))
     except HTTPException:
         path.unlink(missing_ok=True); audio.unlink(missing_ok=True); raise
     except (ValueError,RuntimeError) as e:
@@ -116,13 +138,28 @@ def project(pid: str, authorization: str | None=Header(None)):
         latest=db.execute("SELECT id,status FROM jobs WHERE project_id=? AND kind='process' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
         completed=db.execute("SELECT id FROM jobs WHERE project_id=? AND kind='process' AND status='completed' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
         visual_job=db.execute("SELECT id,status FROM jobs WHERE project_id=? AND kind='vision' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
-    return {'project_id':pid,'status':p['status'],'filename':p['filename'],'metadata':json.loads(p['metadata']) if p['metadata'] else None,'visual_metadata':json.loads(p['visual']) if p['visual'] else None,'stems':list_stems(pid,authorization),'latest_job':dict(latest) if latest else None,'last_completed_job_id':completed['id'] if completed else None,'latest_visual_job':dict(visual_job) if visual_job else None}
+    current_stems=list_stems(pid,authorization)
+    if not current_stems: completed=None
+    return {'project_id':pid,'status':p['status'],'filename':p['filename'],'metadata':json.loads(p['metadata']) if p['metadata'] else None,'visual_metadata':json.loads(p['visual']) if p['visual'] else None,'stems':current_stems,'latest_job':dict(latest) if latest else None,'last_completed_job_id':completed['id'] if completed else None,'latest_visual_job':dict(visual_job) if visual_job else None}
 
 @app.get('/api/projects/{pid}/original')
 def original(pid: str, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['original']: raise HTTPException(404,'Project has no uploaded media')
     return FileResponse(p['original'],filename=p['filename'],content_disposition_type='inline')
+
+@app.get('/api/projects/{pid}/uploaded-original')
+def uploaded_original(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    path=p['uploaded_original'] or p['original']
+    if not path: raise HTTPException(404,'Project has no uploaded media')
+    return FileResponse(path,filename=p['filename'],content_disposition_type='inline')
+
+@app.get('/api/projects/{pid}/original-audio')
+def original_audio(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(404,'Project has no extracted audio')
+    return FileResponse(p['audio'],media_type='audio/wav')
 
 @app.get('/api/projects/{pid}/preview')
 def preview(pid: str, authorization: str | None=Header(None)):
@@ -152,7 +189,21 @@ def get_visual(pid: str, authorization: str | None=Header(None)):
 def analyze_visual(pid: str, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(409,'Upload a video first')
+    try: validate_timeline(p['original'], json.loads(p['metadata'])['frame_rate'])
+    except (ValueError, RuntimeError, KeyError, TypeError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'job_id':start(pid,'vision',{}),'status':'queued'}
+
+@app.post('/api/projects/{pid}/prepare-visual',status_code=202)
+def prepare_visual(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(409,'Upload a video first')
+    with connect() as db:
+        if db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone(): raise HTTPException(409,'Prepare a compatible video copy before separating sounds, to preserve existing layers.')
+    return {'job_id':start(pid,'normalize',{}),'status':'queued'}
+
+@app.get('/api/prepare-jobs/{jid}')
+def prepare_job(jid: str, authorization: str | None=Header(None)):
+    return get_job(jid,'normalize',authorization)
 
 @app.get('/api/visual-jobs/{jid}')
 def visual_job(jid: str, authorization: str | None=Header(None)):
@@ -172,21 +223,120 @@ def start(pid,kind,payload):
 
 @app.post('/api/projects/{pid}/agent')
 def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header(None)):
-    auth(pid,authorization)
-    with connect() as db: body.has_project_stems=bool(db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone())
+    p=auth(pid,authorization)
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    body.has_project_stems=bool(rows)
+    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration']} for r in rows]
+    body.tracks=[{'stemId':r['id'],'gain':r['volume'],'muted':bool(r['muted']),'solo':bool(r['solo']),'automation':[{'t':k['time'],'value':k['value']} for k in json.loads(r['automation'])]} for r in rows]
+    if p['metadata']: body.duration=json.loads(p['metadata'])['duration']
+    parsed=parse(body.prompt)
+    if parsed and parsed.get('stem_name'):
+        name=parsed['stem_name'].lower()
+        matches=[r for r in rows if name in r['name'].lower()]
+        if len(matches)>1:
+            return {'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Choose a layer: '+', '.join(r['name'] for r in matches)}
+        if parsed['action']=='mute_range':
+            if parsed['end']>body.duration: raise HTTPException(422,'Edit interval extends beyond the audio timeline')
+            if matches:
+                return {'kind':'edit','description':None,'remove':False,'actions':[{'type':'mute_range','stemId':matches[0]['id'],'start':parsed['start'],'end':parsed['end']}],'message':'Timed mute ready.'}
+            return {'kind':'separate','description':description(name),'remove':True,'actions':[], 'guidance':{'anchors':[]},'edit_scope':{'action':'mute','interval':{'start':parsed['start'],'end':parsed['end']}},'message':'Preview the timed mute before applying it.'}
     try: return agent_plan(body)
     except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+
+@app.get('/api/projects/{pid}/capabilities')
+def service_capabilities(pid: str, authorization: str | None=Header(None)):
+    auth(pid,authorization)
+    from .media import capabilities
+    return capabilities()
 
 @app.post('/api/projects/{pid}/process',status_code=202)
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
-    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not prompt.strip() for prompt in body.prompts)):
+    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
         raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
-    payload=body.model_dump()
+    try: validate_timing(body.prompts,body.guidance,body.edit_scope,probe(p['audio'])['duration'])
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    if body.edit_scope.action != 'keep' and len(body.prompts)!=1: raise HTTPException(422,'An edit requires exactly one sound target')
+    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile'})
+    payload['anchors']=body.guidance.model_dump()['anchors']
+    payload['options']=options(body.profile,body.reranking_candidates)
+    with connect() as db: payload['_baseline']={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
+    if body.append:
+        with connect() as db: rows=db.execute("SELECT id,revision,start_offset FROM stems WHERE project_id=? AND lower(name)='residual'",(pid,)).fetchall()
+        if len(rows)!=1: raise HTTPException(409,'Adding a sound requires exactly one residual stem from an earlier separation.')
+        if rows[0]['start_offset'] != 0: raise HTTPException(409,'Reset the residual start offset to zero before adding another sound.')
+        payload['_append']={'id':rows[0]['id'],'revision':rows[0]['revision']}
     try: payload=prepare_payload(p, payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422, str(exc)) from exc
     return {'job_id':start(pid,'process',payload),'status':'queued'}
+
+@app.post('/api/projects/{pid}/candidates',status_code=202)
+def create_candidate(pid: str, body: CandidateRequest, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    with connect() as db: rows=db.execute('SELECT * FROM stems WHERE project_id=?',(pid,)).fetchall()
+    targets=[r for r in rows if r['id']==body.stem_id and r['name'].lower()!='residual']
+    residuals=[r for r in rows if r['name'].lower()=='residual']
+    if body.stem_id and (len(rows)!=2 or len(targets)!=1 or len(residuals)!=1):
+        raise HTTPException(409,'Replacing an older target in a multitrack project requires its earlier source snapshot. Preview a new target from the current residual instead.')
+    if not body.stem_id and rows and len(residuals)!=1:
+        raise HTTPException(409,'A new target requires exactly one current residual.')
+    if any(r['start_offset'] != 0 for r in targets+residuals):
+        raise HTTPException(409,'Preview requires the source layers to start at zero.')
+    source=p['audio'] if body.stem_id or not rows else residuals[0]['path']
+    try: validate_timing([],body.guidance,body.edit_scope,probe(source)['duration'])
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    sound=description(body.prompt)
+    if not sound or sound=='residual': raise HTTPException(422,'Enter a sound description; residual is a reserved layer name.')
+    snapshot={'rows':[dict(r) for r in rows], 'source':source,
+              'source_sha256':file_sha256(source), 'project_audio':p['audio'], 'target_id':body.stem_id,
+              'residual_id':residuals[0]['id'] if residuals else None}
+    payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
+             'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
+             'profile':body.profile, 'options':{**options(body.profile,body.reranking_candidates),'seed':secrets.randbelow(2**31)},
+             '_candidate':snapshot}
+    try: payload=prepare_payload(p,payload)
+    except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
+    return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
+
+
+def candidate_record(cid, authorization):
+    with connect() as db: row=db.execute("SELECT * FROM jobs WHERE id=? AND kind='candidate'",(cid,)).fetchone()
+    if not row: raise HTTPException(404,'Candidate not found')
+    auth(row['project_id'],authorization)
+    return row
+
+@app.get('/api/candidates/{cid}')
+def candidate_status(cid: str,authorization: str | None=Header(None)):
+    row=candidate_record(cid,authorization); output=json.loads(row['output']) if row['output'] else None
+    return {'id':cid,'project_id':row['project_id'],'status':row['status'],'progress':row['progress'],'error':row['error'],
+        'audio_url':f'/api/candidates/{cid}/audio' if output else None,
+        'mix_url':f'/api/candidates/{cid}/audio?part=mix' if output and 'mix' in output else None,
+        'original_url':f'/api/candidates/{cid}/audio?part=original' if output and 'original' in output else None,
+        'provenance':output.get('provenance') if output else None,'inference':output.get('inference') if output else None}
+
+@app.get('/api/candidates/{cid}/audio')
+def candidate_audio(cid: str,part: Literal['target','residual','mix','original']='target',authorization: str | None=Header(None)):
+    row=candidate_record(cid,authorization)
+    if row['status']!='completed' or not row['output']: raise HTTPException(409,'Candidate is not ready')
+    data=json.loads(row['output'])
+    if part not in data: raise HTTPException(409,'This older preview has no mix comparison; generate a new preview.')
+    path=Path(data[part]['path']).resolve()
+    if not path.is_relative_to((project_dir(row['project_id'])/'stems').resolve()) or not path.is_file(): raise HTTPException(404,'Candidate audio not found')
+    return FileResponse(path,media_type='audio/wav')
+
+@app.post('/api/candidates/{cid}/apply')
+def apply_candidate(cid: str,authorization: str | None=Header(None)):
+    row=candidate_record(cid,authorization)
+    if row['status']!='completed' or not row['output']: raise HTTPException(409,'Candidate is not ready')
+    from .candidates import apply
+    return apply(row)
+
+@app.post('/api/candidates/{cid}/undo')
+def undo_candidate(cid: str,authorization: str | None=Header(None)):
+    from .candidates import undo
+    return undo(candidate_record(cid,authorization))
 
 @app.get('/api/jobs/{jid}')
 def job(jid: str, authorization: str | None=Header(None)): return get_job(jid,'process',authorization)

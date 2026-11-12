@@ -1,0 +1,14 @@
+{
+  "status": "ready",
+  "previous_launcher_unchanged": true,
+  "model": {
+    "model_id": "facebook/sam-audio-large",
+    "device": "cuda",
+    "dtype": "float32",
+    "text_ranker_loaded": true,
+    "visual_ranker_loaded": false,
+    "span_predictor_loaded": false
+  },
+  "production_code_updated": false,
+  "note": "Implementation was verified in an isolated staging copy; the previous production configuration was restored."
+}

@@ -34,6 +34,7 @@ memory scales with window length). Extra variables, all optional:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
+| `AUDIO_CHUNK_WORKERS` | `1` | Maximum concurrent audio windows within a request; set `2` on the tested A40 setup. Seeded jobs run sequentially. If parallel GPU inference runs out of memory it retries sequentially. |
 | `AUDIO_VISUAL_MASK_MODE` | `keep_object` | `keep_object` keeps the object and zeroes the background (the paper's `V ⊙ M`); `notebook` zeroes the object, as the official notebook does. Upstream issue #75 is unresolved, so this is an A/B switch. |
 | `AUDIO_LOAD_SPAN_PREDICTOR` | `true` | `false` drops the multi-billion-parameter PE-A-Frame span predictor (big memory saving, no span prediction). |
 | `AUDIO_LOAD_RANKERS` | `true` | `false` drops the CLAP/Judge/ImageBind re-rankers (only used when `AUDIO_RERANKING_CANDIDATES > 1`). |
@@ -73,3 +74,13 @@ HF_TOKEN=... docker compose -f compose.yaml -f audio-service/compose.audio.yaml 
 The GPU override requests one NVIDIA device and sets `AUDIO_DEVICE=cuda`; model startup fails rather than falling back to CPU if CUDA is unavailable. `/health` is liveness and `/ready` returns 503 until the model is loaded. GPU access, weights and model performance must be checked on the target host. The base overlay remains mock/CPU by default.
 
 The default response contains IEEE float32 WAV stems. This preserves values outside [-1, 1] so the target and residual can reconstruct the mixture without clipping. Explicit `options.output_format=pcm_s16le` is a lossy compatibility option. The backend inference timeout defaults to 3600 seconds and is configurable via `INFERENCE_TIMEOUT_SECONDS`; retry failed jobs by submitting a new process request. A long timeout does not guarantee completion for all inputs and hardware.
+
+Text-prompted audio uses overlapping windows (10 seconds in the cloud configuration) with crossfades for aligned reassembly. `AUDIO_CHUNK_WORKERS` bounds parallel windows within a single loaded model; requests are serialized to avoid multiplying GPU usage. Visual-prompted selections still run as a single aligned interval and are not parallelized by this setting.
+
+**Known regression (investigation needed):** A real video failed during SAM Audio Large inference on the RunPod A40 after two concurrent 10-second chunk workers were enabled. The processing job returned:
+
+```text
+INFERENCE_FAILURE: RuntimeError: Given groups=1, weight of size [16, 32, 3], expected input[2, 1, 480002] to have 32 channels, but got 1 channels instead
+```
+
+The exact input and trigger have not been isolated, and the cause has not been confirmed. The earlier synthetic 26-second concurrency test passed; it does not establish that real videos work. Investigate model thread safety/shared state, CUDA streams and chunk boundaries, including the `480002`-sample input, and compare with `AUDIO_CHUNK_WORKERS=1`. Set `AUDIO_CHUNK_WORKERS=1` as a possible diagnostic workaround, not a verified fix. Do not include private media or credentials in bug reports.

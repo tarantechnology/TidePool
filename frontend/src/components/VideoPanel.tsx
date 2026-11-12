@@ -1,5 +1,8 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/engine'
+import type { VisualMetadata } from '../api/backend'
+import { frameAt, selectVisual } from '../visual'
+import type { VisualSelection } from '../visual'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { useVideoSync } from '../hooks/useVideoSync'
 
@@ -13,14 +16,25 @@ interface Props {
   onPick: (file: File) => void
   onDuration: (duration: number) => void
   onError: (message: string) => void
+  visual: VisualMetadata | null
+  onSelection: (selection: VisualSelection) => void
 }
 
-export function VideoPanel({ engine, src, onPick, onDuration, onError }: Props) {
+export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, onSelection }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
   const picker = useRef<HTMLInputElement>(null)
+  const [previewTime, setPreviewTime] = useState(0)
+  const [bounds, setBounds] = useState({width:0,height:0,videoWidth:0,videoHeight:0})
+  useEffect(() => {
+    const el=video.current
+    if (!el) return
+    const update=()=>setBounds({width:el.clientWidth,height:el.clientHeight,videoWidth:el.videoWidth,videoHeight:el.videoHeight})
+    const observer=new ResizeObserver(update); observer.observe(el); el.addEventListener('loadedmetadata',update); update()
+    return () => { observer.disconnect(); el.removeEventListener('loadedmetadata',update) }
+  }, [src])
 
-  useVideoSync(engine, video, src, onError)
+  useVideoSync(engine?.duration ? engine : null, video, src, onError)
 
   const input = (
     <input
@@ -51,12 +65,26 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError }: Props) 
           ref={video}
           src={src}
           muted
+          controls={!engine?.duration}
+          onTimeUpdate={e => setPreviewTime(e.currentTarget.currentTime)}
           playsInline
           preload="auto"
           className="h-full w-full object-contain"
           onLoadedMetadata={(e) => onDuration(e.currentTarget.duration)}
           onError={() => onError('This browser could not play the video.')}
         />
+        {visual && bounds.width > 0 && bounds.videoWidth > 0 && (() => {
+          const w=bounds.width, h=bounds.height
+          const scale=Math.min(w/(bounds.videoWidth || visual.width), h/(bounds.videoHeight || visual.height))
+          const vw=(bounds.videoWidth || visual.width)*scale, vh=(bounds.videoHeight || visual.height)*scale
+          const current=engine?.duration ? t : previewTime
+          const frame=frameAt(visual,current)
+          return <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">{frame?.objects.map(obj => {
+            const [x1,y1,x2,y2]=obj.bbox_normalized
+            if (obj.track_id === null || !obj.mask) return null
+            return <button key={obj.detection_id} type="button" title={`Select ${obj.label}`} aria-label={`Select ${obj.label}`} className="pointer-events-auto absolute border-2 border-accent bg-accent/10 hover:bg-accent/30" style={{left:(w-vw)/2+x1*vw,top:(h-vh)/2+y1*vh,width:(x2-x1)*vw,height:(y2-y1)*vh}} onClick={() => {const selected=selectVisual(visual,current,obj); if(selected) { video.current?.pause(); engine?.pause(); onSelection(selected) }}}><span className="absolute top-0 left-0 bg-black/80 px-1 text-[10px] text-white">{obj.label}</span></button>
+          })}</div>
+        })()}
         {input}
         <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">{pickButton}</div>
       </div>

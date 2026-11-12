@@ -45,6 +45,7 @@ export interface BackendJob {
   stems?: BackendStem[]
   /** Read from get_job in app/main.py. INTEGRATION.md does not list this field. */
   project_id?: string
+  inference?: { model?: { is_mock?: boolean; backend?: string }; warnings?: string[] } | null
 }
 
 /** Covers a whole request, including large stem downloads. */
@@ -60,8 +61,9 @@ async function request(
   path: string,
   init: RequestInit = {},
   signal?: AbortSignal,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const timeout = AbortSignal.timeout(timeoutMs)
   const res = await fetch(toUrl(path, config.baseUrl), {
     ...init,
     signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
@@ -134,8 +136,8 @@ export function toTrackState(stem: SavedStem): TrackState {
 }
 
 /** Audio needs the bearer header, so it cannot be a plain URL on the Stem. */
-export async function fetchStemBlobUrl(config: BackendConfig, audioUrl: string): Promise<string> {
-  const res = await request(config, audioUrl)
+export async function fetchStemBlobUrl(config: BackendConfig, audioUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<string> {
+  const res = await request(config, audioUrl, {}, undefined, timeoutMs)
   return URL.createObjectURL(await res.blob())
 }
 
@@ -210,4 +212,88 @@ export async function sendStemPatch(
 
 export async function patchStem(config: BackendConfig, projectId: string, track: TrackState): Promise<void> {
   await sendStemPatch({ config, projectId }, track.stemId, toSyncPatch(track))
+}
+
+export interface ProjectInfo {
+  project_id: string
+  access_token?: string
+  status: string
+  filename?: string | null
+  metadata?: { has_video: boolean; duration: number } | null
+  latest_job?: { id: string; status: string } | null
+  latest_visual_job?: { id: string; status: string } | null
+  last_completed_job_id?: string | null
+  visual_metadata?: unknown
+}
+export interface ExportInfo { status: string; error?: string | null; download_url?: string | null }
+
+export async function createProject(baseUrl: string): Promise<ProjectInfo> {
+  const res = await request({baseUrl, token: ''}, '/api/projects', {method: 'POST'})
+  return res.json() as Promise<ProjectInfo>
+}
+export async function getProject(config: BackendConfig, projectId: string): Promise<ProjectInfo> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}`)
+  return res.json() as Promise<ProjectInfo>
+}
+export async function uploadProject(config: BackendConfig, projectId: string, file: File): Promise<ProjectInfo> {
+  const body = new FormData(); body.append('file', file)
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/upload`, {method:'POST', body}, undefined, 3_600_000)
+  return res.json() as Promise<ProjectInfo>
+}
+export async function storeVisualMetadata(config: BackendConfig, projectId: string, metadata: unknown): Promise<void> {
+  await request(config, `/api/projects/${encodeURIComponent(projectId)}/visual-metadata`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(metadata)})
+}
+export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(visualPrompt ? {visual_prompt: visualPrompt} : {})})})
+  return ((await res.json()) as {job_id:string}).job_id
+}
+export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4'})})
+  return ((await res.json()) as {export_id:string}).export_id
+}
+export async function getExport(config: BackendConfig, exportId: string, signal?: AbortSignal): Promise<ExportInfo> {
+  const res = await request(config, `/api/exports/${encodeURIComponent(exportId)}`, {}, signal)
+  return res.json() as Promise<ExportInfo>
+}
+export async function downloadExport(config: BackendConfig, url: string, filename: string): Promise<void> {
+  const res = await request(config, url); const blobUrl = URL.createObjectURL(await res.blob())
+  try { const a = document.createElement('a'); a.href = blobUrl; a.download = filename; a.click() }
+  finally { setTimeout(() => URL.revokeObjectURL(blobUrl), 1000) }
+}
+export async function localCommand(config: BackendConfig, projectId: string, text: string): Promise<{status:string; message:string; export_id?:string}> {
+  const res = await request(config, '/api/webhooks/local', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_id:projectId,token:config.token,text})})
+  return res.json() as Promise<{status:string;message:string;export_id?:string}>
+}
+
+export interface VisualObject { detection_id: string; track_id: number | null; label: string; bbox_normalized: number[]; mask?: unknown; [key:string]: unknown }
+export interface VisualFrame { frame_index:number; timestamp_seconds:number; valid_until_seconds:number; objects:VisualObject[] }
+export interface VisualMetadata { schema_version:string; video_id:string; analysis_id:string; source_sha256:string; source:string; width:number; height:number; fps:number; processed_frames:number; processed_duration_seconds:number; frames:VisualFrame[] }
+export async function startVisualAnalysis(config: BackendConfig, projectId: string): Promise<string> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-analyze`,{method:'POST'})
+  return ((await res.json()) as {job_id:string}).job_id
+}
+export async function getVisualJob(config: BackendConfig, jobId: string): Promise<BackendJob> {
+  const res=await request(config,`/api/visual-jobs/${encodeURIComponent(jobId)}`)
+  return res.json() as Promise<BackendJob>
+}
+export async function getVisualMetadata(config: BackendConfig, projectId: string): Promise<VisualMetadata> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-metadata`)
+  return res.json() as Promise<VisualMetadata>
+}
+
+export async function getMessages(config: BackendConfig, projectId: string): Promise<Array<{id:string;text:string}>> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/messages`)
+  return res.json() as Promise<Array<{id:string;text:string}>>
+}
+
+export async function updateStemSettings(config: BackendConfig, projectId: string, stem: SavedStem, settings: {name:string;start_offset:number;mute_ranges?:MuteRange[]}): Promise<void> {
+  await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stem.id)}`, {
+    method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings,expected_revision:stem.revision}),
+  })
+}
+
+export interface AgentPlan { kind:'edit'|'separate'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string }
+export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean}):Promise<AgentPlan> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
+  return response.json() as Promise<AgentPlan>
 }

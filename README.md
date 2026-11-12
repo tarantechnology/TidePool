@@ -1,27 +1,60 @@
-# SoundCanvas backend
+# SoundCanvas
 
-An independent FastAPI backend for uploading media, running an asynchronous separation adapter, editing stems and rendering media with FFmpeg. The default adapter creates **copies**, not separated sounds. Optional vision and audio inference packages live in `vision/` and `audio-service/`; model weights and a frontend editor are not included.
+SoundCanvas is a browser-based audio-layer editor for video. Create a project, upload media, separate sounds into stems, adjust and automate the layers, and export the result. The repository includes the editor, FastAPI backend, audio service and vision pipeline. See [INTEGRATION.md](INTEGRATION.md) for their contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for collaboration.
 
-## Team collaboration
+## Run locally on a Mac
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for branch and review conventions, and [INTEGRATION.md](INTEGRATION.md) for the contracts between audio AI, vision, frontend and backend. The backend MVP is present; the other three workstreams are ready to integrate.
+Install Docker Desktop, start it, and run:
 
-## Start
+```sh
+docker compose up --build
+```
 
-Install Docker and run `docker compose up --build`. Open http://localhost:8000/docs for the interactive API. Data persists in `./storage`. Alternatively install Python 3.11+, FFmpeg and ffprobe, then run `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt && uvicorn app.main:app`. Copy `.env.example` to `.env` and export its values when running without Compose; Compose reads `.env` itself.
+Open **http://localhost:5173**. The API documentation is at http://localhost:8000/docs. Data persists in `./storage`. The first build installs CPU vision dependencies; the first visual analysis downloads detector weights. A network connection and sufficient disk space are needed.
 
-Create a project at `POST /api/projects`. Save its `access_token` immediately: it is shown only once. Use `Authorization: Bearer <token>` for all project, job, stem and export endpoints, including playback and download. Upload with multipart field `file`, start `/process` with e.g. `{"prompts":["dog", "music"]}`, poll `/api/jobs/{job_id}`, patch a stem, then start `/export` and poll `/api/exports/{export_id}`. The local remote-control webhook accepts `{"project_id":"...","token":"...","text":"Mute the dog"}` at `POST /api/webhooks/local`. Read local notifications at `/api/projects/{project_id}/messages` with the project token. See [INTEGRATION.md](INTEGRATION.md) for complete contracts.
+1. Choose an MP4, MOV, WAV or MP3 and click **Create & upload**. Copy the project ID and access token shown in the project panel; they are needed to restore the project later.
+2. Enter comma-separated sound descriptions and start processing. The default local inference adapter **copies the entire audio into each test stem**; it does not separate sounds. This mode is useful for exercising the editor without a GPU.
+3. Play and edit the layers, then choose MP4, WAV or MP3 and export. For video object selection, run visual analysis, pause the video, and click a detected object. A sound prompt is still required.
+4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
 
-Run tests with `pip install pytest && pytest -q`. Tests require FFmpeg and ffprobe on PATH.
+## Use a rented cloud GPU from a Mac
 
-## Operation and limitations
+The Mac runs the browser. The Linux GPU machine runs the editor, backend, CPU vision pipeline and NVIDIA SAM Audio service together, sharing project files. The GPU service is internal to Compose and isn't exposed publicly. This avoids mounting your Mac filesystem or sending local paths to another host.
 
-Use one API process and one replica: its embedded worker claims persistent SQLite jobs and recovers interrupted work on startup. Jobs are at-least-once across a crash, and only one active job of each kind per project is allowed. Retry a failed job by submitting a new request. Uploaded files and completed exports remain on local disk; manage retention and backups externally. The fake adapter copies the whole input once per prompt, so mixing multiple fake stems increases loudness. Time-based mute ranges and automation apply in project timeline seconds. Automation values multiply the stem volume; linear interpolation is evaluated per audio frame. Video export copies the video stream where the MP4 container supports it, and encodes audio as AAC; unsupported codecs fail with a job error.
+1. Rent a Linux x86-64 NVIDIA GPU VM with enough GPU memory and disk for the model, Docker images, uploaded media and outputs. Install Docker Compose and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), and confirm a GPU container can see the device. Open SSH to your trusted IP; keep application ports private.
+2. Obtain access to the gated [`facebook/sam-audio-small`](https://huggingface.co/facebook/sam-audio-small) model and a Hugging Face token with that access. Clone this repository on the VM and start it there:
 
-This is a local-development MVP: terminate TLS at a trusted proxy, protect tokens and webhook request bodies, restrict access to local storage, and add rate limits and a real identity/credential distribution system before internet exposure. Upload extraction is synchronous; separation and export are asynchronous. Responses contain FastAPI's standard `{"detail": ...}` error shape. Local webhook authentication uses the project token; it is not a Photon signature. Photon is intentionally disabled pending a specific provider and verified authentication/delivery contract. The local outbox stores notifications; it does not deliver SMS or iMessage.
+   ```sh
+   cd SoundCanvas
+   read -rs HF_TOKEN; export HF_TOKEN   # paste token, then press Enter
+   docker compose -f compose.cloud.yaml up --build -d
+   docker compose -f compose.cloud.yaml logs -f
+   ```
 
-## Vision workstream (Part 2)
+   Initial image builds and model downloads can take a while. The API waits for the audio service's readiness check. Model files persist in a Docker volume; projects persist in the VM's `./storage`. The defaults use the small model, CUDA and 10-second audio chunks; inspect `compose.cloud.yaml` for overrides.
+3. On your Mac, create an SSH tunnel, replacing the placeholders with your VM details:
 
-The independent [vision pipeline](vision/README.md) provides YOLO detection/tracking, a clickable video viewer, optional instance masks and versioned metadata. See its [validated results](vision/docs/VALIDATION.md) and [integration contract](vision/docs/CONTRACT.md). The existing visual-metadata/process endpoints now pair selections with stored masks and a project-owned original-video reference for the audio service. The backend does not load CV models. [Issue #4 validation](vision/docs/ISSUE4.md) documents the working handoff/edit/export tests and the remaining real visual-guided SAM Audio model blocker.
+   ```sh
+   ssh -L 5173:127.0.0.1:5173 USER@GPU_VM
+   ```
 
-Root `pytest` runs backend tests. Install vision extras and run its separate suite as documented in `vision/README.md`; `Vision tests` CI covers the optional package without adding YOLO to the backend Docker image.
+   Keep SSH open and visit **http://localhost:5173** on your Mac. The editor uses its same-origin `/api` proxy. Use a separate tunnel to `8000` if you need API docs.
+4. When finished, run `docker compose -f compose.cloud.yaml down` on the VM. GPU rental charges may continue until you stop or terminate the VM. Back up `./storage` and any needed Docker volumes before deleting the VM.
+
+The cloud Compose configuration has been checked syntactically, but a real GPU deployment and gated model download have not been validated in this environment. Check service logs if model access, GPU drivers, memory or container startup fails. Real visual-guided audio isolation remains unverified; see [vision/docs/ISSUE4.md](vision/docs/ISSUE4.md). The backend returns inference model identity and warnings so the editor can distinguish mock results.
+
+## APIs and tests
+
+FastAPI serves `/docs` and `/openapi.json`. Project media and edits require `Authorization: Bearer <project token>`; the token is shown once at creation. The UI keeps credentials in memory, so save them securely before closing the page. Jobs and exports run asynchronously; uploads and first preview conversion can take time.
+
+With Python 3.11+, FFmpeg and ffprobe installed, run backend tests using `pip install -r requirements.txt pytest` and `pytest -q`. Run editor checks with `cd frontend && npm ci && npm run verify`. Vision's optional tests are documented in [vision/README.md](vision/README.md). An optional Playwright browser smoke test is in `tests/test_editor_browser.py`; point `SOUNDCANVAS_BROWSER_URL` at a running editor configured with fake inference and install Playwright plus Chromium to run it.
+
+The embedded SQLite worker is intended for one backend process and one replica. Jobs can be retried by submitting a new request after failure; interrupted work is recovered on startup. Video export copies the video stream where the MP4 container supports it and encodes audio as AAC. Incompatible video codecs may cause export failure. Automation and remote mute ranges use timeline seconds.
+
+This is a development MVP. Keep project tokens and uploaded media private; use a trusted SSH tunnel or a properly secured HTTPS deployment with authentication, access controls and rate limits. Photon integration is a placeholder pending an identified provider and verified API; local notifications do not send messages to a phone.
+
+## Natural-language commands
+
+Set `OPENAI_API_KEY` or `OPENAI_API_KEY_FILE` on the backend to enable GPT-6 Luna in the editor command bar. `OPENAI_AGENT_MODEL` defaults to `gpt-6-luna`. Project authentication is required. The request sends the command, timeline state and stem names to OpenAI; it does not send uploaded media or project tokens. The backend asks for a structured plan and the editor validates each edit before applying it.
+
+Commands can request separation of a sound in a new project or edit existing stems. Creating new stems currently replaces existing ones, so the planner asks for a new project instead of discarding edits. It cannot perform effects or infer audio content or timestamps that the editor does not provide. OpenAI usage incurs charges and requires model access.

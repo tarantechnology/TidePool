@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
-import { createAgent } from './agent'
-import type { SyncTarget } from './api/backend'
+import { validateActions } from './agent/validate'
+import type { SyncTarget, VisualMetadata } from './api/backend'
+import type { VisualSelection } from './visual'
 import { loadFromSource } from './api/loadStems'
 import { FileStemSource, isAudioFile, isVideoFile, MockStemSource } from './api/stemSources'
 import type { StemSource } from './api/stemSources'
@@ -9,7 +10,8 @@ import { AudioEngine } from './audio/engine'
 import { resolveActions } from './audio/resolve'
 import { isDurationMismatch } from './audio/videoSync'
 import { EditLog } from './components/EditLog'
-import { JobStatusCard } from './components/JobStatusCard'
+import { ProjectPanel } from './components/ProjectPanel'
+import type { ProjectPanelHandle } from './components/ProjectPanel'
 import { Logo } from './components/Logo'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
@@ -27,8 +29,7 @@ import type { EditAction, Stem, StemKind, TrackState } from './types'
 
 type Status = 'loading' | 'ready' | 'error'
 
-const agent = createAgent(import.meta.env.VITE_AGENT_URL)
-const API_BASE_URL: string | undefined = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api'
 
 const MOCK_LABEL = 'Mock stems'
 const VIDEO_AUDIO_LABEL = 'Original audio'
@@ -56,9 +57,13 @@ export default function Editor() {
   const [syncIssue, setSyncIssue] = useState('')
   const [dragging, setDragging] = useState(false)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
+  const [visual, setVisual] = useState<VisualMetadata | null>(null)
+  const [visualSelection, setVisualSelection] = useState<VisualSelection | null>(null)
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
+  const projectPanel = useRef<ProjectPanelHandle>(null)
+  const originalVideo = useRef<File | null>(null)
   const loadRequest = useRef(0)
   const { tracks, kinds } = history.present
   const stems = useMemo(() => mergeKinds(baseStems, kinds), [baseStems, kinds])
@@ -132,6 +137,7 @@ export default function Editor() {
       } catch (err) {
         // The engine keeps the previous stems when a load fails.
         if (isLatest()) setLoadError(err instanceof Error ? err.message : String(err))
+        throw err
       } finally {
         source.dispose?.()
         if (isLatest()) setStatus('ready')
@@ -147,7 +153,7 @@ export default function Editor() {
         setLoadError('No audio files found.')
         return
       }
-      void loadStems(new FileStemSource(audio), `${audio.length} audio file${audio.length > 1 ? 's' : ''}`)
+      void loadStems(new FileStemSource(audio), `${audio.length} audio file${audio.length > 1 ? 's' : ''}`).catch(() => {})
     },
     [loadStems],
   )
@@ -162,10 +168,12 @@ export default function Editor() {
 
   const loadVideo = useCallback(
     (file: File, withAudio: boolean) => {
+      originalVideo.current = file
+      setVisual(null); setVisualSelection(null)
       setVideoSrc(URL.createObjectURL(file))
       setVideoDuration(null)
       setLoadError('')
-      if (withAudio) void loadStems(new FileStemSource([file], VIDEO_AUDIO_LABEL), VIDEO_AUDIO_LABEL)
+      if (withAudio) void loadStems(new FileStemSource([file], VIDEO_AUDIO_LABEL), VIDEO_AUDIO_LABEL).catch(() => {})
     },
     [loadStems],
   )
@@ -200,8 +208,14 @@ export default function Editor() {
   const runPrompt = useCallback(
     async (text: string) => {
       if (!engine) return { message: 'Engine not ready.', ok: false }
+      if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
-      const res = await agent.run(req)
+      const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
+      if (plan.kind === 'separate') return {message:plan.remove ? `Separated and muted ${plan.description}. Export when ready.` : `Separated ${plan.description}.`,ok:true}
+      if (plan.kind === 'clarify') return {message:plan.message,ok:false}
+      const checked = validateActions(plan.actions, stems, engine.duration)
+      if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
+      const res = {actions:checked.actions,message:plan.message}
       // The result was built from the request's snapshot and can replace a whole
       // curve, so applying it over newer edits would silently lose them.
       if (stemsRef.current !== stems || tracksRef.current !== req.tracks) {
@@ -327,10 +341,12 @@ export default function Editor() {
               onPick={onPickVideo}
               onDuration={setVideoDuration}
               onError={setLoadError}
+              visual={visual}
+              onSelection={setVisualSelection}
             />
-            <div className="flex w-80 shrink-0 flex-col gap-3">
-              {API_BASE_URL && <JobStatusCard baseUrl={API_BASE_URL} onLoadStems={loadStems} />}
-              <EditLog log={log} />
+            <div className="flex min-h-0 w-80 shrink-0 flex-col gap-2">
+              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setVideoSrc(url) }} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
+              <details className="shrink-0 text-xs text-zinc-400"><summary className="cursor-pointer">Edit history</summary><EditLog log={log} /></details>
             </div>
           </div>
           <div className="mx-3 mb-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-ink-900/60 backdrop-blur">
@@ -353,7 +369,7 @@ export default function Editor() {
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready'} agentLabel={agent.label} onRun={runPrompt} />
+      <PromptBar disabled={status !== 'ready'} agentLabel="GPT-6 Luna" onRun={runPrompt} />
     </div>
   )
 }

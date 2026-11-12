@@ -1,5 +1,6 @@
 import hmac
 import json
+import math
 import os
 import secrets
 import sqlite3
@@ -12,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
 from .core import MAX_UPLOAD, connect, digest, init, probe, project_dir, run, stem, uid
 from .commands import parse
+from .agent import AgentRequest, AgentError, plan as agent_plan
 from .worker import enqueue, loop, stop
 from .visual import file_sha256, prepare_payload, reject_media_refs
 
@@ -21,6 +23,7 @@ async def lifespan(app):
     yield
     stop.set(); thread.join(timeout=2)
 app=FastAPI(title='SoundCanvas API',lifespan=lifespan)
+_preview_lock = threading.Lock()
 
 def auth(pid, authorization):
     with connect() as db: p=db.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone()
@@ -37,7 +40,8 @@ def get_job(jid, kind, authorization):
     if kind=='process':
         d['stems'] = output.get('stems', []) if isinstance(output, dict) else output or []
         d['inference'] = output.get('inference') if isinstance(output, dict) else None
-    else: d['download_url']=f'/api/exports/{jid}/download' if output else None
+    elif kind=='export': d['download_url']=f'/api/exports/{jid}/download' if output else None
+    else: d['result']=output
     return d
 
 class Keyframe(BaseModel):
@@ -51,9 +55,11 @@ class StemUpdate(BaseModel):
     solo: bool | None=None
     start_offset: float | None=Field(default=None,ge=0,le=86400,allow_inf_nan=False)
     automation: list[Keyframe] | None=Field(default=None,max_length=64)
+    mute_ranges: list[tuple[float, float]] | None=Field(default=None,max_length=100)
     @model_validator(mode='after')
     def ordered(self):
         if self.automation and any(a.time>=b.time for a,b in zip(self.automation,self.automation[1:])): raise ValueError('Keyframe times must strictly increase')
+        if self.mute_ranges and any(not math.isfinite(a) or not math.isfinite(b) or a<0 or b<=a for a,b in self.mute_ranges): raise ValueError('Mute ranges must have finite, ordered nonnegative times')
         return self
 class Process(BaseModel):
     prompts: list[str]=Field(default_factory=list,max_length=20)
@@ -106,7 +112,51 @@ async def upload(pid: str, file: UploadFile=File(...), authorization: str | None
 @app.get('/api/projects/{pid}')
 def project(pid: str, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
-    return {'project_id':pid,'status':p['status'],'filename':p['filename'],'metadata':json.loads(p['metadata']) if p['metadata'] else None,'visual_metadata':json.loads(p['visual']) if p['visual'] else None,'stems':list_stems(pid,authorization)}
+    with connect() as db:
+        latest=db.execute("SELECT id,status FROM jobs WHERE project_id=? AND kind='process' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
+        completed=db.execute("SELECT id FROM jobs WHERE project_id=? AND kind='process' AND status='completed' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
+        visual_job=db.execute("SELECT id,status FROM jobs WHERE project_id=? AND kind='vision' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
+    return {'project_id':pid,'status':p['status'],'filename':p['filename'],'metadata':json.loads(p['metadata']) if p['metadata'] else None,'visual_metadata':json.loads(p['visual']) if p['visual'] else None,'stems':list_stems(pid,authorization),'latest_job':dict(latest) if latest else None,'last_completed_job_id':completed['id'] if completed else None,'latest_visual_job':dict(visual_job) if visual_job else None}
+
+@app.get('/api/projects/{pid}/original')
+def original(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['original']: raise HTTPException(404,'Project has no uploaded media')
+    return FileResponse(p['original'],filename=p['filename'],content_disposition_type='inline')
+
+@app.get('/api/projects/{pid}/preview')
+def preview(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(404,'Project has no video')
+    path=project_dir(pid)/'extracted'/'preview.mp4'
+    # A single process owns the worker and media cache; avoid duplicate transcodes.
+    with _preview_lock:
+        if not path.exists():
+            temp=path.with_name(uid()+'.mp4')
+            try:
+                run('ffmpeg','-v','error','-y','-i',p['original'],'-map','0:v:0','-an',
+                    '-c:v','libx264','-preset','veryfast','-pix_fmt','yuv420p','-movflags','+faststart',str(temp))
+                temp.replace(path)
+            except RuntimeError as exc:
+                temp.unlink(missing_ok=True)
+                raise HTTPException(422,str(exc)) from exc
+    return FileResponse(path,media_type='video/mp4',content_disposition_type='inline')
+
+@app.get('/api/projects/{pid}/visual-metadata')
+def get_visual(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['visual']: raise HTTPException(404,'No visual analysis available')
+    return json.loads(p['visual'])
+
+@app.post('/api/projects/{pid}/visual-analyze',status_code=202)
+def analyze_visual(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(409,'Upload a video first')
+    return {'job_id':start(pid,'vision',{}),'status':'queued'}
+
+@app.get('/api/visual-jobs/{jid}')
+def visual_job(jid: str, authorization: str | None=Header(None)):
+    return get_job(jid,'vision',authorization)
 
 @app.put('/api/projects/{pid}/visual-metadata')
 def visual(pid: str, body: dict, authorization: str | None=Header(None)):
@@ -119,6 +169,13 @@ def visual(pid: str, body: dict, authorization: str | None=Header(None)):
 def start(pid,kind,payload):
     try: return enqueue(pid,kind,payload)
     except sqlite3.IntegrityError: raise HTTPException(409,'A job of this type is already active')
+
+@app.post('/api/projects/{pid}/agent')
+def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header(None)):
+    auth(pid,authorization)
+    with connect() as db: body.has_project_stems=bool(db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone())
+    try: return agent_plan(body)
+    except AgentError as exc: raise HTTPException(502,str(exc)) from exc
 
 @app.post('/api/projects/{pid}/process',status_code=202)
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):
@@ -150,12 +207,16 @@ def update_stem(pid: str,sid: str,body: StemUpdate,authorization: str | None=Hea
     values=body.model_dump(exclude_unset=True,exclude_none=True)
     expected=values.pop('expected_revision',None)
     if 'automation' in values: values['automation']=json.dumps(values['automation'])
+    ranges=values.get('mute_ranges')
+    if ranges is not None: values['mute_ranges']=json.dumps(ranges)
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
         if not row: raise HTTPException(404,'Stem not found')
         if expected is not None and row['revision'] != expected:
             raise HTTPException(409,'Stem changed since it was loaded; reload to resolve the conflict')
+        if ranges and any(end > row['duration'] + values.get('start_offset',row['start_offset']) for _,end in ranges):
+            raise HTTPException(422,'Mute range extends beyond the stem')
         if values:
             db.execute('UPDATE stems SET '+','.join(k+'=?' for k in values)+',revision=revision+1 WHERE project_id=? AND id=?',(*values.values(),pid,sid))
         row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()

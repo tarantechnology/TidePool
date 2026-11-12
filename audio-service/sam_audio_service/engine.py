@@ -7,6 +7,8 @@ inputs, residual computation, sample-accurate length preservation and timing met
 from __future__ import annotations
 
 import logging
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 import uuid
@@ -133,6 +135,8 @@ class Engine:
         if audio.frames == 0:
             raise InvalidRequest("audio is empty")
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
+        if self.settings.chunk_workers > 1 and backend_options.seed is not None:
+            warnings.append("seeded inference uses sequential windows to preserve reproducibility")
         if self.backend.is_mock:
             warnings.append("MOCK backend: stems are band-pass filtered copies of the mixture, not real separation")
 
@@ -162,6 +166,8 @@ class Engine:
                     else:
                         result, was_chunked = self._separate_signal(signal, prompt, backend_options, chunk_seconds, audio.duration)
                     chunked = chunked or was_chunked
+                    if result.extra.get("parallel_oom_retry"):
+                        warnings.append("GPU memory was insufficient for parallel chunks; processing retried sequentially")
                     outs.append(result)
                 target = np.stack([sanitise(o.target) for o in outs]) if stereo_mode == "per_channel" else np.repeat(sanitise(outs[0].target)[None, :], mixture.shape[0], axis=0)
                 target = target[:, : audio.frames].astype(np.float32)
@@ -266,23 +272,28 @@ class Engine:
         weight = np.zeros(n, dtype=np.float64)
         spans: list[tuple[float, float]] = []
         has_residual = True
-        start = 0
-        while start < n:
-            end = min(start + size, n)
-            if end - start < overlap and start > 0:  # tiny tail: fold into previous window
-                break
-            piece = signal[start:end]
-            local_anchors = None
-            if prompt.anchors:
-                local_anchors = []
-                for token, a_start, a_end in prompt.anchors:
-                    s = max(a_start - start / sr, 0.0)
-                    e = min(a_end - start / sr, (end - start) / sr)
-                    if e > s:
-                        local_anchors.append((token, s, e))
-                local_anchors = local_anchors or None
-            local_prompt = BackendPrompt(prompt.text, local_anchors, prompt.visual)
-            out = self._call_backend(piece, local_prompt, options)
+        def windows():
+            start = 0
+            while start < n:
+                end = min(start + size, n)
+                if end - start < overlap and start > 0:
+                    break
+                local_anchors = None
+                if prompt.anchors:
+                    local_anchors = []
+                    for token, a_start, a_end in prompt.anchors:
+                        s = max(a_start - start / sr, 0.0)
+                        e = min(a_end - start / sr, (end - start) / sr)
+                        if e > s:
+                            local_anchors.append((token, s, e))
+                    local_anchors = local_anchors or None
+                yield start, end, BackendPrompt(prompt.text, local_anchors, prompt.visual)
+                if end >= n:
+                    break
+                start += step
+
+        def merge(start, end, out):
+            nonlocal has_residual
             ramp = np.ones(end - start)
             if start > 0:
                 ramp[:overlap] = np.linspace(0.0, 1.0, overlap, endpoint=False)
@@ -295,15 +306,42 @@ class Engine:
                 residual[start:end] += out.residual * ramp
             weight[start:end] += ramp
             if out.spans:
-                spans += [(s + start / sr, e + start / sr) for s, e in out.spans]
-            if end >= n:
-                break
-            start += step
+                spans.extend((s + start / sr, e + start / sr) for s, e in out.spans)
+
+        def run_windows(workers):
+            if workers == 1:
+                for start, end, local_prompt in windows():
+                    merge(start, end, self._call_backend(signal[start:end], local_prompt, options))
+                return
+            # Submit at most `workers` windows at a time, then merge in timeline order.
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sam-chunk") as pool:
+                pending = deque()
+                for start, end, local_prompt in windows():
+                    pending.append((start, end, pool.submit(self._call_backend, signal[start:end], local_prompt, options)))
+                    if len(pending) >= workers:
+                        a, b, future = pending.popleft()
+                        merge(a, b, future.result())
+                while pending:
+                    a, b, future = pending.popleft()
+                    merge(a, b, future.result())
+
+        workers = self.settings.chunk_workers if options.seed is None else 1
+        retried_sequentially = False
+        try:
+            run_windows(workers)
+        except InsufficientGpuMemory:
+            if workers == 1:
+                raise
+            retried_sequentially = True
+            log.warning("parallel chunks exceeded GPU memory; retrying this request sequentially")
+            target.fill(0); residual.fill(0); weight.fill(0); spans.clear(); has_residual = True
+            run_windows(1)
         weight = np.maximum(weight, 1e-6)
         merged = BackendResult(
             target=(target / weight).astype(np.float32),
             residual=(residual / weight).astype(np.float32) if has_residual else None,
             spans=_merge_spans(spans) if spans else None,
+            extra={"parallel_oom_retry": retried_sequentially},
         )
         return merged, True
 

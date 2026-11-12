@@ -91,10 +91,16 @@ def test_revision_conflict_and_automation_limit(client, tmp_path):
     assert current['muted'] and current['revision']==1 and current['volume']==1
     fresh=client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'expected_revision':1,'volume':.5})
     assert fresh.json()['revision']==2 and fresh.json()['muted']
+    remote_range=client.post('/api/webhooks/local',json={'project_id':pid,'token':p['access_token'],'text':'Mute the dog from 0.1 to 0.5 seconds'})
+    assert remote_range.json()['status']=='applied'
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'mute_ranges':[[0.8,0.2]]}).status_code==422
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'mute_ranges':[[0.1,2]]}).status_code==422
+    saved=client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'expected_revision':3,'name':'bark','start_offset':0.2,'mute_ranges':[]})
+    assert saved.status_code==200 and saved.json()['name']=='bark' and saved.json()['mute_ranges']==[]
     points=[{'time':i*.01,'value':1} for i in range(65)]
     assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points}).status_code==422
     points=[{'time':i*.01,'value':float(i % 2)} for i in range(64)]
-    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points,'expected_revision':2}).status_code==200
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=h,json={'automation':points,'expected_revision':4}).status_code==200
     eid=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}).json()['export_id']
     assert wait(client,'/api/exports/'+eid,h)['status']=='completed'
 
@@ -137,3 +143,64 @@ def test_existing_database_gains_revision_column(tmp_path, monkeypatch):
     with core.connect() as db:
         assert db.execute("SELECT revision FROM stems WHERE id='old'").fetchone()['revision']==0
     core.init()  # migration is safe to repeat
+
+
+def test_project_resume_and_original_media(client, tmp_path):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    video=tmp_path/'source.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=s=64x64:r=10:d=1','-f','lavfi','-i','sine=duration=1','-c:v','mpeg4','-c:a','aac','-shortest',str(video)],check=True)
+    with video.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('source.mp4',f)}).status_code==200
+    assert client.get(f'/api/projects/{pid}/original').status_code==401
+    response=client.get(f'/api/projects/{pid}/original',headers=h)
+    assert response.status_code==200 and response.content==video.read_bytes()
+    assert client.get(f'/api/projects/{pid}/preview').status_code==401
+    preview=client.get(f'/api/projects/{pid}/preview',headers=h); assert preview.status_code==200
+    path=tmp_path/'preview.mp4'; path.write_bytes(preview.content)
+    codec=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','csv=p=0',str(path)],text=True).strip()
+    assert codec=='h264'
+    job=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog']}).json()['job_id']
+    assert wait(client,'/api/jobs/'+job,h)['status']=='completed'
+    project=client.get(f'/api/projects/{pid}',headers=h).json()
+    assert project['latest_job']=={'id':job,'status':'completed'} and project['last_completed_job_id']==job
+
+
+def test_visual_analysis_job_orchestration(client, tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    import app.worker as worker
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    video=tmp_path/'source.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=s=64x64:r=10:d=1','-f','lavfi','-i','sine=duration=1','-c:v','mpeg4','-c:a','aac','-shortest',str(video)],check=True)
+    with video.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('source.mp4',f)}).status_code==200
+    def fake_run(*args):
+        assert 'soundcanvas_cv' in args and '--video-id' in args
+        output=Path(args[args.index('--output-dir')+1]); output.mkdir(parents=True)
+        (output/'detections.json').write_text(json.dumps({'analyzed_frames':10,'processed_duration_seconds':1,'frames':[]}))
+    monkeypatch.setattr(worker,'run',fake_run)
+    response=client.post(f'/api/projects/{pid}/visual-analyze',headers=h); assert response.status_code==202
+    job=wait(client,'/api/visual-jobs/'+response.json()['job_id'],h)
+    assert job['status']=='completed' and job['result']['analyzed_frames']==10
+    assert client.get(f'/api/projects/{pid}/visual-metadata',headers=h).json()['analyzed_frames']==10
+
+
+def test_agent_requires_project_access_and_sanitizes_model_output(client, monkeypatch):
+    import json
+    import app.agent as agent
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    monkeypatch.setenv('OPENAI_API_KEY','not-a-real-key')
+    response={'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':json.dumps({'kind':'separate','description':'a person narrating','remove':True,'actions':[],'message':'I will separate the narration.'})}]}]}
+    class MockResponse:
+        is_error=False
+        def json(self): return response
+    captured={}
+    def fake_post(url, **kwargs):
+        captured.update(kwargs['json'])
+        return MockResponse()
+    monkeypatch.setattr(agent.httpx,'post',fake_post)
+    body={'prompt':'remove the narrator','stems':[],'tracks':[],'duration':10,'has_project_stems':False}
+    assert client.post(f'/api/projects/{pid}/agent',json=body).status_code==401
+    r=client.post(f'/api/projects/{pid}/agent',headers=h,json=body)
+    assert r.status_code==200 and r.json()['description']=='a person narrating'
+    assert captured['model']=='gpt-6-luna' and captured['store'] is False
+    response['output'][0]['content'][0]['text']='not json'
+    assert client.post(f'/api/projects/{pid}/agent',headers=h,json=body).status_code==502

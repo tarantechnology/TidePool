@@ -1,0 +1,63 @@
+# Run on a Linux NVIDIA GPU VM; forward editor port 5173 over SSH from your Mac.
+# GPU and checkpoint access are required. No service is publicly exposed here.
+services:
+  soundcanvas:
+    build:
+      context: .
+      target: visual
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    environment:
+      STORAGE_ROOT: /data
+      INFERENCE_ADAPTER: http
+      SAM_AUDIO_SERVICE_URL: http://audio-service:8001/separate
+      INFERENCE_TIMEOUT_SECONDS: ${INFERENCE_TIMEOUT_SECONDS:-3600}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-gpt-6-luna}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-524288000}
+      FFMPEG_TIMEOUT: ${FFMPEG_TIMEOUT:-3600}
+      VISION_MAX_SECONDS: ${VISION_MAX_SECONDS:-30}
+      VISION_DEVICE: ${VISION_DEVICE:-cpu}
+    volumes:
+      - ./storage:/data
+    depends_on:
+      audio-service:
+        condition: service_healthy
+  audio-service:
+    build:
+      context: ./audio-service
+      target: sam
+    environment:
+      AUDIO_BACKEND: sam
+      AUDIO_DEVICE: cuda
+      AUDIO_MODEL_ID: ${AUDIO_MODEL_ID:-facebook/sam-audio-small}
+      AUDIO_LOAD_SPAN_PREDICTOR: ${AUDIO_LOAD_SPAN_PREDICTOR:-false}
+      AUDIO_LOAD_RANKERS: ${AUDIO_LOAD_RANKERS:-false}
+      AUDIO_CHUNK_SECONDS: ${AUDIO_CHUNK_SECONDS:-10}
+      AUDIO_CHUNK_WORKERS: ${AUDIO_CHUNK_WORKERS:-2}
+      AUDIO_MEDIA_ROOT: /data
+      HF_TOKEN: ${HF_TOKEN:?Set HF_TOKEN to a token with approved model access}
+    volumes:
+      - ./storage:/data:ro
+      - sam-audio-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=5)"]
+      start_period: 180s
+      interval: 15s
+      timeout: 8s
+      retries: 40
+  editor:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${EDITOR_PORT:-5173}:80"
+    depends_on:
+      - soundcanvas
+volumes:
+  sam-audio-models:

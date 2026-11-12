@@ -1,8 +1,10 @@
 import json
+import os
+import sys
 import threading
 import time
 from pathlib import Path
-from .core import connect, event, project_dir, probe, stem, uid
+from .core import connect, event, project_dir, probe, run, stem, uid
 from .media import separate, export
 from .messaging import provider
 from .visual import project_source
@@ -45,6 +47,16 @@ def work_once():
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
+        elif job['kind']=='vision':
+            directory=project_dir(pid)/'extracted'/('vision-'+job['id'])
+            model=os.getenv('VISION_MODEL','yolo26n-seg.pt')
+            run(sys.executable,'-m','soundcanvas_cv','--input',p['original'],'--output-dir',str(directory),
+                '--model',model,'--sample-fps','1000','--max-seconds',os.getenv('VISION_MAX_SECONDS','30'),
+                '--device',os.getenv('VISION_DEVICE','cpu'),'--video-id',pid)
+            metadata=json.loads((directory/'detections.json').read_text())
+            with connect() as db:
+                db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(metadata),pid))
+                db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'analyzed_frames':metadata['analyzed_frames'],'processed_duration_seconds':metadata['processed_duration_seconds']}),job['id']))
         else:
             with connect() as db: stems=[dict(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
             if not stems: raise ValueError('No stems available')

@@ -323,6 +323,14 @@ class SamAudioBackend(Backend):
     # ------------------------------------------------------------------------ inference
     def separate(self, mixture: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
         self.load()
+        torch = self._torch
+        # Each worker needs its own CUDA stream; sharing the default stream would
+        # serialize GPU work even when Python threads submit windows concurrently.
+        stream = torch.cuda.stream(torch.cuda.Stream(device=self._device)) if self._device.type == "cuda" else nullcontext()
+        with stream:
+            return self._separate_on_stream(mixture, prompt, options)
+
+    def _separate_on_stream(self, mixture: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
         torch, model, processor = self._torch, self._model, self._processor
         length = int(np.asarray(mixture).shape[-1])
         if length == 0:
@@ -368,7 +376,7 @@ class SamAudioBackend(Backend):
             torch.manual_seed(int(options.seed))
 
         try:
-            with self._autocast(torch):
+            with torch.inference_mode(), self._autocast(torch):
                 result = model.separate(
                     batch,
                     predict_spans=predict_spans,

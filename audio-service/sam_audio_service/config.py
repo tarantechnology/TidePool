@@ -53,6 +53,7 @@ class Settings:
     chunk_seconds: float = 0.0
     chunk_seconds_env: float | None = field(default_factory=lambda: _opt_float("AUDIO_CHUNK_SECONDS"), repr=False)
     chunk_overlap_seconds: float = field(default_factory=lambda: _float("AUDIO_CHUNK_OVERLAP_SECONDS", 2.0))
+    chunk_workers: int = field(default_factory=lambda: _int("AUDIO_CHUNK_WORKERS", 1))
     # "duplicate": run mono separation and duplicate to source channel count (1 pass).
     # "per_channel": separate each channel independently (N passes, keeps stereo image).
     stereo_mode: str = field(default_factory=lambda: os.getenv("AUDIO_STEREO_MODE", "duplicate"))
@@ -104,6 +105,8 @@ class Settings:
             raise ValueError("AUDIO_STEREO_MODE must be 'duplicate' or 'per_channel'")
         if self.max_visual_interval_seconds <= 0:
             raise ValueError("AUDIO_MAX_VISUAL_INTERVAL_SECONDS must be positive")
+        if not 1 <= self.chunk_workers <= 8:
+            raise ValueError("AUDIO_CHUNK_WORKERS must be between 1 and 8")
         if self.chunk_seconds < 0:
             raise ValueError("AUDIO_CHUNK_SECONDS must not be negative")
         if self.chunk_overlap_seconds <= 0:

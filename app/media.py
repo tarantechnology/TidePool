@@ -1,9 +1,10 @@
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import httpx
-from .core import run, probe, uid
+from .core import max_passes, run, probe, uid
 
 
 class InferenceError(RuntimeError):
@@ -18,8 +19,9 @@ def separate(audio, directory, payload, report=None):
     directory.mkdir(parents=True, exist_ok=True)
     mode = os.getenv('INFERENCE_ADAPTER', 'fake')
     if mode == 'fake':
+        passes=int((payload.get('options') or {}).get('passes') or 1)
         if report is not None:
-            report.update(model={'backend':'fake','is_mock':True}, warnings=['Fake adapter copies audio; no source separation performed'])
+            report.update(model={'backend':'fake','is_mock':True,'passes':passes}, warnings=['Fake adapter copies audio; no source separation performed'])
         # Deterministic fixtures, not source separation: each stem is a copy.
         results = []
         names=payload.get('prompts') or ['Audio']
@@ -29,7 +31,10 @@ def separate(audio, directory, payload, report=None):
             path = directory / (uid() + '.wav')
             extra=['-af','volume=0'] if name=='residual' and payload.get('profile') else []
             run('ffmpeg','-v','error','-y','-i',str(audio),*extra,'-c:a','pcm_f32le',str(path))
-            results.append({'name':name,'path':path,'role':'residual' if name.lower()=='residual' else 'target','prompt':name,'label':name})
+            role='residual' if name.lower()=='residual' else 'target'
+            # Mirrors the service's per-target refinement block; the fake measures nothing.
+            refinement={'passes_requested':passes,'passes_run':passes,'per_pass_energy_db':[0.0]*passes,'stopped_early':False} if role=='target' else None
+            results.append({'name':name,'path':path,'role':role,'prompt':name,'label':name,'refinement':refinement})
         return results
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
     url = os.getenv('SAM_AUDIO_SERVICE_URL')
@@ -74,8 +79,63 @@ def separate(audio, directory, payload, report=None):
                 raise ValueError('Visual stem must start at zero and match the full extracted audio duration, sample rate and channels')
         stems.append({'name': name, 'path': path, 'role': item.get('role'), 'source_stem_id': item.get('stem_id'),
                       'prompt': item.get('prompt'), 'label': item.get('label'), 'sample_rate': item.get('sample_rate'),
-                      'channels': item.get('channels'), 'format': item.get('format'), 'spans': item.get('spans')})
+                      'channels': item.get('channels'), 'format': item.get('format'), 'spans': item.get('spans'),
+                      'refinement': item.get('refinement') if isinstance(item.get('refinement'), dict) else None})
     return stems
+
+def read_wav(path):
+    """Decode a PCM/float WAV into (float64 samples [frames, channels], sample_rate)."""
+    import struct
+    import numpy as np
+    data = Path(path).read_bytes()
+    if data[:4] != b'RIFF' or data[8:12] != b'WAVE': raise ValueError(f'{Path(path).name} is not a WAV file')
+    pos, fmt, body = 12, None, None
+    while pos + 8 <= len(data):
+        cid, size = data[pos:pos+4], struct.unpack('<I', data[pos+4:pos+8])[0]
+        chunk = data[pos+8:pos+8+size]
+        if cid == b'fmt ': fmt = chunk
+        elif cid == b'data': body = chunk
+        pos += 8 + size + (size & 1)
+    if fmt is None or body is None: raise ValueError('WAV is missing fmt or data chunk')
+    tag, channels, rate = struct.unpack('<HHI', fmt[:8]); bits = struct.unpack('<H', fmt[14:16])[0]
+    if tag == 0xFFFE and len(fmt) >= 26: tag = struct.unpack('<H', fmt[24:26])[0]
+    width = bits // 8
+    body = body[:len(body) - len(body) % (width * channels)]
+    if tag == 3 and bits in (32, 64): samples = np.frombuffer(body, '<f4' if bits == 32 else '<f8').astype(np.float64)
+    elif tag == 1 and bits == 16: samples = np.frombuffer(body, '<i2') / 32768.0
+    elif tag == 1 and bits == 32: samples = np.frombuffer(body, '<i4') / 2147483648.0
+    elif tag == 1 and bits == 24:
+        raw = np.frombuffer(body, np.uint8).reshape(-1, 3).astype(np.int32)
+        value = raw[:, 0] | (raw[:, 1] << 8) | (raw[:, 2] << 16)
+        samples = np.where(value >= 1 << 23, value - (1 << 24), value) / 8388608.0
+    else: raise ValueError(f'Unsupported WAV encoding (format {tag}, {bits} bit)')
+    return samples.reshape(-1, channels), rate
+
+
+def write_wav(path, samples, rate):
+    """Write float32 IEEE WAV, the format every stem uses."""
+    Path(path).write_bytes(encode_wav(samples, rate))
+
+
+def encode_wav(samples, rate):
+    import struct
+    import numpy as np
+    samples = np.ascontiguousarray(samples, dtype='<f4')
+    frames, channels = samples.shape
+    body = samples.tobytes()
+    header = (b'RIFF' + struct.pack('<I', 4 + 26 + 12 + 8 + len(body)) + b'WAVE'
+              + b'fmt ' + struct.pack('<IHHIIHHH', 18, 3, channels, rate, rate * channels * 4, channels * 4, 32, 0)
+              + b'fact' + struct.pack('<II', 4, frames)
+              + b'data' + struct.pack('<I', len(body)))
+    return header + body
+
+
+def energy_db(samples):
+    """Mean-square level in dBFS, floored at -120 so silence stays JSON-safe."""
+    import numpy as np
+    power = float(np.mean(np.square(samples))) if samples.size else 0.0
+    return round(max(-120.0, 10 * math.log10(power)) if power > 0 else -120.0, 3)
+
 
 def export(stems, original, destination, fmt, include_video):
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
@@ -113,7 +173,8 @@ def export(stems, original, destination, fmt, include_video):
 def capabilities():
     """Whitelist public capability fields; never expose URLs, paths or load errors."""
     if os.getenv('INFERENCE_ADAPTER','fake') != 'http':
-        return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Fake adapter: no AI separation or judge ranking.'}
+        return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Fake adapter: no AI separation or judge ranking.',
+                'max_passes':max_passes(),'refine':True}
     from urllib.parse import urlsplit, urlunsplit
     url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL',''))
     try:
@@ -123,9 +184,22 @@ def capabilities():
         return {'preview':True,'quality':quality,'visual':bool(data.get('prompting_modes',{}).get('visual')),
                 'experimental_visual':True,'reason':'' if quality else 'Quality retry requires the pretrained text ranker to be loaded.',
                 'profiles':{'preview':{'candidates':1,'chunk_seconds':10,'chunk_batch':2},'quality':{'candidates':2,'chunk_seconds':10,'chunk_batch':2}},
-                'long_window_promoted':False,'automatic_spans':False}
+                'long_window_promoted':False,'automatic_spans':False,**passes_capability(data)}
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
-        return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.'}
+        return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.',
+                'max_passes':max_passes(),'refine':True}
+
+
+def passes_capability(data):
+    """Backend MAX_PASSES, narrowed by the service's advertised passes limit when it reports one."""
+    def number(value):
+        if isinstance(value, dict): value = value.get('max', value.get('default'))
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else None
+    limit = number((data.get('limits') or {}).get('passes'))
+    default = number((data.get('defaults') or {}).get('passes'))
+    result = {'max_passes': min(max_passes(), limit) if limit else max_passes(), 'refine': True}
+    if default: result['default_passes'] = min(default, result['max_passes'])
+    return result
 
 
 def inspect_audio(path):

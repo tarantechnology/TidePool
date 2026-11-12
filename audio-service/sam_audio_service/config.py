@@ -5,9 +5,12 @@ configuration when both run from the same ``.env``.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger("sam_audio_service")
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -33,6 +36,11 @@ def _opt_float(name: str) -> float | None:
     return float(raw) if raw not in (None, "") else None
 
 
+def _opt_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    return int(raw) if raw not in (None, "") else None
+
+
 @dataclass
 class Settings:
     # "mock" is a deterministic DSP stand-in for local development and CI. It is NOT
@@ -53,7 +61,14 @@ class Settings:
     chunk_seconds: float = 0.0
     chunk_seconds_env: float | None = field(default_factory=lambda: _opt_float("AUDIO_CHUNK_SECONDS"), repr=False)
     chunk_overlap_seconds: float = field(default_factory=lambda: _float("AUDIO_CHUNK_OVERLAP_SECONDS", 2.0))
-    chunk_workers: int = field(default_factory=lambda: _int("AUDIO_CHUNK_WORKERS", 1))
+    # How many chunk windows go into ONE model batch. This is the only supported way to
+    # process several windows at once: the model is shared and must not be entered from
+    # two threads (docs/chunk_concurrency.md). Batch k costs roughly k x activation memory.
+    chunk_batch: int = 1
+    chunk_batch_env: int | None = field(default_factory=lambda: _opt_int("AUDIO_CHUNK_BATCH"), repr=False)
+    # Deprecated alias kept so existing compose files keep working: AUDIO_CHUNK_WORKERS
+    # used to spawn threads; it now simply sets ``chunk_batch``.
+    chunk_workers: int | None = field(default_factory=lambda: _opt_int("AUDIO_CHUNK_WORKERS"), repr=False)
     # "duplicate": run mono separation and duplicate to source channel count (1 pass).
     # "per_channel": separate each channel independently (N passes, keeps stereo image).
     stereo_mode: str = field(default_factory=lambda: os.getenv("AUDIO_STEREO_MODE", "duplicate"))
@@ -93,6 +108,15 @@ class Settings:
     ffmpeg_timeout: int = field(default_factory=lambda: _int("AUDIO_FFMPEG_TIMEOUT", 600))
 
     def __post_init__(self) -> None:
+        if self.chunk_batch_env is not None:
+            self.chunk_batch = self.chunk_batch_env
+        elif self.chunk_workers is not None and self.chunk_batch == 1:
+            log.warning(
+                "AUDIO_CHUNK_WORKERS is deprecated: chunk windows are batched, not threaded. "
+                "Using it as AUDIO_CHUNK_BATCH=%s; set AUDIO_CHUNK_BATCH instead.", self.chunk_workers,
+            )
+            self.chunk_batch = self.chunk_workers
+        self.chunk_workers = self.chunk_batch  # keep the alias readable and in sync
         if self.chunk_seconds_env is not None:
             self.chunk_seconds = self.chunk_seconds_env
         elif self.backend == "sam":
@@ -105,8 +129,8 @@ class Settings:
             raise ValueError("AUDIO_STEREO_MODE must be 'duplicate' or 'per_channel'")
         if self.max_visual_interval_seconds <= 0:
             raise ValueError("AUDIO_MAX_VISUAL_INTERVAL_SECONDS must be positive")
-        if not 1 <= self.chunk_workers <= 8:
-            raise ValueError("AUDIO_CHUNK_WORKERS must be between 1 and 8")
+        if not 1 <= self.chunk_batch <= 8:
+            raise ValueError("AUDIO_CHUNK_BATCH (deprecated alias AUDIO_CHUNK_WORKERS) must be between 1 and 8")
         if self.chunk_seconds < 0:
             raise ValueError("AUDIO_CHUNK_SECONDS must not be negative")
         if self.chunk_overlap_seconds <= 0:

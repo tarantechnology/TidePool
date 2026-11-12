@@ -3,12 +3,15 @@
 Responsibilities kept here (backend-agnostic): prompt translation (text, span anchors,
 Person 2 visual guidance), stereo strategy, chunked inference with crossfades for long
 inputs, residual computation, sample-accurate length preservation and timing metadata.
+
+Long inputs are cut into overlapping windows and handed to the backend ``AUDIO_CHUNK_BATCH``
+windows at a time (``Backend.separate_many``). Windows are never run on threads: the model
+is shared and not re-entrant, so parallelism belongs in the batch dimension. See
+``docs/chunk_concurrency.md``.
 """
 from __future__ import annotations
 
 import logging
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 import uuid
@@ -135,8 +138,11 @@ class Engine:
         if audio.frames == 0:
             raise InvalidRequest("audio is empty")
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
-        if self.settings.chunk_workers > 1 and backend_options.seed is not None:
-            warnings.append("seeded inference uses sequential windows to preserve reproducibility")
+        if self.settings.chunk_batch > 1 and backend_options.seed is not None:
+            warnings.append(
+                f"seeded inference is reproducible for AUDIO_CHUNK_BATCH={self.settings.chunk_batch}; "
+                "a different chunk batch size draws different noise"
+            )
         if self.backend.is_mock:
             warnings.append("MOCK backend: stems are band-pass filtered copies of the mixture, not real separation")
 
@@ -210,25 +216,37 @@ class Engine:
 
     # ------------------------------------------------------------------ chunking
     def _call_backend(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
+        return self._call_backend_many([signal], [prompt], options)[0]
+
+    def _call_backend_many(self, signals: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions) -> list[BackendResult]:
+        """One backend call for ``k`` windows, with error classification and length repair."""
         try:
-            result = self.backend.separate(signal.astype(np.float32, copy=False), prompt, options)
+            results = self.backend.separate_many([s.astype(np.float32, copy=False) for s in signals], prompts, options)
         except AudioServiceError:
             raise
         except Exception as exc:  # noqa: BLE001
             if _oom(exc):
-                raise InsufficientGpuMemory("GPU ran out of memory during inference; try a shorter input, AUDIO_CHUNK_SECONDS or fewer reranking candidates", details={"frames": int(len(signal))}) from exc
+                raise InsufficientGpuMemory("GPU ran out of memory during inference; try a shorter input, AUDIO_CHUNK_SECONDS, a smaller AUDIO_CHUNK_BATCH or fewer reranking candidates", details={"frames": int(max(len(s) for s in signals)), "batch": len(signals)}) from exc
             raise InferenceFailure(f"{type(exc).__name__}: {exc}") from exc
-        if result.target.shape[-1] != len(signal):
-            n = len(signal)
-            fixed = np.zeros(n, dtype=np.float32)
-            m = min(n, result.target.shape[-1])
-            fixed[:m] = result.target[:m]
-            result.target = fixed
-            if result.residual is not None:
-                res = np.zeros(n, dtype=np.float32)
-                res[:m] = result.residual[:m]
-                result.residual = res
-        return result
+        if len(results) != len(signals):
+            raise InferenceFailure(f"backend returned {len(results)} results for {len(signals)} windows")
+        for signal, result in zip(signals, results, strict=True):
+            self._fit_length(result, len(signal))
+        return results
+
+    @staticmethod
+    def _fit_length(result: BackendResult, n: int) -> None:
+        """Trim/pad a backend result in place so it matches its own window exactly."""
+        if result.target.shape[-1] == n:
+            return
+        m = min(n, result.target.shape[-1])
+        fixed = np.zeros(n, dtype=np.float32)
+        fixed[:m] = result.target[:m]
+        result.target = fixed
+        if result.residual is not None:
+            res = np.zeros(n, dtype=np.float32)
+            res[:m] = result.residual[:m]
+            result.residual = res
 
     def _separate_interval(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, interval: tuple[float, float]) -> BackendResult:
         """Visual prompting: separate only the interval the masks cover, then place the
@@ -308,32 +326,34 @@ class Engine:
             if out.spans:
                 spans.extend((s + start / sr, e + start / sr) for s, e in out.spans)
 
-        def run_windows(workers):
-            if workers == 1:
-                for start, end, local_prompt in windows():
-                    merge(start, end, self._call_backend(signal[start:end], local_prompt, options))
-                return
-            # Submit at most `workers` windows at a time, then merge in timeline order.
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sam-chunk") as pool:
-                pending = deque()
-                for start, end, local_prompt in windows():
-                    pending.append((start, end, pool.submit(self._call_backend, signal[start:end], local_prompt, options)))
-                    if len(pending) >= workers:
-                        a, b, future = pending.popleft()
-                        merge(a, b, future.result())
-                while pending:
-                    a, b, future = pending.popleft()
-                    merge(a, b, future.result())
+        def run_windows(batch_size):
+            """Collect up to ``batch_size`` windows, hand them to the backend in ONE call,
+            then merge the results in timeline order so the crossfade is unchanged."""
+            pending: list[tuple[int, int, BackendPrompt]] = []
 
-        workers = self.settings.chunk_workers if options.seed is None else 1
+            def flush():
+                if not pending:
+                    return
+                results = self._call_backend_many([signal[a:b] for a, b, _ in pending], [p for _, _, p in pending], options)
+                for (a, b, _), out in zip(pending, results, strict=True):
+                    merge(a, b, out)
+                pending.clear()
+
+            for start, end, local_prompt in windows():
+                pending.append((start, end, local_prompt))
+                if len(pending) >= batch_size:
+                    flush()
+            flush()
+
+        batch_size = max(1, self.settings.chunk_batch)
         retried_sequentially = False
         try:
-            run_windows(workers)
+            run_windows(batch_size)
         except InsufficientGpuMemory:
-            if workers == 1:
+            if batch_size == 1:
                 raise
             retried_sequentially = True
-            log.warning("parallel chunks exceeded GPU memory; retrying this request sequentially")
+            log.warning("batched chunks exceeded GPU memory; retrying this request sequentially")
             target.fill(0); residual.fill(0); weight.fill(0); spans.clear(); has_residual = True
             run_windows(1)
         weight = np.maximum(weight, 1e-6)

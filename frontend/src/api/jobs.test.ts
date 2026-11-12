@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_POLL_FAILURES, pollJob, toJobStatus } from './jobs'
+import { MAX_POLL_FAILURES, pollJob, toExportStatus, toJobStatus } from './jobs'
 import type { JobStatus } from './jobs'
 
 describe('toJobStatus', () => {
@@ -23,6 +23,26 @@ describe('toJobStatus', () => {
 
   it('throws on a state it does not know', () => {
     expect(() => toJobStatus({ status: 'weird' })).toThrow('Unknown job status: weird')
+  })
+})
+
+describe('toExportStatus', () => {
+  it('maps an export the same way, so exports can use the same poll', () => {
+    expect(toExportStatus({ status: 'queued' })).toEqual({ state: 'queued' })
+    expect(toExportStatus({ status: 'processing' })).toEqual({ state: 'processing' })
+    expect(toExportStatus({ status: 'completed', download_url: '/d/1' })).toEqual({ state: 'done' })
+  })
+
+  it('keeps the reason a failed export gave, and drops a null one', () => {
+    expect(toExportStatus({ status: 'failed', error: 'ffmpeg exited 1' })).toEqual({
+      state: 'failed',
+      error: 'ffmpeg exited 1',
+    })
+    expect(toExportStatus({ status: 'processing', error: null })).toEqual({ state: 'processing' })
+  })
+
+  it('throws on a state it does not know, instead of waiting forever', () => {
+    expect(() => toExportStatus({ status: 'cancelled' })).toThrow('Unknown job status: cancelled')
   })
 })
 

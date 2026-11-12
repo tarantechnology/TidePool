@@ -9,6 +9,8 @@ interface Entry {
 
 interface Props {
   disabled: boolean
+  /** Why the bar is disabled, shown as helper text and as the tooltip. */
+  disabledReason?: string
   agentLabel: string
   onRun: (text: string) => Promise<{ message: string; ok: boolean }>
 }
@@ -21,11 +23,12 @@ const SUGGESTIONS = [
   'Make the siren quieter',
 ]
 
-export function PromptBar({ disabled, agentLabel, onRun }: Props) {
+export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: Props) {
   const [text, setText] = useState('')
   const [history, setHistory] = useState<Entry[]>([])
   const [pending, setPending] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const reason = disabled ? disabledReason : ''
 
   // A disabled input loses focus, so hand it back when the run finishes.
   const wasPending = useRef(false)
@@ -66,6 +69,7 @@ export function PromptBar({ disabled, agentLabel, onRun }: Props) {
         )}
         <form
           onSubmit={submit}
+          title={reason}
           className="flex items-center gap-3 rounded-2xl border border-line-strong bg-ink-900/90 py-2 pr-2 pl-4 shadow-2xl shadow-black/60 backdrop-blur transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_4px_rgb(61_255_139/0.08),0_0_48px_-12px_rgb(61_255_139/0.4)]"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0 text-accent" aria-hidden="true">
@@ -79,7 +83,7 @@ export function PromptBar({ disabled, agentLabel, onRun }: Props) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             disabled={disabled || pending}
-            placeholder="Describe an edit, e.g. make the siren louder from 8 to 16 seconds"
+            placeholder={reason || 'Describe an edit, e.g. make the siren louder from 8 to 16 seconds'}
             className="h-9 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600 disabled:opacity-50"
           />
           <button
@@ -104,6 +108,7 @@ export function PromptBar({ disabled, agentLabel, onRun }: Props) {
               <button
                 key={s}
                 type="button"
+                title={reason}
                 disabled={disabled || pending}
                 onClick={() => {
                   setText(s)
@@ -115,7 +120,7 @@ export function PromptBar({ disabled, agentLabel, onRun }: Props) {
               </button>
             ))}
           </div>
-          <span className="shrink-0 font-mono text-[10px] text-zinc-600">{agentLabel}</span>
+          <span className="shrink-0 font-mono text-[10px] text-zinc-600">{reason || agentLabel}</span>
         </div>
       </div>
     </div>

@@ -26,6 +26,24 @@ export interface EngineEvent {
 
 export type EngineListener = (event: EngineEvent) => void
 
+/** A stem that could not be fetched or decoded, and the reason it gave. */
+export interface StemLoadFailure {
+  stem: Stem
+  reason: string
+}
+
+/** What replaceStems loaded, and what it could not. */
+export interface StemLoadResult {
+  /** The stems now in the graph, with their measured duration. */
+  stems: Stem[]
+  failures: StemLoadFailure[]
+}
+
+/** One line naming every stem that failed and why, for the status chip. */
+export function describeStemFailures(failures: readonly StemLoadFailure[]): string {
+  return failures.map(({ stem, reason }) => `${stem.label || stem.id} (${reason})`).join(', ')
+}
+
 /**
  * How to start a stem's source for playback from a timeline position: after
  * delay seconds, from bufferOffset into the audio. Null once the stem is over.
@@ -73,26 +91,30 @@ export class AudioEngine {
 
   /**
    * Swap the loaded stems, keeping the AudioContext. Decoding happens first, so
-   * a failure leaves the current stems playing. Returns the stems with their
-   * measured duration, or null if a newer call replaced this one.
+   * a failure leaves the current stems playing. One stem that cannot be decoded
+   * does not cost the others: it comes back in `failures` and the rest load.
+   * Throws only when nothing loaded, which keeps the current stems. Returns
+   * null if a newer call replaced this one.
    */
-  async replaceStems(stems: Stem[]): Promise<Stem[] | null> {
+  async replaceStems(stems: Stem[]): Promise<StemLoadResult | null> {
     const id = ++this.loadId
-    let loaded: Array<{ stem: Stem; buffer: AudioBuffer }>
-    try {
-      loaded = await Promise.all(
-        stems.map(async (stem) => {
-          const res = await fetch(stem.url)
-          if (!res.ok) throw new Error(`Failed to fetch stem ${stem.id}: ${res.status}`)
-          const buffer = await this.ctx.decodeAudioData(await res.arrayBuffer())
-          return { stem: { ...stem, duration: buffer.duration }, buffer }
-        }),
-      )
-    } catch (err) {
-      if (id !== this.loadId) return null
-      throw err
-    }
+    const settled = await Promise.allSettled(
+      stems.map(async (stem) => {
+        const res = await fetch(stem.url)
+        if (!res.ok) throw new Error(`Failed to fetch stem ${stem.id}: ${res.status}`)
+        const buffer = await this.ctx.decodeAudioData(await res.arrayBuffer())
+        return { stem: { ...stem, duration: buffer.duration }, buffer }
+      }),
+    )
     if (id !== this.loadId) return null
+    const loaded = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+    const failures: StemLoadFailure[] = settled.flatMap((r, i) =>
+      r.status === 'rejected' ? [{ stem: stems[i], reason: r.reason instanceof Error ? r.reason.message : String(r.reason) }] : [],
+    )
+    // Nothing to swap in, so leave the graph as it is and say why.
+    if (stems.length > 0 && loaded.length === 0) {
+      throw new Error(`Could not load any stem: ${describeStemFailures(failures)}`)
+    }
 
     this.playRequest++
     this.stopSources()
@@ -122,7 +144,7 @@ export class AudioEngine {
       this.duration = Math.max(this.duration, stemEnd({ ...stem, duration: buffer.duration }))
     }
     this.emit('load')
-    return loaded.map((l) => l.stem)
+    return { stems: loaded.map((l) => l.stem), failures }
   }
 
   getPeaks(stemId: string): Float32Array | null {

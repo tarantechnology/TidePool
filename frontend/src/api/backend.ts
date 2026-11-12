@@ -27,6 +27,22 @@ export interface BackendStem {
   audio_url: string
   start_offset?: number
   mute_ranges?: MuteRange[]
+  // Fields the separation service added after this client was written. Every
+  // one is optional: a backend that predates them, or the `fake` adapter, sends
+  // none of them and the editor has to keep working.
+  /** 'target' for the requested sound, 'residual' for everything else. */
+  role?: string
+  /** The target this residual was subtracted from. */
+  source_stem_id?: string
+  /** The wording the separation was asked for. */
+  prompt?: string
+  /** Display name, when it differs from the identifying name. */
+  label?: string
+  /** Where the sound was found, as the service reports it. */
+  spans?: unknown
+  sample_rate?: number
+  channels?: number
+  format?: string
 }
 
 /** A row of GET /api/projects/{id}/stems: the stem as saved right now. */
@@ -142,11 +158,13 @@ export async function fetchStemBlobUrl(config: BackendConfig, audioUrl: string, 
 }
 
 export function toStem(stem: BackendStem, url: string): Stem {
-  // The backend has no kind field, and kinds are not guessed from names.
+  // Kinds are still not guessed from names. `role` is the one thing the backend
+  // does say about a stem's part, so the residual gets its own kind and
+  // everything else keeps the default.
   return {
     id: stem.id,
-    label: stem.name,
-    kind: 'sfx',
+    label: stem.label?.trim() || stem.name,
+    kind: stem.role === 'residual' ? 'residual' : 'sfx',
     url,
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
@@ -243,8 +261,14 @@ export async function uploadProject(config: BackendConfig, projectId: string, fi
 export async function storeVisualMetadata(config: BackendConfig, projectId: string, metadata: unknown): Promise<void> {
   await request(config, `/api/projects/${encodeURIComponent(projectId)}/visual-metadata`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(metadata)})
 }
-export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(visualPrompt ? {visual_prompt: visualPrompt} : {})})})
+/**
+ * Start a separation. visualPrompt is required and always sent, even as `{}`:
+ * leaving the field out makes the backend fall back to the project's stored
+ * detections document, which is megabytes of mask data. Pass buildVisualPrompt's
+ * result so every separation path sends the same thing.
+ */
+export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt: object): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, visual_prompt: visualPrompt})})
   return ((await res.json()) as {job_id:string}).job_id
 }
 export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
@@ -272,8 +296,8 @@ export async function startVisualAnalysis(config: BackendConfig, projectId: stri
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-analyze`,{method:'POST'})
   return ((await res.json()) as {job_id:string}).job_id
 }
-export async function getVisualJob(config: BackendConfig, jobId: string): Promise<BackendJob> {
-  const res=await request(config,`/api/visual-jobs/${encodeURIComponent(jobId)}`)
+export async function getVisualJob(config: BackendConfig, jobId: string, signal?: AbortSignal): Promise<BackendJob> {
+  const res=await request(config,`/api/visual-jobs/${encodeURIComponent(jobId)}`,{},signal)
   return res.json() as Promise<BackendJob>
 }
 export async function getVisualMetadata(config: BackendConfig, projectId: string): Promise<VisualMetadata> {

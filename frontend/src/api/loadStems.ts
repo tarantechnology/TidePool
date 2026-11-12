@@ -1,15 +1,25 @@
+import { describeStemFailures } from '../audio/engine'
+import type { StemLoadFailure, StemLoadResult } from '../audio/engine'
 import { initialTracks } from '../edits'
 import type { Stem, TrackState } from '../types'
 import type { StemSource } from './stemSources'
 
 /** The part of AudioEngine a load needs, so this can be tested without an AudioContext. */
 export interface StemLoader {
-  replaceStems(stems: Stem[]): Promise<Stem[] | null>
+  replaceStems(stems: Stem[]): Promise<StemLoadResult | null>
 }
 
 export interface LoadedStems {
   stems: Stem[]
   tracks: TrackState[]
+  /** Stems that are missing from the timeline because they would not decode. */
+  failures: StemLoadFailure[]
+}
+
+/** What to show when part of a load failed. Empty when all of it worked. */
+export function stemFailureMessage(failures: readonly StemLoadFailure[]): string {
+  if (failures.length === 0) return ''
+  return `Could not load ${describeStemFailures(failures)}. The other stems are loaded.`
 }
 
 /**
@@ -29,7 +39,12 @@ export async function loadFromSource(
   if (!isLatest()) return null
   const sourceStems = await source.load()
   if (!isLatest()) return null
-  const stems = await engine.replaceStems(sourceStems)
-  if (!stems || !isLatest()) return null
-  return { stems, tracks: source.savedTracks ?? initialTracks(stems) }
+  const result = await engine.replaceStems(sourceStems)
+  if (!result || !isLatest()) return null
+  const { stems, failures } = result
+  // Saved state covers the stems the project has, which may include ones that
+  // did not decode, so tracks follow what actually loaded.
+  const loadedIds = new Set(stems.map((s) => s.id))
+  const saved = source.savedTracks?.filter((t) => loadedIds.has(t.stemId))
+  return { stems, tracks: saved ?? initialTracks(stems), failures }
 }

@@ -104,6 +104,47 @@ class ServiceBusy(AudioServiceError):
     retryable = True
 
 
+# --------------------------------------------------------------- OOM classification
+# Under memory pressure CUDA does not always say "out of memory": the allocation failure
+# surfaces through whichever library asked for the block first. These are the texts seen
+# in practice, matched case-insensitively against "<ClassName>: <message>":
+#
+# * ``CUDA out of memory`` / ``CUDA error: out of memory`` - the caching allocator itself;
+# * ``CUBLAS_STATUS_ALLOC_FAILED`` - cuBLAS workspace allocation (a GEMM inside the
+#   transformer or the codec), raised as a plain RuntimeError;
+# * ``CUDNN_STATUS_ALLOC_FAILED`` - cuDNN workspace allocation in a convolution;
+# * ``cudaErrorMemoryAllocation`` - the raw driver code, seen from kernels and from
+#   ``cudaMalloc`` inside third-party ops;
+# * ``CUDA error: an illegal memory access`` - what an allocation failure degrades into
+#   when a kernel was launched against memory it could not get.
+#
+# All of them mean the same thing for us: this batch did not fit. They are retryable at
+# AUDIO_CHUNK_BATCH=1, so they must be classified as INSUFFICIENT_GPU_MEMORY and not as
+# INFERENCE_FAILURE, which kills the request. ``torch.OutOfMemoryError`` (and its alias
+# ``torch.cuda.OutOfMemoryError``) is matched by class name, including subclasses, because
+# it is not importable without torch.
+_OOM_HINTS: tuple[str, ...] = (
+    "out of memory",
+    "cublas_status_alloc_failed",
+    "cudnn_status_alloc_failed",
+    "cudaerrormemoryallocation",
+    "cuda error: an illegal memory access",
+)
+
+
+def is_out_of_memory(exc: BaseException) -> bool:
+    """True when ``exc`` means "the GPU could not give us the memory", not "we have a bug".
+
+    Shared by the backend (which turns it into :class:`InsufficientGpuMemory` after freeing
+    the batch) and the engine (which retries the whole signal at batch 1), so the two can
+    never disagree about what counts as an OOM.
+    """
+    if any(cls.__name__ == "OutOfMemoryError" for cls in type(exc).__mro__):
+        return True
+    blob = f"{type(exc).__name__}: {exc}".lower()
+    return any(hint in blob for hint in _OOM_HINTS)
+
+
 ERROR_CODES: dict[str, dict[str, Any]] = {
     cls.code: {"http_status": cls.status, "retryable": cls.retryable, "description": (cls.__doc__ or "").strip()}
     for cls in (

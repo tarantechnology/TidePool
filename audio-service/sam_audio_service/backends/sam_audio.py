@@ -1,8 +1,14 @@
-"""Real SAM Audio backend: one mono 48 kHz window, one prompt, one separation.
+"""Real SAM Audio backend: mono 48 kHz windows in, separated stems out.
 
 Everything model-specific lives here. The engine owns chunking, stereo, residuals and
-length bookkeeping, so this class only ever sees a single window that already matches the
-visual interval it is given.
+length bookkeeping, so this class only ever sees windows that already match the visual
+interval they are given.
+
+Concurrency: the model and processor are loaded once and shared, and a ``torch.nn.Module``
+is not safe to enter from two threads (see ``docs/chunk_concurrency.md``). Every call is
+therefore serialised by an instance lock, and "several windows at once" is expressed as a
+processor BATCH through :meth:`SamAudioBackend.separate_many`, which is the parallelism the
+GPU actually wants.
 
 Upstream shape (verified against ``sam_audio`` sources, not guessed)
 --------------------------------------------------------------------
@@ -13,13 +19,14 @@ Upstream shape (verified against ``sam_audio`` sources, not guessed)
   to the Hub for the gated checkpoints.
 * ``SAMAudioProcessor.from_pretrained(model_id)``; ``audio_sampling_rate == 48000`` and
   ``audio_hop_length == 1920`` (one feature frame per 40 ms).
-* ``processor(descriptions=[text], audios=[(C, T) float32 @ 48 kHz], anchors=..., masked_videos=...)``
-  averages audio to mono internally. Anchor tokens are ``"+"`` (target present) and
-  ``"-"`` (absent), in seconds relative to the audio passed in.
+* ``processor(descriptions=[...], audios=[(C, T) float32 @ 48 kHz, ...], anchors=..., masked_videos=...)``
+  takes k items at once, averages each audio to mono internally and pads the batch to the
+  longest item. ``anchors`` is one list per item. Anchor tokens are ``"+"`` (target
+  present) and ``"-"`` (absent), in seconds relative to the audio passed in.
 * ``model.separate(batch, noise=None, ode_opt=..., reranking_candidates=1, predict_spans=False)``
-  returns ``result.target`` / ``result.residual`` as **lists** of 1-D mono tensors whose
-  length is ``ceil(T / 1920) * 1920`` — i.e. up to 1919 samples longer than the input, so
-  the outputs are trimmed back here.
+  returns ``result.target`` / ``result.residual`` as **lists** of 1-D mono tensors, one per
+  batch item, whose length is ``ceil(T_max / 1920) * 1920`` — longer than a short item's
+  own input, so every output is trimmed back to ITS OWN input length here.
 * Span prediction only runs when the span predictor was loaded **and**
   ``batch.anchors is None``; afterwards ``batch.anchors`` holds predicted
   ``["+", start, end]`` lists, which is where ``BackendResult.spans`` comes from.
@@ -68,13 +75,14 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import threading
 import time
 from contextlib import nullcontext
 from typing import Any
 
 import numpy as np
 
-from ..errors import InferenceFailure, InsufficientGpuMemory, MissingModel
+from ..errors import InferenceFailure, InsufficientGpuMemory, MissingModel, is_out_of_memory
 from ..visual import MASK_MODES, MaskMode, prepare_masked_video
 from .base import Backend, BackendOptions, BackendPrompt, BackendResult
 
@@ -86,16 +94,43 @@ _ACCESS_HINTS = (
     "access to model", "repository not found", "entry not found", "is not a local folder",
     "could not connect", "connectionerror", "offline mode", "token",
 )
-_OOM_HINT = "out of memory"
-
-
-def _is_oom(exc: BaseException) -> bool:
-    return _OOM_HINT in str(exc).lower() or type(exc).__name__ == "OutOfMemoryError"
+# "did the GPU run out of memory?" lives in errors.py so the engine's batch-1 retry and
+# this module's InsufficientGpuMemory mapping can never disagree. CUBLAS/cuDNN/driver
+# allocation failures count, not just the literal "out of memory".
+_is_oom = is_out_of_memory
 
 
 def _looks_like_missing_weights(exc: BaseException) -> bool:
     blob = f"{type(exc).__name__} {exc}".lower()
     return isinstance(exc, (OSError, FileNotFoundError)) or any(hint in blob for hint in _ACCESS_HINTS)
+
+
+def _batchable_groups(mixtures: list[np.ndarray], prompts: list[BackendPrompt]) -> list[list[int]]:
+    """Split window indices into consecutive groups, one ``model.separate`` call each.
+
+    Windows only share a call when the processor can describe them in one batch:
+
+    * a visually prompted window runs alone (``masked_videos`` is per-item upstream and
+      frames must stay aligned with exactly the audio they came from), and so does an
+      empty window (nothing to encode);
+    * anchored and unanchored windows do not mix. An empty per-item anchor list is in fact
+      accepted upstream and conditions identically to ``anchors=None``
+      (``Batch.process_anchors`` builds the same ``[<null>, <pad>]`` row), but
+      ``anchors is None`` is also the batch-wide "predict spans" gate
+      (``SAMAudio.separate``), so mixing would silently disable span prediction for
+      windows that would have got it when run alone.
+    """
+    groups: list[list[int]] = []
+    previous: object = object()
+    for i, (mixture, prompt) in enumerate(zip(mixtures, prompts, strict=True)):
+        alone = prompt.visual is not None or int(np.asarray(mixture).shape[-1]) == 0
+        key = None if alone else bool(prompt.anchors)
+        if groups and key is not None and key == previous:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+        previous = key
+    return groups
 
 
 class SamAudioBackend(Backend):
@@ -145,6 +180,9 @@ class SamAudioBackend(Backend):
         self._parameters: int | None = None
         self._load_seconds: float | None = None
         self._facts: dict[str, Any] = {}
+        # Serialises load and inference. The model is a single shared torch.nn.Module and
+        # must never be entered twice at once, whatever the engine does above us.
+        self._lock = threading.Lock()
 
     # ----------------------------------------------------------------------- lifecycle
     @property
@@ -155,6 +193,11 @@ class SamAudioBackend(Backend):
         """Import ``sam_audio``, resolve the device and pull the weights. Idempotent."""
         if self.loaded:
             return
+        with self._lock:
+            if not self.loaded:
+                self._load_locked()
+
+    def _load_locked(self) -> None:
         torch = self._import_torch()
         SAMAudio, SAMAudioProcessor = self._import_sam_audio()
         device = self._resolve_device(torch, self.requested_device)
@@ -195,11 +238,12 @@ class SamAudioBackend(Backend):
         )
 
     def unload(self) -> None:
-        torch = self._torch
-        self._model = self._processor = None
-        self._parameters = None
-        self._release(torch)
-        self._torch = None
+        with self._lock:  # never drop the model out from under an in-flight separation
+            torch = self._torch
+            self._model = self._processor = None
+            self._parameters = None
+            self._release(torch)
+            self._torch = None
 
     def _release(self, torch: Any | None) -> None:
         gc.collect()
@@ -322,60 +366,98 @@ class SamAudioBackend(Backend):
 
     # ------------------------------------------------------------------------ inference
     def separate(self, mixture: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
+        return self.separate_many([mixture], [prompt], options)[0]
+
+    def separate_many(
+        self, mixtures: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions
+    ) -> list[BackendResult]:
+        """Separate ``k`` windows, batching them into as few model calls as possible.
+
+        The model and processor are shared, so every call is serialised by ``self._lock``:
+        a ``torch.nn.Module`` is not re-entrant (weight-norm forward pre-hooks,
+        parametrisation caches and per-module buffers are mutated during ``forward``), and
+        per-thread CUDA streams do not make it so. GPU-side parallelism therefore comes
+        from the batch dimension, never from threads. See ``docs/chunk_concurrency.md``.
+        """
+        if len(mixtures) != len(prompts):
+            raise ValueError(f"separate_many needs one prompt per mixture, got {len(mixtures)} and {len(prompts)}")
+        if not mixtures:
+            return []
         self.load()
-        torch = self._torch
-        # Each worker needs its own CUDA stream; sharing the default stream would
-        # serialize GPU work even when Python threads submit windows concurrently.
-        stream = torch.cuda.stream(torch.cuda.Stream(device=self._device)) if self._device.type == "cuda" else nullcontext()
-        with stream:
-            return self._separate_on_stream(mixture, prompt, options)
+        with self._lock:
+            if self._model is None:  # unloaded between load() and here
+                raise MissingModel(f"{self.model_id} is not loaded")
+            out: list[BackendResult] = []
+            for group in _batchable_groups(mixtures, prompts):
+                out.extend(self._separate_batch([mixtures[i] for i in group], [prompts[i] for i in group], options))
+            return out
 
-    def _separate_on_stream(self, mixture: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
+    def _separate_batch(
+        self, mixtures: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions
+    ) -> list[BackendResult]:
+        """ONE processor batch and ONE ``model.separate`` call for every window given."""
         torch, model, processor = self._torch, self._model, self._processor
-        length = int(np.asarray(mixture).shape[-1])
-        if length == 0:
+        lengths = [int(np.asarray(m).shape[-1]) for m in mixtures]
+        if all(n == 0 for n in lengths):
             empty = np.zeros(0, dtype=np.float32)
-            return BackendResult(target=empty, residual=empty.copy(), spans=[])
+            return [BackendResult(target=empty.copy(), residual=empty.copy(), spans=[]) for _ in mixtures]
 
-        # Shape (1, T): the processor averages channels to mono, so hand it mono already.
-        audio = torch.from_numpy(np.ascontiguousarray(np.asarray(mixture, dtype=np.float32).reshape(-1))).unsqueeze(0)
-        description = self._description(prompt)
-        anchors = [[(token, float(start), float(end)) for token, start, end in prompt.anchors]] if prompt.anchors else None
+        # Shape (1, T) per item: the processor averages channels to mono, so hand it mono
+        # already. ``batch_audio`` pads the batch to the longest item; each output is
+        # trimmed back to its OWN input length below.
+        audios = [
+            torch.from_numpy(np.ascontiguousarray(np.asarray(m, dtype=np.float32).reshape(-1))).unsqueeze(0)
+            for m in mixtures
+        ]
+        descriptions = [self._description(p) for p in prompts]
+        anchors = (
+            [[(token, float(start), float(end)) for token, start, end in (p.anchors or ())] for p in prompts]
+            if any(p.anchors for p in prompts)
+            else None
+        )
 
-        masked_videos = frames = None
-        if prompt.visual is not None:
-            frames, masks = prepare_masked_video(
-                prompt.visual,
-                size=self.frame_size,
-                mask_mode=self.mask_mode,
-                ffmpeg=self.ffmpeg,
-                ffprobe=self.ffprobe,
-                timeout=self.ffmpeg_timeout,
-            )
-            masked_videos = processor.mask_videos([frames], [masks])
-
-        batch = processor(
-            descriptions=[description],
-            audios=[audio],
-            anchors=anchors,
-            masked_videos=masked_videos,
-        ).to(self._device)
-        if self._dtype is not torch.float32:
-            batch.audios = batch.audios.to(self._dtype)
-
-        # Span prediction is skipped upstream when anchors are supplied, so be explicit.
-        predict_spans = bool(options.predict_spans and self.supports_span_prediction and anchors is None)
-        candidates = max(1, int(options.reranking_candidates or 1))
-        notes: list[str] = []
-        if prompt.visual is not None and self.mask_mode == "notebook" and candidates > 1:
-            # The ImageBind re-ranker scores audio against the masked video; with the object
-            # zeroed out that comparison is meaningless, so re-ranking is disabled.
-            notes.append("reranking disabled: notebook mask mode removes the object the visual re-ranker needs")
-            candidates = 1
-        if options.seed is not None:
-            torch.manual_seed(int(options.seed))
-
+        masked_videos = frames = batch = None
+        visual = prompts[0].visual if len(prompts) == 1 else None
+        # Everything that can touch device memory is inside ONE try: building the batch and
+        # moving it to the GPU allocates k windows' worth of audio (and a visual window's
+        # frames) before the model is ever entered, so an allocation failure there has to
+        # free the batch and be classified exactly like one inside ``model.separate``.
+        # Without this, an OOM in ``.to(device)`` leaked the batch and reached the engine as
+        # an INFERENCE_FAILURE instead of a retryable INSUFFICIENT_GPU_MEMORY.
         try:
+            if visual is not None:
+                frames, masks = prepare_masked_video(
+                    visual,
+                    size=self.frame_size,
+                    mask_mode=self.mask_mode,
+                    ffmpeg=self.ffmpeg,
+                    ffprobe=self.ffprobe,
+                    timeout=self.ffmpeg_timeout,
+                )
+                masked_videos = processor.mask_videos([frames], [masks])
+
+            batch = processor(
+                descriptions=descriptions,
+                audios=audios,
+                anchors=anchors,
+                masked_videos=masked_videos,
+            ).to(self._device)
+            if self._dtype is not torch.float32:
+                batch.audios = batch.audios.to(self._dtype)
+
+            # Span prediction is skipped upstream when anchors are supplied, so be explicit.
+            predict_spans = bool(options.predict_spans and self.supports_span_prediction and anchors is None)
+            candidates = max(1, int(options.reranking_candidates or 1))
+            notes: list[str] = []
+            if visual is not None and self.mask_mode == "notebook" and candidates > 1:
+                # The ImageBind re-ranker scores audio against the masked video; with the
+                # object zeroed out that comparison is meaningless, so re-ranking is off.
+                notes.append("reranking disabled: notebook mask mode removes the object the visual re-ranker needs")
+                candidates = 1
+            if options.seed is not None:
+                # One seeded draw for the whole batch: reproducible for a fixed batch size.
+                torch.manual_seed(int(options.seed))
+
             with torch.inference_mode(), self._autocast(torch):
                 result = model.separate(
                     batch,
@@ -386,28 +468,42 @@ class SamAudioBackend(Backend):
         except Exception as exc:  # noqa: BLE001 - free first, then let the engine classify
             # Drop the batch/frame references before reclaiming, so the traceback holding
             # these locals alive does not pin a window's worth of device memory.
-            batch = masked_videos = None
+            batch = masked_videos = audios = frames = None
             self._release(torch)
             if _is_oom(exc):
                 raise InsufficientGpuMemory(
-                    "GPU ran out of memory during separation; shorten AUDIO_CHUNK_SECONDS, lower "
-                    "AUDIO_RERANKING_CANDIDATES, or set AUDIO_LOAD_SPAN_PREDICTOR=false",
-                    details={"frames": length, "seconds": round(length / self.sample_rate, 3), "model_id": self.model_id},
+                    "GPU ran out of memory during separation; lower AUDIO_CHUNK_BATCH, shorten "
+                    "AUDIO_CHUNK_SECONDS, lower AUDIO_RERANKING_CANDIDATES, or set "
+                    "AUDIO_LOAD_SPAN_PREDICTOR=false",
+                    details={
+                        "batch": len(mixtures),
+                        "frames": max(lengths),
+                        "seconds": round(max(lengths) / self.sample_rate, 3),
+                        "model_id": self.model_id,
+                    },
                 ) from exc
             raise
 
-        target = self._to_numpy(result.target[0], length)
-        residual = self._to_numpy(result.residual[0], length) if result.residual is not None else None
-        spans = self._predicted_spans(batch) if predict_spans else None
-        extra = {
-            "mask_mode": self.mask_mode if prompt.visual is not None else None,
-            "visual_frames": int(frames.shape[0]) if frames is not None else 0,
-            "predict_spans": predict_spans,
-            "reranking_candidates": candidates,
-            "description": description,
-            "notes": notes,
-        }
-        return BackendResult(target=target, residual=residual, spans=spans, extra=extra)
+        results: list[BackendResult] = []
+        for i, length in enumerate(lengths):
+            extra = {
+                "mask_mode": self.mask_mode if visual is not None else None,
+                "visual_frames": int(frames.shape[0]) if frames is not None else 0,
+                "predict_spans": predict_spans,
+                "reranking_candidates": candidates,
+                "description": descriptions[i],
+                "batch": len(mixtures),
+                "notes": notes,
+            }
+            results.append(
+                BackendResult(
+                    target=self._to_numpy(result.target[i], length),
+                    residual=self._to_numpy(result.residual[i], length) if result.residual is not None else None,
+                    spans=self._predicted_spans(batch, i) if predict_spans else None,
+                    extra=extra,
+                )
+            )
+        return results
 
     @staticmethod
     def _description(prompt: BackendPrompt) -> str:
@@ -437,12 +533,12 @@ class SamAudioBackend(Backend):
         return out
 
     @staticmethod
-    def _predicted_spans(batch: Any) -> list[tuple[float, float]]:
-        """``batch.anchors`` after ``separate`` holds predicted ``["+", start, end]`` lists."""
+    def _predicted_spans(batch: Any, index: int = 0) -> list[tuple[float, float]]:
+        """``batch.anchors`` after ``separate`` holds per-item predicted ``["+", s, e]`` lists."""
         anchors = getattr(batch, "anchors", None)
-        if not anchors:
+        if not anchors or index >= len(anchors):
             return []
-        return [(float(a[1]), float(a[2])) for a in anchors[0] if len(a) >= 3 and a[0] == "+"]
+        return [(float(a[1]), float(a[2])) for a in anchors[index] if len(a) >= 3 and a[0] == "+"]
 
 
 __all__ = ["SamAudioBackend"]

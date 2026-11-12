@@ -1,8 +1,9 @@
 """Backend protocol shared by the mock and the SAM Audio implementation.
 
-A backend separates ONE mono 48 kHz signal for ONE prompt. Everything else (stereo
-handling, chunking, residual computation, encoding, HTTP) lives in the engine/API so the
-real and mock backends stay interchangeable and small.
+A backend separates ONE mono 48 kHz signal for ONE prompt (:meth:`Backend.separate`), or
+``k`` such windows at once (:meth:`Backend.separate_many`, which defaults to looping).
+Everything else (stereo handling, chunking, residual computation, encoding, HTTP) lives in
+the engine/API so the real and mock backends stay interchangeable and small.
 """
 from __future__ import annotations
 
@@ -82,6 +83,21 @@ class Backend(ABC):
     @abstractmethod
     def separate(self, mixture: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
         """``mixture`` is float32 mono at ``self.sample_rate``. Output must match its length exactly."""
+
+    def separate_many(
+        self, mixtures: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions
+    ) -> list[BackendResult]:
+        """Separate ``k`` independent windows and return results in input order.
+
+        This is how the engine expresses "process several chunk windows at once": a backend
+        that can put them in ONE model batch (see ``SamAudioBackend``) overrides this and
+        gets real GPU-side parallelism without ever entering a shared ``torch.nn.Module``
+        from two threads. The default loops over :meth:`separate`, so the mock and any other
+        backend keep working unchanged.
+        """
+        if len(mixtures) != len(prompts):
+            raise ValueError(f"separate_many needs one prompt per mixture, got {len(mixtures)} and {len(prompts)}")
+        return [self.separate(mixture, prompt, options) for mixture, prompt in zip(mixtures, prompts, strict=True)]
 
     @property
     def loaded(self) -> bool:

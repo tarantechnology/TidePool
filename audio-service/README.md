@@ -34,7 +34,7 @@ memory scales with window length). Extra variables, all optional:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `AUDIO_CHUNK_WORKERS` | `1` | Maximum concurrent audio windows within a request; set `2` on the tested A40 setup. Seeded jobs run sequentially. If parallel GPU inference runs out of memory it retries sequentially. |
+| `AUDIO_CHUNK_BATCH` | `1` | How many chunk windows go into ONE model batch (1-8). Batch `k` costs roughly `k x` the activation memory of one window (and buys per-call overhead, not a `k x` speedup); on any GPU allocation failure - `out of memory`, `CUBLAS_STATUS_ALLOC_FAILED`, `CUDNN_STATUS_ALLOC_FAILED`, `cudaErrorMemoryAllocation`, an illegal memory access or `torch.OutOfMemoryError` - the whole signal is retried at batch 1. `AUDIO_CHUNK_WORKERS` is a deprecated alias that now sets this and logs a warning. See `docs/chunk_concurrency.md`. |
 | `AUDIO_VISUAL_MASK_MODE` | `keep_object` | `keep_object` keeps the object and zeroes the background (the paper's `V ⊙ M`); `notebook` zeroes the object, as the official notebook does. Upstream issue #75 is unresolved, so this is an A/B switch. |
 | `AUDIO_LOAD_SPAN_PREDICTOR` | `true` | `false` drops the multi-billion-parameter PE-A-Frame span predictor (big memory saving, no span prediction). |
 | `AUDIO_LOAD_RANKERS` | `true` | `false` drops the CLAP/Judge/ImageBind re-rankers (only used when `AUDIO_RERANKING_CANDIDATES > 1`). |
@@ -75,12 +75,12 @@ The GPU override requests one NVIDIA device and sets `AUDIO_DEVICE=cuda`; model 
 
 The default response contains IEEE float32 WAV stems. This preserves values outside [-1, 1] so the target and residual can reconstruct the mixture without clipping. Explicit `options.output_format=pcm_s16le` is a lossy compatibility option. The backend inference timeout defaults to 3600 seconds and is configurable via `INFERENCE_TIMEOUT_SECONDS`; retry failed jobs by submitting a new process request. A long timeout does not guarantee completion for all inputs and hardware.
 
-Text-prompted audio uses overlapping windows (10 seconds in the cloud configuration) with crossfades for aligned reassembly. `AUDIO_CHUNK_WORKERS` bounds parallel windows within a single loaded model; requests are serialized to avoid multiplying GPU usage. Visual-prompted selections still run as a single aligned interval and are not parallelized by this setting.
+Text-prompted audio uses overlapping windows (10 seconds in the cloud configuration) with crossfades for aligned reassembly. `AUDIO_CHUNK_BATCH` bounds how many of those windows go into one model batch; concurrent requests are still serialized so the setting does not multiply GPU usage across requests. Visual-prompted selections run as a single aligned interval and ignore this setting.
 
-**Known regression (investigation needed):** A real video failed during SAM Audio Large inference on the RunPod A40 after two concurrent 10-second chunk workers were enabled. The processing job returned:
+**Fixed: the `[16, 32, 3]` inference failure (was "known regression" in PR #18).** Running chunk windows on a thread pool against the one shared model raced `WatermarkEncoderBlock.forward_no_conv` in the DAC-VAE decoder (`dacvae/model/dacvae.py:326-332`), which swaps a `Conv1d(1, 32, 7)` for `nn.Identity()` for the duration of its own forward pass. A second thread then read a 1-channel tensor where 32 channels were expected and raised:
 
 ```text
 INFERENCE_FAILURE: RuntimeError: Given groups=1, weight of size [16, 32, 3], expected input[2, 1, 480002] to have 32 channels, but got 1 channels instead
 ```
 
-The exact input and trigger have not been isolated, and the cause has not been confirmed. The earlier synthetic 26-second concurrency test passed; it does not establish that real videos work. Investigate model thread safety/shared state, CUDA streams and chunk boundaries, including the `480002`-sample input, and compare with `AUDIO_CHUNK_WORKERS=1`. Set `AUDIO_CHUNK_WORKERS=1` as a possible diagnostic workaround, not a verified fix. Do not include private media or credentials in bug reports.
+Windows are now batched instead of threaded: the engine hands up to `AUDIO_CHUNK_BATCH` windows to the backend in one processor batch and one `model.separate` call, and the backend serializes all model access with a lock. `AUDIO_CHUNK_WORKERS` keeps working as a deprecated alias for `AUDIO_CHUNK_BATCH`. The full analysis, the memory implications and the operator guidance are in [`docs/chunk_concurrency.md`](docs/chunk_concurrency.md). Do not include private media or credentials in bug reports.

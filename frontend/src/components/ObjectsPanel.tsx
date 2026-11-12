@@ -42,6 +42,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
   const [run, setRun] = useState<DetectionRun>(IDLE)
   const abort = useRef<AbortController | null>(null)
   const followed = useRef<string | null>(null)
+  const section = useRef<HTMLElement>(null)
   useEffect(() => () => abort.current?.abort(), [])
 
   const tracks = useMemo(() => (visual ? objectTracks(visual) : []), [visual])
@@ -50,6 +51,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
 
   const start = async (work: (signal: AbortSignal, update: (r: DetectionRun) => void) => Promise<boolean>) => {
     abort.current?.abort()
+    section.current?.scrollIntoView?.({ block: 'nearest' })
     const controller = new AbortController(); abort.current = controller
     const update = (next: DetectionRun) => { if (!controller.signal.aborted) setRun(next) }
     try {
@@ -114,7 +116,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
   const progress = run.phase === 'detecting' ? run.progress : undefined
 
   return (
-    <section aria-label="Objects" className="space-y-2 rounded-lg border border-line bg-white/[0.02] p-2 text-xs">
+    <section ref={section} aria-label="Objects" className="space-y-2 rounded-lg border border-line bg-white/[0.02] p-2 text-xs">
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-semibold text-zinc-100">Objects</h3>
         <span className="text-[10px] text-zinc-500">Experimental</span>
@@ -135,16 +137,18 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
           Find objects in video
         </button>
       )}
-      {run.phase === 'failed' && run.status === 422 && canPrepare && !status.running && (
+      {run.phase === 'failed' && run.status === 422 && !status.running && (canPrepare ? (
         <div className="space-y-1">
-          <p className="text-zinc-400">Re-encode a compatible copy and try again. The uploaded file is kept.</p>
-          <button type="button" className="rounded-lg border border-line px-3 py-1.5 text-zinc-200 disabled:opacity-40" disabled={disabled} onClick={() => void prepareThenDetect()}>Prepare compatible copy</button>
+          <p className="text-zinc-400">This server did not re-encode the video itself. Prepare a compatible copy here and detection runs again; the uploaded file is kept.</p>
+          <button type="button" className="rounded-lg bg-accent px-3 py-1.5 font-medium text-black disabled:opacity-40" disabled={disabled} onClick={() => void prepareThenDetect()}>Prepare a compatible copy</button>
         </div>
-      )}
+      ) : (
+        <p className="text-zinc-400">A compatible copy can only be prepared before any sound is separated. Start a new project from this video to analyse it.</p>
+      ))}
       {tracks.length > 0 && (
         <>
           <p className="text-zinc-500">Pick an object to guide separation. A visible object may be silent.</p>
-          <ul aria-label="Detected objects" className="max-h-40 space-y-0.5 overflow-y-auto">
+          <ul aria-label="Detected objects" className="max-h-32 space-y-0.5 overflow-y-auto">
             {tracks.map((t) => {
               const selected = selection?.track_id === t.trackId
               return (

@@ -45,10 +45,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-export interface PollOptions {
+export interface PollOptions<S extends JobStatus = JobStatus> {
   intervalMs?: number
   signal?: AbortSignal
-  onUpdate?: (status: JobStatus) => void
+  onUpdate?: (status: S) => void
 }
 
 /**
@@ -57,10 +57,10 @@ export interface PollOptions {
  * MAX_POLL_FAILURES consecutive getStatus errors, or with the signal's reason
  * when aborted.
  */
-export async function pollJob(
-  getStatus: (signal?: AbortSignal) => Promise<JobStatus>,
-  opts: PollOptions = {},
-): Promise<JobStatus> {
+export async function pollJob<S extends JobStatus = JobStatus>(
+  getStatus: (signal?: AbortSignal) => Promise<S>,
+  opts: PollOptions<S> = {},
+): Promise<S> {
   const { intervalMs = DEFAULT_POLL_MS, signal, onUpdate } = opts
   let failures = 0
   for (;;) {

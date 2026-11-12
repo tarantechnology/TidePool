@@ -11,11 +11,12 @@ from typing import Literal
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
-from .core import MAX_UPLOAD, connect, digest, event, init, probe, project_dir, run, stem, uid
+from .core import MAX_UPLOAD, connect, digest, event, init, max_passes, probe, project_dir, run, stem, uid
 from .guidance import Guidance, SoundPrompt, EditScope, validate_timing, options, description
 from .commands import parse
 from .agent import AgentRequest, AgentError, plan as agent_plan
 from .worker import enqueue, loop, stop
+from .refine import is_residual
 from .visual import file_sha256, prepare_payload, reject_media_refs, validate_timeline
 
 @asynccontextmanager
@@ -90,10 +91,19 @@ class Process(BaseModel):
     profile: Literal["preview", "quality"]="preview"
     append: bool=False
     reranking_candidates: int=Field(default=1,ge=1,le=4)
+    passes: int | None=None
     @model_validator(mode='after')
     def within_prompt_cap(self):
         if len(self.prompts)>max_prompts(): raise ValueError(f'At most {max_prompts()} prompts per job')
+        check_passes(self.passes)
         return self
+
+def check_passes(passes):
+    if passes is not None and not 1<=passes<=max_passes(): raise ValueError(f'passes must be between 1 and {max_passes()}')
+
+def with_passes(opts, passes):
+    """Forward passes only when asked; the audio service defaults to one."""
+    return opts if passes is None else {**opts,'passes':passes}
 
 class CandidateRequest(BaseModel):
     stem_id: str | None=None
@@ -103,6 +113,18 @@ class CandidateRequest(BaseModel):
     visual_prompt: dict | None=None
     prompt: str=Field(min_length=1,max_length=200)
     reranking_candidates: int=Field(default=1,ge=1,le=4)
+    passes: int | None=None
+    @model_validator(mode='after')
+    def passes_in_range(self):
+        check_passes(self.passes)
+        return self
+
+class RefineRequest(BaseModel):
+    passes: int | None=None
+    @model_validator(mode='after')
+    def passes_in_range(self):
+        check_passes(self.passes)
+        return self
 
 class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
@@ -240,6 +262,12 @@ def visual(pid: str, body: dict, authorization: str | None=Header(None)):
     with connect() as db: db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(body),pid))
     return {'status':'saved'}
 
+def refuse_during_refine(pid):
+    """A refine job rewrites the target and residual files; queued work must not snapshot them."""
+    with connect() as db:
+        if db.execute("SELECT 1 FROM jobs WHERE project_id=? AND kind='refine' AND status IN ('queued','processing')",(pid,)).fetchone():
+            raise HTTPException(409,'Wait for the active refine job to finish.')
+
 def start(pid,kind,payload):
     try: return enqueue(pid,kind,payload)
     except sqlite3.IntegrityError: raise HTTPException(409,'A job of this type is already active')
@@ -276,14 +304,15 @@ def service_capabilities(pid: str, authorization: str | None=Header(None)):
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
+    refuse_during_refine(pid)
     if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
         raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
     try: validate_timing(body.prompts,body.guidance,body.edit_scope,probe(p['audio'])['duration'])
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     if body.edit_scope.action != 'keep' and len(body.prompts)!=1: raise HTTPException(422,'An edit requires exactly one sound target')
-    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile'})
+    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes'})
     payload['anchors']=body.guidance.model_dump()['anchors']
-    payload['options']=options(body.profile,body.reranking_candidates)
+    payload['options']=with_passes(options(body.profile,body.reranking_candidates),body.passes)
     with connect() as db: payload['_baseline']={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
     if body.append:
         with connect() as db: rows=db.execute("SELECT id,revision,start_offset FROM stems WHERE project_id=? AND lower(name)='residual'",(pid,)).fetchall()
@@ -298,6 +327,7 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
 def create_candidate(pid: str, body: CandidateRequest, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
+    refuse_during_refine(pid)
     with connect() as db: rows=db.execute('SELECT * FROM stems WHERE project_id=?',(pid,)).fetchall()
     targets=[r for r in rows if r['id']==body.stem_id and r['name'].lower()!='residual']
     residuals=[r for r in rows if r['name'].lower()=='residual']
@@ -317,7 +347,7 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
               'residual_id':residuals[0]['id'] if residuals else None}
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
-             'profile':body.profile, 'options':{**options(body.profile,body.reranking_candidates),'seed':secrets.randbelow(2**31)},
+             'profile':body.profile, 'options':{**with_passes(options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},
              '_candidate':snapshot}
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
@@ -360,6 +390,28 @@ def apply_candidate(cid: str,authorization: str | None=Header(None)):
 def undo_candidate(cid: str,authorization: str | None=Header(None)):
     from .candidates import undo
     return undo(candidate_record(cid,authorization))
+
+@app.post('/api/projects/{pid}/stems/{sid}/refine',status_code=202)
+def refine_stem(pid: str, sid: str, body: RefineRequest=RefineRequest(), authorization: str | None=Header(None)):
+    """Rerun the stem's prompt on the residual and fold what it finds back into the stem."""
+    auth(pid,authorization)
+    with connect() as db:
+        rows=db.execute('SELECT * FROM stems WHERE project_id=?',(pid,)).fetchall()
+        busy=db.execute("SELECT kind FROM jobs WHERE project_id=? AND status IN ('queued','processing') LIMIT 1",(pid,)).fetchone()
+    target=next((r for r in rows if r['id']==sid),None)
+    if not target: raise HTTPException(404,'Stem not found')
+    if is_residual(target) or target['role'] not in (None,'target'): raise HTTPException(409,'Only a target stem can be refined; the residual is what refinement searches.')
+    residuals=[r for r in rows if is_residual(r)]
+    if len(residuals)!=1: raise HTTPException(409,'Refining requires exactly one residual stem in the project.')
+    if busy: raise HTTPException(409,f"Wait for the active {busy['kind']} job to finish before refining.")
+    if target['start_offset']!=0 or residuals[0]['start_offset']!=0: raise HTTPException(409,'Reset the start offset of the stem and the residual to zero before refining.')
+    payload={'stem_id':sid,'residual_stem_id':residuals[0]['id'],'passes':body.passes or 1,
+             'revisions':{sid:target['revision'],residuals[0]['id']:residuals[0]['revision']}}
+    return {'job_id':start(pid,'refine',payload),'status':'queued'}
+
+@app.get('/api/refine-jobs/{jid}')
+def refine_job(jid: str, authorization: str | None=Header(None)):
+    return get_job(jid,'refine',authorization)
 
 @app.get('/api/jobs/{jid}')
 def job(jid: str, authorization: str | None=Header(None)): return get_job(jid,'process',authorization)

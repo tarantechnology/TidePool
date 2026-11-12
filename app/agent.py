@@ -41,6 +41,10 @@ Use kind=separate for isolating a sound not already in a matching editable stem.
 Use kind=edit for existing stems only. Choose exact stemId from supplied stems. Actions: set_gain value 0..2; set_mute muted boolean; set_solo solo boolean; set_automation keyframes [{t,value}] replaces entire curve (preserve existing points as needed; linear interpolation); clear_automation; follow_intensity sourceStemIds,minValue,maxValue (follows loudness, not emotion). Gain automation multiplies the track fader. Timed mute needs keyframes and must preserve the rest of the curve, else ask. No edits outside timeline. Do not mix a separation with edit actions. For clarify or separate actions must be empty. Null all fields irrelevant to an action. Use a short user-facing message.'''
 
 
+ALREADY_SEPARATED = {'kind': 'clarify', 'message': 'This project already has separated stems; '
+                     'describe an edit (mute, volume, automation) or create a new project to separate again.'}
+
+
 def _key():
     key = os.getenv('OPENAI_API_KEY', '').strip()
     if not key and os.getenv('OPENAI_API_KEY_FILE'):
@@ -72,7 +76,9 @@ def plan(body: AgentRequest):
         data=json.loads(texts[0])
         if data.get('kind') not in ('edit','separate','clarify') or not isinstance(data.get('actions'),list) or len(data['actions'])>20 or not isinstance(data.get('message'),str): raise ValueError('invalid plan')
         if data['kind']=='separate':
-            if body.has_project_stems or not isinstance(data.get('description'),str) or not data['description'].strip() or len(data['description'])>200 or not isinstance(data.get('remove'),bool) or data['actions']: raise ValueError('invalid separation')
+            # Separation replaces existing stems, so ask instead of failing the request.
+            if body.has_project_stems: return dict(ALREADY_SEPARATED)
+            if not isinstance(data.get('description'),str) or not data['description'].strip() or len(data['description'])>200 or not isinstance(data.get('remove'),bool) or data['actions']: raise ValueError('invalid separation')
         elif data['kind']=='clarify' and data['actions']: raise ValueError('invalid clarification')
         # Strip null placeholders; the frontend validates every action against actual stems and duration.
         data['actions']=[{k:v for k,v in a.items() if v is not None} for a in data['actions']]

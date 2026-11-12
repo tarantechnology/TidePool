@@ -154,6 +154,9 @@ def test_project_resume_and_original_media(client, tmp_path):
     response=client.get(f'/api/projects/{pid}/original',headers=h)
     assert response.status_code==200 and response.content==video.read_bytes()
     assert client.get(f'/api/projects/{pid}/preview').status_code==401
+    import app.core as core
+    prepared=core.project_dir(pid)/'extracted'/'preview.mp4'
+    assert prepared.exists(), 'upload should transcode the preview, not GET /preview'
     preview=client.get(f'/api/projects/{pid}/preview',headers=h); assert preview.status_code==200
     path=tmp_path/'preview.mp4'; path.write_bytes(preview.content)
     codec=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','csv=p=0',str(path)],text=True).strip()
@@ -162,6 +165,28 @@ def test_project_resume_and_original_media(client, tmp_path):
     assert wait(client,'/api/jobs/'+job,h)['status']=='completed'
     project=client.get(f'/api/projects/{pid}',headers=h).json()
     assert project['latest_job']=={'id':job,'status':'completed'} and project['last_completed_job_id']==job
+
+
+def test_preview_of_odd_dimension_video(client, tmp_path):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    video=tmp_path/'odd.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=c=green:s=65x65:r=10:d=1',
+                    '-f','lavfi','-i','sine=duration=1','-c:v','mpeg4','-c:a','aac','-shortest',str(video)],check=True)
+    with video.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('odd.mp4',f)}).status_code==200
+    import app.core as core
+    prepared=core.project_dir(pid)/'extracted'/'preview.mp4'
+    assert prepared.exists()
+    response=client.get(f'/api/projects/{pid}/preview',headers=h)
+    assert response.status_code==200, response.text
+    out=tmp_path/'preview.mp4'; out.write_bytes(response.content)
+    # The preview is video-only, so probe the stream directly: yuv420p needs even sides.
+    size=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries',
+                                  'stream=width,height,codec_name','-of','csv=p=0',str(out)],text=True).strip()
+    assert size=='h264,64,64', size
+    # Pre-existing projects without a stored preview transcode lazily on first request.
+    prepared.unlink()
+    assert client.get(f'/api/projects/{pid}/preview',headers=h).status_code==200
+    assert prepared.exists()
 
 
 def test_visual_analysis_job_orchestration(client, tmp_path, monkeypatch):
@@ -204,3 +229,121 @@ def test_agent_requires_project_access_and_sanitizes_model_output(client, monkey
     assert captured['model']=='gpt-6-luna' and captured['store'] is False
     response['output'][0]['content'][0]['text']='not json'
     assert client.post(f'/api/projects/{pid}/agent',headers=h,json=body).status_code==502
+
+
+def test_audio_service_error_code_and_retryable_are_exposed(client, tmp_path, monkeypatch):
+    import httpx
+    import app.media as media
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://mock.invalid/separate')
+    body={'detail':'native frame is missing','error':{'code':'INVALID_REQUEST','message':'native frame is missing','retryable':False,'details':{'frame':10}}}
+    monkeypatch.setattr(media.httpx,'post',lambda url, **kwargs: httpx.Response(400,request=httpx.Request('POST',url),json=body))
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog']}).json()['job_id']
+    job=wait(client,'/api/jobs/'+jid,h)
+    assert job['status']=='failed'
+    assert job['error']=='INVALID_REQUEST: native frame is missing'
+    assert job['error_code']=='INVALID_REQUEST' and job['retryable'] is False
+
+
+def test_unstructured_failures_have_no_error_code(client, tmp_path, monkeypatch):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://127.0.0.1:1/separate')
+    job=wait(client,'/api/jobs/'+client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog']}).json()['job_id'],h)
+    assert job['status']=='failed' and job['error_code'] is None and job['retryable'] is None
+
+
+def test_prompt_cap_rejects_over_limit_jobs_before_queueing(client, tmp_path, monkeypatch):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    assert client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':[f'p{i}' for i in range(9)]}).status_code==422
+    monkeypatch.setenv('MAX_PROMPTS','2')
+    assert client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['a','b','c']}).status_code==422
+    assert client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['a','b']}).status_code==202
+
+
+def test_stem_metadata_from_the_audio_service_is_persisted(client, tmp_path, monkeypatch):
+    import base64
+    import httpx
+    import app.media as media
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.2','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://mock.invalid/separate')
+    def mock_post(url, files, **kwargs):
+        raw=base64.b64encode(files['audio'][1].read()).decode()
+        return httpx.Response(200,request=httpx.Request('POST',url),json={'stems':[
+            {'name':'siren','audio_base64':raw,'stem_id':'abc123','role':'target','prompt':'siren','label':'siren',
+             'start_time':0.0,'duration':0.2,'sample_rate':48000,'channels':2,'sample_count':9600,
+             'format':'wav/pcm_f32le','spans':[[0.0,0.2]],'source_asset_id':pid},
+            {'name':'residual','audio_base64':raw,'stem_id':'def456','role':'residual','label':'everything else',
+             'start_time':0.0,'duration':0.2,'sample_rate':48000,'channels':2,'format':'wav/pcm_f32le'}],
+            'model':{'is_mock':True},'warnings':[],'contract_version':'2025-11-draft-1'})
+    monkeypatch.setattr(media.httpx,'post',mock_post)
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['siren']}).json()['job_id']
+    job=wait(client,'/api/jobs/'+jid,h); assert job['status']=='completed',job
+    target,residual=job['stems']
+    assert (target['role'],target['source_stem_id'],target['prompt'],target['label'])==('target','abc123','siren','siren')
+    assert (target['sample_rate'],target['channels'],target['format'])==(48000,2,'wav/pcm_f32le')
+    assert target['spans']==[[0.0,0.2]]
+    assert residual['role']=='residual' and residual['label']=='everything else' and residual['spans'] is None
+    assert residual['prompt'] is None
+    listed=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [s['role'] for s in listed]==['target','residual']
+    assert client.get(f'/api/projects/{pid}',headers=h).json()['stems'][0]['spans']==[[0.0,0.2]]
+
+
+def test_fake_adapter_fills_role_prompt_and_label(client, tmp_path):
+    p=client.post('/api/projects').json(); pid=p['project_id']; h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.2',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog','music']}).json()['job_id']
+    stems=wait(client,'/api/jobs/'+jid,h)['stems']
+    assert [(s['name'],s['role'],s['prompt'],s['label']) for s in stems]==[('dog','target','dog','dog'),('music','target','music','music')]
+    assert all(s['role']!='residual' for s in stems)
+    assert all(s['spans'] is None and s['source_stem_id'] is None for s in stems)
+
+
+def test_planner_asks_instead_of_separating_over_existing_stems(monkeypatch):
+    import json
+    import app.agent as agent
+    monkeypatch.setenv('OPENAI_API_KEY','not-a-real-key')
+    plan={'kind':'separate','description':'a person narrating','remove':False,'actions':[],'message':'I will separate the narration.'}
+    class MockResponse:
+        is_error=False
+        def json(self): return {'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(plan)}]}]}
+    monkeypatch.setattr(agent.httpx,'post',lambda url, **kwargs: MockResponse())
+    body=agent.AgentRequest(prompt='isolate the narrator',stems=[],tracks=[],duration=10,has_project_stems=True)
+    result=agent.plan(body)
+    assert result['kind']=='clarify' and 'already has separated stems' in result['message']
+    body.has_project_stems=False
+    assert agent.plan(body)['kind']=='separate'
+
+
+def test_existing_database_gains_stem_and_job_metadata_columns(tmp_path, monkeypatch):
+    import sqlite3
+    import app.core as core
+    path=tmp_path/'legacy.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE stems(id TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO stems(id) VALUES('old')")
+        db.execute('CREATE TABLE jobs(id TEXT PRIMARY KEY, project_id TEXT, kind TEXT, status TEXT, progress INTEGER)')
+        db.execute("INSERT INTO jobs(id,project_id,kind,status,progress) VALUES('j','p','process','queued',0)")
+    monkeypatch.setattr(core,'DB',path)
+    core.init(); core.init()  # migration is safe to repeat
+    with core.connect() as db:
+        row=db.execute("SELECT * FROM stems WHERE id='old'").fetchone()
+        assert row['role'] is None and row['spans'] is None and row['source_stem_id'] is None
+        assert row['prompt'] is None and row['label'] is None and row['format'] is None
+        assert row['sample_rate'] is None and row['channels'] is None
+        job=db.execute("SELECT * FROM jobs WHERE id='j'").fetchone()
+        assert job['error_code'] is None and job['retryable'] is None

@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 from .core import connect, event, project_dir, probe, run, stem, uid
-from .media import separate, export
+from .media import InferenceError, separate, export
 from .messaging import provider
 from .visual import project_source
 
@@ -39,11 +39,17 @@ def work_once():
             inference={}
             results=separate(p['audio'],project_dir(pid)/'stems',payload,report=inference)
             items=[]
-            for name,path in results:
-                info=probe(path); items.append((uid(),pid,name,str(path),info['duration']))
+            for result in results:
+                info=probe(result['path'])
+                # Stem metadata as the audio service reported it; NULL where it said nothing.
+                spans=result.get('spans')
+                items.append((uid(),pid,result['name'],str(result['path']),info['duration'],
+                              result.get('role'),result.get('source_stem_id'),result.get('prompt'),result.get('label'),
+                              result.get('sample_rate'),result.get('channels'),result.get('format'),
+                              json.dumps(spans) if spans is not None else None))
             with connect() as db:
                 db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
-                db.executemany('INSERT INTO stems(id,project_id,name,path,duration) VALUES(?,?,?,?,?)',items)
+                db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',items)
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
@@ -69,9 +75,12 @@ def work_once():
             except Exception as exc: event('notification_failed', job_id=job['id'], error=str(exc))
         event('job_completed',job_id=job['id'])
     except Exception as e:
-        event('job_failed',job_id=job['id'],error=str(e))
+        # Only the audio service reports structured error codes.
+        code=e.code if isinstance(e,InferenceError) else None
+        retryable=e.retryable if isinstance(e,InferenceError) else None
+        event('job_failed',job_id=job['id'],error=str(e),error_code=code,retryable=retryable)
         with connect() as db:
-            db.execute("UPDATE jobs SET status='failed',error=? WHERE id=?",(str(e)[:1000],job['id']))
+            db.execute("UPDATE jobs SET status='failed',error=?,error_code=?,retryable=? WHERE id=?",(str(e)[:1000],code,retryable,job['id']))
             if job['kind']=='process': db.execute("UPDATE projects SET status='failed' WHERE id=?",(pid,))
     return True
 

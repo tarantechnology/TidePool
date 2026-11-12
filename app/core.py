@@ -26,6 +26,13 @@ def connect():
     db.execute('PRAGMA busy_timeout=30000')
     return db
 
+# Columns added after the first release. The audio service reports the stem fields; they
+# stay NULL for the fake adapter and for stems created before it returned them.
+STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
+                ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
+                ('format', 'TEXT'), ('spans', 'TEXT'))
+JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'))
+
 def init():
     with connect() as db:
         db.executescript('''
@@ -35,8 +42,11 @@ def init():
         CREATE UNIQUE INDEX IF NOT EXISTS one_active ON jobs(project_id,kind) WHERE status IN ('queued','processing');
         CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         ''')
-        if "revision" not in {row[1] for row in db.execute("PRAGMA table_info(stems)")}:
-            db.execute("ALTER TABLE stems ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+        # Guarded migrations: existing SQLite files upgrade in place, repeatedly safe.
+        for table, columns in (('stems', STEM_COLUMNS), ('jobs', JOB_COLUMNS)):
+            present = {row[1] for row in db.execute(f'PRAGMA table_info({table})')}
+            for column, declaration in columns:
+                if column not in present: db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {declaration}')
         db.execute("UPDATE jobs SET status='queued', progress=0 WHERE status='processing'")
 
 def digest(token): return hashlib.sha256(token.encode()).hexdigest()
@@ -68,6 +78,7 @@ def stem(row):
     d = dict(row)
     d['muted'], d['solo'] = bool(d['muted']), bool(d['solo'])
     d['automation'], d['mute_ranges'] = json.loads(d['automation']), json.loads(d['mute_ranges'])
+    d['spans'] = json.loads(d['spans']) if d.get('spans') else None
     d.pop('path')
     d['audio_url'] = f"/api/projects/{d['project_id']}/stems/{d['id']}/audio"
     return d

@@ -106,6 +106,22 @@ def _native_frames(selection: dict, fps: float) -> int:
     return max(0, math.ceil(end * fps - 1e-6) - max(0, math.ceil(start * fps - 1e-6)))
 
 
+def _first_native_frame(selection: dict, fps: float) -> int:
+    return max(0, math.ceil(_interval(selection)[0] * fps - 1e-6))
+
+
+def _masked_frame_indices(detections: dict, selection: dict) -> set[int]:
+    """Frames inside the interval where the selected track actually carries an instance mask."""
+    start, end = _interval(selection)
+    return {
+        int(frame["frame_index"])
+        for frame in detections["frames"]
+        for obj in frame["objects"]
+        if obj.get("track_id") == selection["track_id"] and obj.get("mask")
+        and start - 1e-7 <= frame["timestamp_seconds"] < end - 1e-7
+    }
+
+
 def _translate(detections, selection, video, settings, duration):
     return translate_visual_prompt(
         {"selection": selection, "detections": detections},
@@ -149,13 +165,7 @@ def test_translate_real_documents(artefacts, probe, settings):
     assert ("+", *visual.interval) in translation.anchors
 
     # Exactly the selected track's masked observations, decoded at native resolution.
-    expected = {
-        int(frame["frame_index"])
-        for frame in detections["frames"]
-        for obj in frame["objects"]
-        if obj.get("track_id") == selection["track_id"] and obj.get("mask")
-        and _interval(selection)[0] - 1e-7 <= frame["timestamp_seconds"] < _interval(selection)[1] - 1e-7
-    }
+    expected = _masked_frame_indices(detections, selection)
     assert expected, "the selected track has no instance masks in the detections document"
     assert set(visual.frame_masks) == expected
     for index, mask in visual.frame_masks.items():
@@ -199,14 +209,8 @@ def test_prepare_masked_video_from_real_masks(artefacts, probe, settings):
     per_frame = object_mask.reshape(expected_frames, -1).sum(axis=1)
     assert (per_frame > 0).sum() >= 1
     # Frames where their document has no observation of the track stay empty; never reused.
-    masked_indices = {
-        int(frame["frame_index"])
-        for frame in detections["frames"]
-        for obj in frame["objects"]
-        if obj.get("track_id") == selection["track_id"] and obj.get("mask")
-        and _interval(selection)[0] - 1e-7 <= frame["timestamp_seconds"] < _interval(selection)[1] - 1e-7
-    }
-    first_index = max(0, math.ceil(_interval(selection)[0] * float(detections["fps"]) - 1e-6))
+    masked_indices = _masked_frame_indices(detections, selection)
+    first_index = _first_native_frame(selection, float(detections["fps"]))
     for offset, count in enumerate(per_frame):
         if first_index + offset not in masked_indices:
             assert count == 0, f"frame {first_index + offset} has no mask but is not empty"

@@ -7,78 +7,18 @@ Person 4's code is imported, never modified.
 """
 from __future__ import annotations
 
-import base64
-import importlib
-import io
-import socket
 import subprocess
-import sys
-import threading
-import time
-import wave
 from pathlib import Path
 
 import numpy as np
 import pytest
-import uvicorn
 
-REPO = Path(__file__).resolve().parents[2]
+from conftest import REPO, wait_for_job
+
+# The live audio service (``audio_service``) and Person 4's backend (``backend_client``,
+# ``storage_root``) come from ``tests/conftest.py``; both modules that drive the real
+# backend share that one copy.
 pytestmark = pytest.mark.skipif(not (REPO / "app" / "main.py").exists(), reason="Person 4 backend not present")
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture
-def audio_service(tmp_path, monkeypatch):
-    monkeypatch.setenv("AUDIO_BACKEND", "mock")
-    monkeypatch.setenv("AUDIO_MEDIA_ROOT", str(tmp_path))
-    from sam_audio_service.api import create_app
-    from sam_audio_service.config import load_settings
-
-    port = _free_port()
-    config = uvicorn.Config(create_app(load_settings()), host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if server.started:
-            break
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}/separate"
-    server.should_exit = True
-    thread.join(timeout=5)
-
-
-@pytest.fixture
-def backend_client(tmp_path, monkeypatch, audio_service):
-    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
-    monkeypatch.setenv("INFERENCE_ADAPTER", "http")
-    monkeypatch.setenv("SAM_AUDIO_SERVICE_URL", audio_service)
-    monkeypatch.syspath_prepend(str(REPO))
-    for name in [m for m in list(sys.modules) if m == "app" or m.startswith("app.")]:
-        sys.modules.pop(name)
-    core = importlib.import_module("app.core")
-    core.ROOT = tmp_path / "storage"
-    core.ROOT.mkdir(parents=True, exist_ok=True)
-    core.DB = core.ROOT / "db.sqlite"
-    main = importlib.import_module("app.main")
-    from fastapi.testclient import TestClient
-
-    with TestClient(main.app) as client:
-        yield client, core
-
-
-def _wait(client, url, headers):
-    for _ in range(400):
-        data = client.get(url, headers=headers).json()
-        if data["status"] in ("completed", "failed"):
-            return data
-        time.sleep(0.05)
-    pytest.fail("job timed out")
 
 
 def _demo_video(path: Path) -> Path:
@@ -107,7 +47,7 @@ def test_backend_to_audio_and_export(backend_client, tmp_path):
 
     r = client.post(f"/api/projects/{pid}/process", headers=headers, json={"prompts": ["siren"]})
     assert r.status_code == 202, r.text
-    job = _wait(client, "/api/jobs/" + r.json()["job_id"], headers)
+    job = wait_for_job(client, "/api/jobs/" + r.json()["job_id"], headers)
     assert job["status"] == "completed", job
     names = [s["name"] for s in job["stems"]]
     assert names == ["siren", "residual"], names  # target + "everything else", as documented
@@ -127,7 +67,7 @@ def test_backend_to_audio_and_export(backend_client, tmp_path):
     assert r.status_code == 200, r.text
     r = client.post(f"/api/projects/{pid}/export", headers=headers, json={"format": "mp4", "include_video": True})
     assert r.status_code == 202, r.text
-    result = _wait(client, "/api/exports/" + r.json()["export_id"], headers)
+    result = wait_for_job(client, "/api/exports/" + r.json()["export_id"], headers)
     assert result["status"] == "completed", result
     out = tmp_path / "export.mp4"
     out.write_bytes(client.get(result["download_url"], headers=headers).content)
@@ -145,7 +85,7 @@ def test_backend_surfaces_audio_service_error(backend_client, tmp_path):
     with tone.open("rb") as f:
         assert client.post(f"/api/projects/{pid}/upload", headers=headers, files={"file": ("tone.wav", f, "audio/wav")}).status_code == 200
     r = client.post(f"/api/projects/{pid}/process", headers=headers, json={"prompts": ["a" * 600]})
-    job = _wait(client, "/api/jobs/" + r.json()["job_id"], headers)
+    job = wait_for_job(client, "/api/jobs/" + r.json()["job_id"], headers)
     assert job["status"] == "failed" and job["error"]
 
 
@@ -191,7 +131,7 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     request={'prompts':['person'], 'visual_prompt':selection}
     start=client.post(f'/api/projects/{pid}/process',headers=h,json=request)
     assert start.status_code==202, start.text
-    result=_wait(client, '/api/jobs/'+start.json()['job_id'],h)
+    result=wait_for_job(client, '/api/jobs/'+start.json()['job_id'],h)
     assert result['status']=='completed', result
     assert calls
     assert result['inference']['model']['is_mock'] is True
@@ -206,7 +146,7 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     stem=result['stems'][0]
     assert client.patch(f"/api/projects/{pid}/stems/{stem['id']}",headers=h,json={'volume':.5}).status_code==200
     export=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'mp4','include_video':True}).json()['export_id']
-    result=_wait(client,'/api/exports/'+export,h)
+    result=wait_for_job(client,'/api/exports/'+export,h)
     assert result['status']=='completed', result
     out=tmp_path/'visual-export.mp4'; out.write_bytes(client.get(result['download_url'],headers=h).content)
     streams=subprocess.check_output(['ffprobe','-v','error','-show_entries','stream=codec_type','-of','csv=p=0',str(out)],text=True)
@@ -224,7 +164,7 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     for edit, expected in [({'muted':True},stems[1]), ({'muted':False,'solo':True},.5*stems[0])]:
         assert client.patch(f"/api/projects/{pid}/stems/{stem['id']}",headers=h,json=edit).status_code==200
         eid=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}).json()['export_id']
-        done=_wait(client,'/api/exports/'+eid,h)
+        done=wait_for_job(client,'/api/exports/'+eid,h)
         assert done['status']=='completed',done
         edited=decode(data=client.get(done['download_url'],headers=h).content).samples
         np.testing.assert_allclose(edited[:,:expected.shape[1]],expected,atol=1/32768)

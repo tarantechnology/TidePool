@@ -27,8 +27,13 @@ def encode_mask(mask: np.ndarray) -> dict:
     return {"encoding": "rle", "order": "C", "size": list(mask.shape), "counts": counts, "foreground_value": 1}
 
 
-def make_video(path, seconds=1.0, fps=10, size="64x48"):
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=red:s={size}:r={fps}:d={seconds}", "-c:v", "mpeg4", str(path)], check=True)
+def make_video(path, seconds=1.0, fps=10, size="64x48", audio=False):
+    """A constant-frame-rate colour clip. ``audio=True`` adds a silent stereo track, which
+    Person 4's upload endpoint requires (``app/core.py::probe`` rejects video-only media)."""
+    command = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=red:s={size}:r={fps}:d={seconds}"]
+    if audio:
+        command += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-shortest", "-c:a", "aac"]
+    subprocess.run([*command, "-c:v", "mpeg4", str(path)], check=True)
     return path
 
 

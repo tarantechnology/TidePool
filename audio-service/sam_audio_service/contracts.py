@@ -97,9 +97,27 @@ class PromptSpec(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
     text: str = Field(default="", max_length=500)
-    name: str | None = Field(default=None, max_length=200, description="Stem name shown to the user; defaults to text")
+    name: str | None = Field(default=None, max_length=500, description="Stem name shown to the user; defaults to the caller's wording of ``text``")
     anchors: list[Anchor] = Field(default_factory=list)
     visual_prompt: VisualPrompt | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_name_to_callers_wording(cls, data: Any) -> Any:
+        """Unnamed text prompts keep the caller's wording as the stem name.
+
+        Person 3's editor matches stems case-insensitively against the prompt it sent
+        (``frontend/src/components/ProjectPanel.tsx``), while ``text`` is normalised for the
+        model ("Isolate the dog barking!" -> "dog barking"). So the default stem name is the
+        caller's own wording with whitespace collapsed; case and punctuation are preserved.
+        Prompts that normalise to nothing (punctuation only) stay unnamed so ``display_name``
+        can fall back to the visual label.
+        """
+        if isinstance(data, dict) and data.get("name") is None:
+            text = data.get("text")
+            if isinstance(text, str) and normalise_description(text):
+                data = {**data, "name": " ".join(text.split())}
+        return data
 
     @field_validator("text")
     @classmethod
@@ -161,6 +179,8 @@ class SeparationMetadata(BaseModel):
     def resolved_prompts(self, max_prompts: int) -> list[PromptSpec]:
         specs: list[PromptSpec] = []
         for item in self.prompts:
+            # Both prompt forms name their stem identically: ``PromptSpec`` defaults ``name`` to the
+            # caller's wording, so the string form needs nothing beyond the text.
             spec = PromptSpec(text=item) if isinstance(item, str) else item
             if self.anchors and not spec.anchors:
                 spec = spec.model_copy(update={"anchors": list(self.anchors)})

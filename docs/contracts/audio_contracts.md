@@ -7,6 +7,17 @@ more permissive direct-call behavior below is unchanged. See [current integratio
 and real-model validation status](../../vision/docs/ISSUE4.md); genuine visual-guided
 SAM Audio inference remains unverified.
 
+**Status update (2026-11-11), Contracts A + D:** the merged backend
+(`integration/cloud-editor-gpu`) is now verified to send `metadata.source`
+(`asset_id`, `original_ref`, `sha256`, `duration`, `frame_rate`) and
+`metadata.visual_prompt = {"selection": ..., "detections": ...}` — the **envelope** shape
+(D.3) — for every visually guided job, and that payload translates into a real
+`VisualInput` with per-frame masks end to end on Person 2's real artefacts
+(`audio-service/tests/test_merged_visual_workflow.py`). The exact payload, the
+`AUDIO_MEDIA_ROOT` requirement and the remaining gaps are documented in
+[Merged workflow (PR #15/#18)](../audio_integration_handoff.md#merged-workflow-pr-1518).
+Still unverified: real visually guided inference, which needs a CUDA GPU.
+
 **Status: PROPOSED, awaiting team agreement.** Every contract below is Person 1's proposal,
 not an agreed interface. Nothing here requires another team to change code today: the audio
 service already accepts exactly what Person 4's worker sends and returns a superset of what
@@ -86,11 +97,15 @@ storage, and this contract is only the identity + locator block that travels in 
 | `frame_rate` | number | **consumed today** as `metadata.source.frame_rate` | Native CFR frame rate of `original_ref`. Used to map mask frame indices to seconds when the detections document does not carry `fps`. |
 | `width`, `height`, `has_video` | int, int, bool | advisory | Person 4 already returns these from `probe()` on upload; Person 2 carries `width`/`height` (aliases `frame_width`/`frame_height`). |
 
-**Compatibility.** Person 4 today stores media at
+**Compatibility.** Person 4 stores media at
 `STORAGE_ROOT/projects/<project_id>/original/<uid><ext>` and the extracted audio at
-`.../extracted/audio.wav`, and returns `probe()` output as `metadata` from `/upload`. All
-that is missing for Contract A is **forwarding** those paths (plus a digest) into the
-`metadata` our service receives — see Open Question 2 in the handoff doc. Person 2's exports
+`.../extracted/audio.wav`, and returns `probe()` output as `metadata` from `/upload`.
+**Implemented since PR #15:** `app/visual.py::project_source` forwards exactly
+`{asset_id, original_ref, sha256, duration, frame_rate}` as `metadata.source` for visually
+guided jobs (`audio_ref` is still not sent; `POST /separate` uploads the bytes instead), and
+`app/worker.py` re-verifies the digest when the queued job starts. The `file://` refs resolve
+only because `compose.audio.yaml` mounts the same `./storage` at the same absolute path
+`/data` in both containers (`STORAGE_ROOT` == `AUDIO_MEDIA_ROOT`). Person 2's exports
 deliberately contain no absolute local paths, so `original_ref` has to come from Person 4,
 not from Person 2.
 
@@ -150,7 +165,7 @@ Full request:
 | --- | --- | --- | --- |
 | `prompts` | array of string **or** `PromptSpec` | `[]` (then 400) | One stem per entry. Max `AUDIO_MAX_PROMPTS` (8); exceeding it is `INVALID_REQUEST`. Person 4's `Process.prompts: list[str]` is the string form. |
 | `prompts[].text` | string ≤ 500 | `""` | Normalised to a lowercase noun/verb phrase, as SAM Audio was trained ("Isolate the Siren!" → `siren`): trailing punctuation and leading `isolate (the)` / `extract (the)` / `the` are stripped. Required unless the entry has a usable visual prompt. |
-| `prompts[].name` | string ≤ 200 | `text` | The **stem name** shown to the user; becomes `stems[].name`. This is how the editor gets "Police siren" while the model gets `siren`. |
+| `prompts[].name` | string ≤ 500 | the caller's wording of `text` | The **stem name** shown to the user; becomes `stems[].name`. Omit it and we default to your own wording of `text` with whitespace collapsed — case and punctuation preserved ("Isolate the Dog!" stays `Isolate the Dog!` while the model gets `dog`), so an editor that matches stems against the prompt it sent needs no name at all. Pass it to name the stem something else ("Police siren"). Both prompt forms behave identically; a prompt that normalises to nothing (punctuation only) stays unnamed and falls back to the visual label. |
 | `prompts[].anchors` | array of `{token, start, end}` | `[]` | Span prompts. `token` is `"+"` (target audible in this span) or `"-"` (target absent). Seconds on the source timeline, clamped to the source duration. |
 | `prompts[].visual_prompt` | object | `null` | Contract D, per prompt. Overrides the top-level one for that prompt. |
 | `source` | object | `null` | Contract A subset: `asset_id`, `original_ref`, `sha256`, `duration`, `frame_rate`. **Required for mask-based visual prompting** — without `original_ref` we cannot reach the video and fall back to text + anchors with a warning. |
@@ -251,13 +266,13 @@ A committed copy with truncated base64 lives at
 
 | Field | Type | Status | Notes |
 | --- | --- | --- | --- |
-| `stems[].name` | string | **Person 4 reads this today** | `prompts[].name` or the normalised prompt text; the residual uses `options.residual_name`. Person 4 stores it as `stems.name` and matches webhook commands against it case-insensitively, so names should be short and distinct. |
+| `stems[].name` | string | **Person 4 reads this today** | `prompts[].name` if given, else the caller's wording of the prompt with whitespace collapsed (case and punctuation preserved), else Person 2's visual label; the residual uses `options.residual_name`. Person 4 stores it as `stems.name` and matches webhook commands against it case-insensitively, so the default keeps the caller's own phrasing matchable. The **normalised** phrase the model saw is `stems[].prompt`, not this. |
 | `stems[].audio_base64` | string | **Person 4 reads this today** | A complete RIFF WAV (header included), base64, no data URI prefix. Present unless `return_mode: "file"`. Capped by Person 4's `MAX_STEM_BYTES` after decoding. |
 | `stems[].audio_ref` | string | proposed | `file://` URL under `AUDIO_OUTPUT_ROOT`, present instead of `audio_base64` when `return_mode: "file"`. |
 | `stems[].stem_id` | string (32 hex) | proposed | Stable **within one response**. It is not Person 4's `stems.id` (they mint their own) — it is the correlation id between our logs and a stem. |
 | `stems[].role` | `"target"` \| `"residual"` | proposed | Exactly one `residual` unless `options.residual: "none"`. Lets the editor style "everything else" differently without string-matching the name. |
 | `stems[].prompt` | string \| null | proposed | The **normalised** text actually given to the model. `null` for the residual. |
-| `stems[].label` | string \| null | proposed | Human-readable label: the prompt name, Person 2's object label when a visual prompt was used, or `"everything else"` for the residual. |
+| `stems[].label` | string \| null | proposed | The human-facing name of the stem: Person 2's object label when the prompt carried its own visual prompt, otherwise the same value as `stems[].name` (so for a text prompt it is the caller's wording, not the normalised phrase); `"everything else"` for the residual. |
 | `stems[].start_time` | number | proposed, maps to Person 4's `start_offset` | **Always `0.0`.** Stems are full-timeline. Person 4 defaults `stems.start_offset` to 0 and lets the editor change it; our value is the initial one. |
 | `stems[].duration` | number | **Person 4 computes its own** | Equal to `source.duration` for every stem. Person 4 re-probes each WAV and stores its own `duration`; the two agree to within ffprobe's rounding (asserted < 50 ms in the executed test, in practice exact). |
 | `stems[].sample_rate` | int | proposed | Always `48000`. |
@@ -358,7 +373,10 @@ selected object — this is the shape that **can** drive the model:
 ```
 
 **3. Envelope** — the recommended shape, because it carries the selection, the per-frame
-masks and the video locator together:
+masks and the video locator together. **This is what Person 4's backend sends today**, as
+`{"selection": ..., "detections": ...}`, with the video locator arriving separately in
+`metadata.source.original_ref`; `detections_ref`, `video_ref` and `time_ranges` are
+accepted but unused by the merged workflow:
 
 ```json
 {
@@ -458,12 +476,9 @@ served at `GET /capabilities` under `error_codes`.
 | `SERVICE_BUSY` | 503 | **yes** | Reserved for admission control. Not raised today — one request at a time is serialised by a lock instead. |
 | `INTERNAL_ERROR` | 500 | no | Anything unhandled. `message` carries the exception type only. |
 
-**Compatibility.** Person 4's worker calls `httpx.raise_for_status()`, so the job error
-text is currently httpx's `"Client error '400 Bad Request' for url ..."` and `error.code`
-never reaches the user — confirmed by
-`tests/test_integration_person4_backend.py::test_backend_surfaces_audio_service_error`,
-which asserts the job fails but cannot assert *why*. Reading
-`response.json()["error"]["code"]` before raising is a ~3-line change on Person 4's side and
-is Open Question 3 in the handoff doc. Retry policy: Person 4 has no automatic retry ("to
+**Compatibility.** Person 4's worker (`app/media.py` on `integration/cloud-editor-gpu`) parses
+`error.code` and `error.message` and stores `"<CODE>: <message>"` as the job error (verified
+live: `INVALID_REQUEST: at most 8 prompts per request`); `retryable` and `details` are not yet
+persisted (Open Question 3 in the handoff doc). Retry policy: Person 4 has no automatic retry ("to
 retry, submit a new processing job"), so `retryable` is advice for a human or a future
 scheduler, not a promise that we will be retried.

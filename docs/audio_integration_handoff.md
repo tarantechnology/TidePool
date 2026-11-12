@@ -36,7 +36,7 @@ and the upstream sources.
 | Contract version | `2025-11-draft-1` (returned in every response and by `/health`) |
 | Contract details | [`docs/contracts/audio_contracts.md`](contracts/audio_contracts.md) — Contracts A–E |
 | Editor fixture | `audio-service/fixtures/editor/` + `scripts/make_editor_fixture.py` |
-| Test suite | `cd audio-service && .venv/bin/python -m pytest -q` — passes on CPU with the mock backend (145 tests at the time of writing); CI: `.github/workflows/audio-service.yml` |
+| Test suite | `cd audio-service && .venv/bin/python -m pytest -q` — passes on CPU with the mock backend; CI: `.github/workflows/audio-service.yml` |
 
 ---
 
@@ -45,12 +45,144 @@ and the upstream sources.
 | # | Test | Status | Why |
 | --- | --- | --- | --- |
 | 1 | Editor → backend → audio (Person 3) | **Blocked** — substituted | No Person 3 code exists in the repository. Substituted by `audio-service/fixtures/editor/` (a Contract C manifest + playable WAVs from `scripts/make_editor_fixture.py`) and `tests/test_editor_fixture.py`, which pin the payload the editor will consume. Executed with the **mock** backend. |
-| 2 | Vision → audio (Person 2) | **Translation half executed with Person 2's real output; model half blocked** | `audio-service/fixtures/vision/` holds `detections.json` + `selection.json` produced by Person 2's actual `yolo26n-seg` + ByteTrack pipeline on their documented pedestrian clip; `tests/test_person2_artifacts.py` drives them through our translator, frame/mask preparation and `/separate` (mock backend) with zero mismatches. Speaker-specific separation itself cannot run: no checkpoint access, no CUDA, and nothing delivers the original video or masks to the service in production yet (Open Questions 1 and 2). |
-| 3 | Backend → audio (Person 4) | **Executed, mock backend, in-process and in Docker** | `tests/test_integration_person4_backend.py` imports Person 4's real `app/` with `INFERENCE_ADAPTER=http` against a live instance of this service. Additionally the compose overlay was built and run (`docker compose -f compose.yaml -f audio-service/compose.audio.yaml up`) and `scripts/e2e_compose.py` walked create project → upload → `/process` → poll → stem fetch → automation → webhook → MP4 export against the two containers. Stem duration matches the extracted audio, 48 kHz stereo, export probes as h264 + aac with the source duration. Person 4's code is imported, never modified. |
+| 2 | Vision → audio (Person 2) | **Translation half executed with Person 2's real output; model half blocked** | `audio-service/fixtures/vision/` holds `detections.json` + `selection.json` produced by Person 2's actual `yolo26n-seg` + ByteTrack pipeline on their documented pedestrian clip; `tests/test_person2_artifacts.py` drives them through our translator, frame/mask preparation and `/separate` (mock backend) with zero mismatches. Since PR #15/#18 the **merged backend does deliver** the original video reference and the per-frame masks for these same artefacts end to end — see [Merged workflow (PR #15/#18)](#merged-workflow-pr-1518) and `tests/test_merged_visual_workflow.py`. Speaker-specific separation itself still cannot run: no CUDA GPU. |
+| 3 | Backend → audio (Person 4) | **Executed, mock backend, in-process and in Docker** | `tests/test_integration_person4_backend.py` imports Person 4's real `app/` with `INFERENCE_ADAPTER=http` against a live instance of this service. Additionally the compose overlay was built and run (`docker compose -f compose.yaml -f audio-service/compose.audio.yaml up`) and `scripts/e2e_compose.py` walked create project → upload → `/process` → poll → stem fetch → automation → webhook → MP4 export against the two containers. Stem duration matches the extracted audio, 48 kHz stereo, export probes as h264 + aac with the source duration. Person 4's code is imported, never modified. `tests/test_merged_visual_workflow.py` extends this to the visually guided job on Person 2's real artefacts: `metadata.source.original_ref` + `sha256`, both Person 2 documents under `metadata.visual_prompt`, a real `VisualInput` with per-frame masks at the backend boundary, interval spans and full-length stems. |
 | 4 | Cinematic demo (all four) | **Audio half executed, mock backend, in Docker** | The same compose run used a synthetic "two voices + siren over video" clip through separation, a stem automation curve, the natural-language webhook and an MP4 export. The editor half needs Person 3; the visual-prompt half needs Test 2's blockers cleared. |
 
 Every response produced by the mock backend carries `model.is_mock: true` and a warning
 saying the stems are band-pass filtered copies of the mixture, not separation.
+
+## Merged workflow (PR #15/#18)
+
+**Status (2026-11-11): the merged backend does deliver the video reference and the
+per-frame masks.** This section records exactly what arrives, verified end to end by
+`audio-service/tests/test_merged_visual_workflow.py`, which runs Person 4's real `app/`
+(`INFERENCE_ADAPTER=http`) against a live instance of this service (`AUDIO_BACKEND=mock`)
+on Person 2's real artefacts in `audio-service/fixtures/vision/`, and asserts on *our*
+side of the HTTP boundary. No code of Person 4's, Person 2's or Person 3's is changed, and
+nothing in `visual_prompts.py` had to be loosened — the merged payload translates as is.
+
+### The request a visually guided job sends
+
+`app/worker.py` POSTs multipart `audio` (the project's `extracted/audio.wav`) plus a
+`metadata` form field. For a job started by `POST /api/projects/{pid}/process` with a body
+of `{"prompts": [...], "visual_prompt": <Person 2 selection 1.0>}`, `metadata` is exactly:
+
+```jsonc
+{
+  "prompts": ["person"],                 // app/main.py Process.prompts, list[str] only
+  "visual_prompt": {                     // built by app/visual.py::prepare_payload
+    "selection": { /* Person 2 selection 1.0, frozen, verbatim */ },
+    "detections": { /* Person 2 detections 1.0, from projects.visual, verbatim */ }
+  },
+  "source": {                            // app/visual.py::project_source
+    "asset_id":     "<project_id>",
+    "original_ref": "file:///<STORAGE_ROOT>/projects/<project_id>/original/<uid>.mp4",
+    "sha256":       "<sha256 of the original uploaded bytes>",
+    "duration":     12.0,
+    "frame_rate":   10.0
+  },
+  "asset_id":   "<project_id>",          // legacy top-level correlation field
+  "request_id": "<job_id>"               // added by app/worker.py
+}
+```
+
+Key names, nesting and provenance:
+
+- `visual_prompt.selection` is the client's selection document, unmodified. The backend
+  *freezes* it: `prepare_payload` passes it through `validate_selection`, which requires
+  schema 1.0, identity agreement with the stored detections (`video_id`, `source_sha256`,
+  `analysis_id`), native frame alignment, a 0.1–30 s interval inside
+  `processed_duration_seconds`, dense native-FPS coverage of the interval, and non-empty
+  masks — so a selection we receive has already been checked against the stored document.
+- `visual_prompt.detections` is **the stored document**, read from the `projects.visual`
+  column (`PUT /api/projects/{pid}/visual-metadata`, or written by the `vision` job in
+  `app/worker.py`), not from the client: `reject_media_refs` refuses any client-supplied
+  `video_ref`/`original_ref`/`mask_video_ref`/`detections_ref`/`audio_ref`, and an inline
+  `detections` that differs from the stored one is a 422. If the client sends no
+  `visual_prompt` at all, the stored document alone is forwarded.
+- `source.original_ref` is `Path(project['original']).resolve().as_uri()` — the project's
+  immutable upload under `STORAGE_ROOT/projects/<project_id>/original/`. The backend
+  re-verifies its SHA-256 in `project_source()` when the payload is built *and* again in
+  `app/worker.py` when the queued job starts (`'Uploaded media hash changed after the
+  visual job was queued'`), so a swapped file fails the job instead of being separated.
+- `source.frame_rate` and `source.duration` come from `ffprobe` on the original.
+- There is **no `mask_video_ref` and no `detections_ref`**: masks travel as native-resolution
+  RLE inside `visual_prompt.detections`. Contract D's `has_model_input()` (video + mask
+  video) is therefore never satisfied by this payload; the envelope path in
+  `translate_visual_prompt` is what consumes it, and it builds `VisualInput.frame_masks`
+  from the RLE itself.
+- `metadata.anchors` and `metadata.options` are never sent (`Process` has only `prompts`
+  and `visual_prompt`), so service defaults apply — see "Forward the whole `/process` body".
+
+### What we do with it
+
+`translate_visual_prompt` takes the envelope branch (`isinstance(raw["selection"], dict)`),
+reads `video_ref` from `metadata.source.original_ref`, verifies
+`detections.source_sha256 == source.sha256`, clamps the interval to
+`detections.processed_duration_seconds`, decodes the selected track's per-frame RLE,
+re-checks the declared `fps` against `ffprobe` on the resolved video and validates dense
+coverage, then returns a `VisualInput(video_path, interval, frame_masks, frame_rate,
+frame_size, object_id="track:<id>", label, source_sha256)` plus a `("+", start, end)`
+anchor. On Person 2's fixture (768×576, 10 fps, track 7, interval 0–6 s) this produces
+**zero warnings**: 49 masked frames of the interval's 60, the rest correctly empty
+foreground. The engine then runs the interval as one window (no chunking) and pads the
+result back to the full timeline, so stems keep `start_time = 0.0` and the target's
+`spans` are `[[0.0, 6.0]]`.
+
+### `AUDIO_MEDIA_ROOT` and the `file://` refs
+
+`original_ref` is an **absolute path produced inside Person 4's container**, and
+`sam_audio_service/media.py::resolve_ref` requires the resolved path to live under
+`AUDIO_MEDIA_ROOT`. So the two containers must see the original at the *same absolute
+path*. `compose.yaml` + `audio-service/compose.audio.yaml` already arrange that:
+
+| | `soundcanvas` (Person 4) | `audio-service` (Person 1) |
+| --- | --- | --- |
+| Volume | `./storage:/data` | `./storage:/data:ro` |
+| Variable | `STORAGE_ROOT: /data` | `AUDIO_MEDIA_ROOT: /data` |
+
+Run it with `docker compose -f compose.yaml -f audio-service/compose.audio.yaml up --build`.
+Two consequences worth keeping in mind: overriding `STORAGE_ROOT` without changing the
+audio container's mount breaks every `file://` ref with `INVALID_REQUEST: file reference is
+outside AUDIO_MEDIA_ROOT`; and leaving `AUDIO_MEDIA_ROOT` unset disables file refs
+entirely, which silently degrades visual prompting to span anchors.
+
+### Mismatches with what we expect (none blocking)
+
+1. **No mismatch in the payload itself.** The merged envelope is translated with no
+   warnings and no lenient handling added.
+2. **`stems[].spans` is dropped on the way back.** `app/media.py` copies only
+   `model`, `warnings`, `source`, `request_id` and `contract_version` into the job's
+   `inference` report, and `app/core.py::stem()` returns only the `stems` table columns, so
+   the editor cannot see which interval the model treated as active. The test therefore
+   asserts `spans` on our side (an `Engine.separate` hook). One extra key in that
+   `report.update(...)` tuple would expose it — Person 4's call.
+3. **The whole detections document rides in every request.** The fixture's 6 s / 60-frame
+   document makes the `metadata` form field ≈ 395 KiB (≈ 6.7 KiB per native frame at
+   768×576); a 30 s clip at 30 fps would be ≈ 6 MiB per job. Harmless at demo length, but
+   `detections_ref` (a `file://` path under the shared volume, which we already support)
+   would remove it entirely, and the backend owns the stored document anyway.
+4. **One shared `visual_prompt` for all prompts.** `Process.visual_prompt` is a single
+   object applied to every entry of `prompts`, so two prompts both get the same mask track.
+   Per-prompt guidance needs `prompts[]` as objects (`PromptSpec.visual_prompt`).
+5. **`/process` with no selection ships the detections document and no `source`.** When
+   `visual_prompt` is absent but the project has stored detections, `prepare_payload` takes
+   its `selection is None` branch (`payload['visual_prompt'] = raw; return payload`), so the
+   whole document is forwarded *without* `metadata.source`. We cannot use it — no selected
+   object, no video reference — and answer with the warning `detections given without a
+   selected object (selection, selected_track_id or selected_detection_id)`. The job still
+   succeeds as a text-only separation; it is wasted bandwidth, not breakage, and
+   `test_process_without_a_selection_forwards_detections_that_cannot_steer` pins exactly
+   that behaviour. Suggested fix on Person 4's side: forward the stored document only when
+   a selection accompanies it.
+
+### Still unverified
+
+The masks reach the model input — `BackendPrompt.visual` is non-`None` at the backend
+boundary and `prepare_masked_video` decodes the frames and masks from the resolved
+`file://` video — but with `AUDIO_BACKEND=mock` the backend *ignores* them. Real
+visually guided separation remains the one open item on issue #4 and needs a CUDA GPU.
 
 ---
 
@@ -102,8 +234,11 @@ Guarantees, in one place:
   equal `source.duration` / `source.sample_count` for every stem including the residual. We
   never return a clip of the detected event, so nothing downstream has to reconstruct an
   offset.
-- One stem per prompt (named by `prompts[].name`, else the normalised prompt text), plus one
-  `residual` stem unless `options.residual: "none"`.
+- One stem per prompt, plus one `residual` stem unless `options.residual: "none"`. The stem
+  name is `prompts[].name` if given, else **the caller's own wording** of the prompt with
+  whitespace collapsed (case and punctuation preserved), else Person 2's visual label. The
+  normalised phrase the model saw is reported separately as `stems[].prompt`, so an editor
+  that matches stems against the prompt it sent keeps working without sending a name.
 - With the default `options.residual: "mixture_minus_targets"` the residual is
   `mixture - sum(targets)`, so **`sum(stems) == source`** exactly in float and within
   float32 rounding after encoding. That is what makes "mute the siren" equal "original minus
@@ -570,19 +705,13 @@ if none of it happens, text and interval prompting keep working exactly as today
 
    `original_ref` must be the path **as the audio container sees it** (`/data/...`), which
    is what it already is when `STORAGE_ROOT=/data`.
-3. **Read our error body before raising.** `httpx.raise_for_status()` means the job error
-   text is currently `"Client error '400 Bad Request' for url ..."` and `error.code` never
-   reaches the user. Three lines:
-
-   ```python
-   if response.status_code >= 400:
-       try: err = response.json()['error']
-       except Exception: raise RuntimeError(f'Audio service HTTP {response.status_code}')
-       raise RuntimeError(f"{err['code']}: {err['message']}")   # optionally keep err['retryable']
-   ```
-
-   `MISSING_MODEL` / `INSUFFICIENT_GPU_MEMORY` / `STORAGE_FAILURE` / `SERVICE_BUSY` carry
-   `retryable: true` — useful if you ever add retry, and useful to a human either way.
+3. **Read our error body before raising.** Done on `integration/cloud-editor-gpu`: `app/media.py`
+   parses `error.code` / `error.message`, so job errors read e.g.
+   `INVALID_REQUEST: at most 8 prompts per request` (verified live). `app/media.py` builds
+   that string as `f"{code}: {message}"`, so `retryable` and `details` are not persisted at
+   all — not part of the string either. `MISSING_MODEL` / `INSUFFICIENT_GPU_MEMORY` /
+   `STORAGE_FAILURE` / `SERVICE_BUSY` carry `retryable: true`, so a structured job-error field
+   would let the editor offer a retry.
 4. **Store our `warnings[]` with the job** (a `warnings` column, or appended to
    `jobs.output`) and pass `role`, `label`, `prompt`, `spans` and `model.is_mock` through to
    the stem/job response, so Person 3 can tell a mock run from a real one and a text-only
@@ -674,12 +803,13 @@ allow-listed URLs but send no `Authorization` header, so that needs a small exte
 
 **3. Does `error.code` reach the user?**
 *Owner: Person 4.*
-`httpx.raise_for_status()` discards our JSON error body, so job errors read
-`"Client error '400 Bad Request' for url …"`.
-*Proposed default:* Person 4 reads `response.json()["error"]["code"]` / `["message"]`
-before raising (3 lines, shown above) and stores `retryable`. Until then we keep `detail`
-populated so the FastAPI shape is unchanged and nothing breaks.
-*Status: awaiting agreement.*
+Resolved for code + message on `integration/cloud-editor-gpu` (`app/media.py` parses our error
+body; verified live: `INVALID_REQUEST: at most 8 prompts per request`). Remaining: `retryable`
+and `details` are not persisted at all — the job error is `f"{code}: {message}"`, so neither
+field reaches the string.
+*Proposed default:* persist `{code, message, retryable, details}` as a structured job-error
+field alongside the string.
+*Status: partially resolved; structured field awaiting agreement.*
 
 **4. Visual mask polarity.**
 *Owners: Person 1 + Person 2 (upstream: `facebookresearch/sam-audio#75`).*
@@ -738,8 +868,9 @@ SAM Audio expects short lowercase noun/verb phrases. A user typing "Please remov
 annoying police siren!!" is not that, and when the prompted sound is absent the model may
 emit unrelated audio.
 *Proposed default:* we normalise defensively (lowercase, strip trailing punctuation and
-leading "isolate the"/"extract the"/"the") and expose `prompts[].name` so the UI keeps the
-user's wording while the model gets the clean phrase. Person 2's `label` is used when a
+leading "isolate the"/"extract the"/"the") for `stems[].prompt`, and default `stems[].name` to
+the user's own wording, so the UI keeps the user's phrasing while the model gets the clean
+phrase; `prompts[].name` overrides that name. Person 2's `label` is used when a
 visual prompt has no text. A curated suggestion list in the editor would help more than any
 parsing we can do.
 *Status: awaiting agreement.*

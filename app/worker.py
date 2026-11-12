@@ -94,8 +94,11 @@ def work_once():
                     '-af','asetpts=PTS-STARTPTS','-c:v','libx264','-preset','veryfast','-crf','18',
                     '-pix_fmt','yuv420p','-c:a','alac','-movflags','+faststart',str(video))
                 run('ffmpeg','-v','error','-y','-i',str(video),'-vn','-ac','2','-ar','48000','-c:a','pcm_f32le',str(audio))
-                info=probe(video); info.update(video_id=pid,source_sha256=file_sha256(video))
-                validate_timeline(video,info['frame_rate'])
+                # The copy was forced to exactly ``fps``; ffprobe's avg_frame_rate re-derives it from
+                # nb_frames/duration and some muxer versions drop the last frame's duration (10
+                # frames over 0.9 s reads as 11.1 fps), which would fail validate_timeline below.
+                info=probe(video); info.update(video_id=pid,source_sha256=file_sha256(video),frame_rate=float(fps))
+                validate_timeline(video,float(fps))
                 (project_dir(pid)/'extracted'/'preview.mp4').unlink(missing_ok=True)
                 with connect() as db:
                     db.execute('BEGIN IMMEDIATE')

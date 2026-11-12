@@ -440,6 +440,23 @@ def test_anchored_and_unanchored_windows_are_not_mixed(backend):
     assert [len(c["audios"]) for c in backend._processor.calls] == [1, 2]
 
 
+def test_separate_many_preserves_input_order_when_groups_interleave(backend):
+    """Grouping splits the windows into several model calls; the results must still come
+    back in INPUT order, or the engine's crossfade merges the wrong window."""
+    mixtures = windows(0.5, 0.25, 0.3, 0.4)
+    prompts = [
+        BackendPrompt(text="first", anchors=[("+", 0.0, 0.2)]),
+        BackendPrompt(text="second"),
+        BackendPrompt(text="third", anchors=[("+", 0.1, 0.2)]),
+        BackendPrompt(text="fourth", anchors=[("-", 0.0, 0.1)]),
+    ]
+    results = backend.separate_many(mixtures, prompts, BackendOptions())
+
+    assert [len(c["audios"]) for c in backend._processor.calls] == [1, 1, 2]  # A | U | A A
+    assert [r.extra["description"] for r in results] == ["first", "second", "third", "fourth"]
+    assert [len(r.target) for r in results] == [len(m) for m in mixtures]
+
+
 def test_predicted_spans_are_read_per_batch_item(backend):
     results = backend.separate_many(
         windows(0.2, 0.2), [BackendPrompt(text="siren")] * 2, BackendOptions(predict_spans=True)
@@ -461,6 +478,11 @@ def test_visual_and_empty_windows_are_never_batched():
     assert _batchable_groups([full] * 3, [text] * 3) == [[0, 1, 2]]
     assert _batchable_groups([full] * 3, [text, visual, text]) == [[0], [1], [2]]
     assert _batchable_groups([full, empty, full], [text] * 3) == [[0], [1], [2]]
+    anchored = BackendPrompt(text="siren", anchors=[("+", 0.0, 0.1)])
+    # Interleaved groups must stay consecutive runs of ascending indices, so that
+    # concatenating the groups' results reproduces the input order exactly.
+    assert _batchable_groups([full] * 4, [anchored, text, anchored, anchored]) == [[0], [1], [2, 3]]
+    assert _batchable_groups([full] * 3, [text, anchored, text]) == [[0], [1], [2]]
 
 
 def test_concurrent_separate_calls_never_enter_the_model_together(backend):
@@ -499,6 +521,109 @@ def test_batched_oom_reports_the_batch_size(backend, monkeypatch):
     with pytest.raises(InsufficientGpuMemory, match="AUDIO_CHUNK_BATCH") as caught:
         backend.separate_many(windows(0.2, 0.2), [BackendPrompt(text="siren")] * 2, BackendOptions())
     assert caught.value.details["batch"] == 2
+
+
+# ------------------------------------------------- OOM variants under memory pressure
+# A full GPU does not always say "out of memory": the allocation failure surfaces through
+# whichever library asked for the block first. Every one of these is retryable at
+# AUDIO_CHUNK_BATCH=1, so all of them must be classified as INSUFFICIENT_GPU_MEMORY (the
+# engine's batch-1 retry trigger) rather than INFERENCE_FAILURE, which kills the request.
+class FakeTorchOom(torch.OutOfMemoryError):
+    """A torch.OutOfMemoryError *subclass* whose text says nothing about memory."""
+
+
+OOM_VARIANTS = [
+    pytest.param(lambda: RuntimeError("CUDA out of memory. Tried to allocate 20.00 GiB"), id="cuda-oom"),
+    pytest.param(
+        lambda: RuntimeError("CUDA error: CUBLAS_STATUS_ALLOC_FAILED when calling cublasCreate(handle)"),
+        id="cublas-alloc-failed",
+    ),
+    pytest.param(lambda: RuntimeError("cuDNN error: CUDNN_STATUS_ALLOC_FAILED"), id="cudnn-alloc-failed"),
+    pytest.param(
+        lambda: RuntimeError("CUDA error: an illegal memory access was encountered"),
+        id="illegal-memory-access",
+    ),
+    pytest.param(lambda: RuntimeError("CUDA driver error: cudaErrorMemoryAllocation"), id="cuda-malloc-failed"),
+    pytest.param(lambda: torch.OutOfMemoryError("Allocation on device failed"), id="torch-oom-error"),
+    pytest.param(lambda: FakeTorchOom("Allocation on device failed"), id="torch-oom-subclass"),
+]
+
+
+def raising(make_exc):
+    def boom(*args, **kwargs):
+        raise make_exc()
+
+    return boom
+
+
+@pytest.mark.parametrize("make_exc", OOM_VARIANTS)
+def test_every_oom_variant_becomes_insufficient_gpu_memory(backend, monkeypatch, make_exc):
+    from sam_audio_service.errors import InsufficientGpuMemory
+
+    backend.load()
+    freed: list[int] = []
+    monkeypatch.setattr(backend, "_release", lambda torch_module: freed.append(1))
+    monkeypatch.setattr(backend._model, "separate", raising(make_exc))
+    with pytest.raises(InsufficientGpuMemory, match="AUDIO_CHUNK_BATCH") as caught:
+        backend.separate_many(windows(0.2, 0.2), [BackendPrompt(text="siren")] * 2, BackendOptions())
+    assert caught.value.details["batch"] == 2
+    assert freed, "the batch must be released before the error is re-raised"
+
+
+@pytest.mark.parametrize("make_exc", OOM_VARIANTS)
+def test_oom_while_moving_the_batch_to_the_device_is_classified_and_freed(backend, monkeypatch, make_exc):
+    """``processor(...).to(device)`` allocates k windows of audio before the model is ever
+    entered, so an OOM there must free the batch and classify the same way."""
+    from sam_audio_service.errors import InsufficientGpuMemory
+
+    backend.load()
+    freed: list[int] = []
+    monkeypatch.setattr(backend, "_release", lambda torch_module: freed.append(1))
+    monkeypatch.setattr(FakeBatch, "to", raising(make_exc))
+    with pytest.raises(InsufficientGpuMemory, match="AUDIO_CHUNK_BATCH"):
+        backend.separate_many(windows(0.2, 0.2), [BackendPrompt(text="siren")] * 2, BackendOptions())
+    assert freed, "the half-built batch must be released before the error is re-raised"
+    assert not backend._model.separate_calls
+
+
+def test_a_real_bug_is_still_an_inference_failure(backend, monkeypatch):
+    """The widened classification must not swallow genuine errors."""
+    backend.load()
+    monkeypatch.setattr(backend._model, "separate", raising(lambda: RuntimeError("shape mismatch")))
+    with pytest.raises(RuntimeError, match="shape mismatch"):
+        backend.separate_many(windows(0.2, 0.2), [BackendPrompt(text="siren")] * 2, BackendOptions())
+
+
+@pytest.mark.parametrize("make_exc", OOM_VARIANTS)
+def test_engine_retries_the_whole_signal_at_batch_one_for_every_oom_variant(backend, monkeypatch, make_exc):
+    """End to end: the real backend raises each variant on a batch of 2 and the engine must
+    fall back to batch 1 rather than failing the request."""
+    from sam_audio_service.audio_io import DecodedAudio
+    from sam_audio_service.config import Settings
+    from sam_audio_service.contracts import SeparationMetadata
+    from sam_audio_service.engine import Engine
+
+    backend.load()
+    real_separate = backend._model.separate
+    attempts: list[int] = []
+
+    def separate(batch, **kwargs):
+        attempts.append(len(batch.descriptions))
+        if len(batch.descriptions) > 1:
+            raise make_exc()
+        return real_separate(batch, **kwargs)
+
+    monkeypatch.setattr(backend._model, "separate", separate)
+
+    settings = Settings(chunk_batch=2, chunk_overlap_seconds=0.25)
+    engine = Engine(settings, backend)
+    signal = mixture(1.6)[None, :]
+    metadata = SeparationMetadata.model_validate({"prompts": ["siren"], "options": {"chunk_seconds": 1.0}})
+    result = engine.separate(DecodedAudio(signal, SAMPLE_RATE, SAMPLE_RATE, 1), metadata)
+
+    assert any("retried sequentially" in w for w in result.warnings)
+    assert attempts == [2, 1, 1], "the failed batch of 2, then the whole signal at batch 1"
+    assert result.stems[0].samples.shape == signal.shape
 
 
 # ------------------------------------------------------------------ visual prompting

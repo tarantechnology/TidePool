@@ -109,6 +109,13 @@ class Settings:
 
     def __post_init__(self) -> None:
         if self.chunk_batch_env is not None:
+            if self.chunk_workers is not None and self.chunk_workers != self.chunk_batch_env:
+                # Silently ignoring the alias is how an operator ends up running a batch
+                # size they did not ask for, so say which one won.
+                log.warning(
+                    "AUDIO_CHUNK_BATCH=%s wins over the deprecated AUDIO_CHUNK_WORKERS=%s; "
+                    "remove AUDIO_CHUNK_WORKERS.", self.chunk_batch_env, self.chunk_workers,
+                )
             self.chunk_batch = self.chunk_batch_env
         elif self.chunk_workers is not None and self.chunk_batch == 1:
             log.warning(

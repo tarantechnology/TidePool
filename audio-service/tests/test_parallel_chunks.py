@@ -115,6 +115,48 @@ def test_oom_at_batch_one_is_not_retried():
         run(backend, batch=1)
 
 
+def test_a_padded_residual_is_trimmed_to_its_own_window():
+    """A batching backend pads the batch to its longest window. The engine trims each
+    result to that window's own length -- target AND residual, or the crossfade merge adds
+    a longer array into a shorter slice."""
+
+    class PaddedBackend(TrackingBackend):
+        def separate(self, mixture, prompt, options):
+            out = super().separate(mixture, prompt, options)
+            pad = np.zeros(13, dtype=np.float32)
+            out.target = np.concatenate([out.target, pad])  # as if padded to the batch max
+            out.residual = np.concatenate([out.residual, pad])
+            return out
+
+    backend = PaddedBackend()
+    signal, result = run(backend)
+    np.testing.assert_allclose(result.stems[0].samples, signal * 0.25, atol=1e-6)
+    np.testing.assert_allclose(sum(s.samples for s in result.stems), signal, atol=1e-6)
+
+
+def test_a_padded_residual_alone_is_still_trimmed():
+    """The target may already match while the residual does not; both are checked."""
+
+    class ResidualOnlyPadded(TrackingBackend):
+        def separate(self, mixture, prompt, options):
+            out = super().separate(mixture, prompt, options)
+            out.residual = np.concatenate([out.residual, np.zeros(13, dtype=np.float32)])
+            return out
+
+    signal, result = run(ResidualOnlyPadded())
+    np.testing.assert_allclose(result.stems[0].samples, signal * 0.25, atol=1e-6)
+    np.testing.assert_allclose(sum(s.samples for s in result.stems), signal, atol=1e-6)
+
+
+def test_chunk_batch_wins_over_the_alias_with_a_warning(monkeypatch, caplog):
+    monkeypatch.setenv("AUDIO_CHUNK_WORKERS", "4")
+    monkeypatch.setenv("AUDIO_CHUNK_BATCH", "2")
+    with caplog.at_level("WARNING"):
+        settings = Settings()
+    assert settings.chunk_batch == 2 and settings.chunk_workers == 2
+    assert "AUDIO_CHUNK_BATCH=2 wins" in caplog.text
+
+
 def test_chunk_workers_is_accepted_as_a_deprecated_alias(monkeypatch, caplog):
     monkeypatch.setenv("AUDIO_CHUNK_WORKERS", "4")
     monkeypatch.delenv("AUDIO_CHUNK_BATCH", raising=False)

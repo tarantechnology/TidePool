@@ -82,7 +82,7 @@ from typing import Any
 
 import numpy as np
 
-from ..errors import InferenceFailure, InsufficientGpuMemory, MissingModel
+from ..errors import InferenceFailure, InsufficientGpuMemory, MissingModel, is_out_of_memory
 from ..visual import MASK_MODES, MaskMode, prepare_masked_video
 from .base import Backend, BackendOptions, BackendPrompt, BackendResult
 
@@ -94,11 +94,10 @@ _ACCESS_HINTS = (
     "access to model", "repository not found", "entry not found", "is not a local folder",
     "could not connect", "connectionerror", "offline mode", "token",
 )
-_OOM_HINT = "out of memory"
-
-
-def _is_oom(exc: BaseException) -> bool:
-    return _OOM_HINT in str(exc).lower() or type(exc).__name__ == "OutOfMemoryError"
+# "did the GPU run out of memory?" lives in errors.py so the engine's batch-1 retry and
+# this module's InsufficientGpuMemory mapping can never disagree. CUBLAS/cuDNN/driver
+# allocation failures count, not just the literal "out of memory".
+_is_oom = is_out_of_memory
 
 
 def _looks_like_missing_weights(exc: BaseException) -> bool:
@@ -417,42 +416,48 @@ class SamAudioBackend(Backend):
             else None
         )
 
-        masked_videos = frames = None
+        masked_videos = frames = batch = None
         visual = prompts[0].visual if len(prompts) == 1 else None
-        if visual is not None:
-            frames, masks = prepare_masked_video(
-                visual,
-                size=self.frame_size,
-                mask_mode=self.mask_mode,
-                ffmpeg=self.ffmpeg,
-                ffprobe=self.ffprobe,
-                timeout=self.ffmpeg_timeout,
-            )
-            masked_videos = processor.mask_videos([frames], [masks])
-
-        batch = processor(
-            descriptions=descriptions,
-            audios=audios,
-            anchors=anchors,
-            masked_videos=masked_videos,
-        ).to(self._device)
-        if self._dtype is not torch.float32:
-            batch.audios = batch.audios.to(self._dtype)
-
-        # Span prediction is skipped upstream when anchors are supplied, so be explicit.
-        predict_spans = bool(options.predict_spans and self.supports_span_prediction and anchors is None)
-        candidates = max(1, int(options.reranking_candidates or 1))
-        notes: list[str] = []
-        if visual is not None and self.mask_mode == "notebook" and candidates > 1:
-            # The ImageBind re-ranker scores audio against the masked video; with the object
-            # zeroed out that comparison is meaningless, so re-ranking is disabled.
-            notes.append("reranking disabled: notebook mask mode removes the object the visual re-ranker needs")
-            candidates = 1
-        if options.seed is not None:
-            # One seeded draw for the whole batch: reproducible for a fixed batch size.
-            torch.manual_seed(int(options.seed))
-
+        # Everything that can touch device memory is inside ONE try: building the batch and
+        # moving it to the GPU allocates k windows' worth of audio (and a visual window's
+        # frames) before the model is ever entered, so an allocation failure there has to
+        # free the batch and be classified exactly like one inside ``model.separate``.
+        # Without this, an OOM in ``.to(device)`` leaked the batch and reached the engine as
+        # an INFERENCE_FAILURE instead of a retryable INSUFFICIENT_GPU_MEMORY.
         try:
+            if visual is not None:
+                frames, masks = prepare_masked_video(
+                    visual,
+                    size=self.frame_size,
+                    mask_mode=self.mask_mode,
+                    ffmpeg=self.ffmpeg,
+                    ffprobe=self.ffprobe,
+                    timeout=self.ffmpeg_timeout,
+                )
+                masked_videos = processor.mask_videos([frames], [masks])
+
+            batch = processor(
+                descriptions=descriptions,
+                audios=audios,
+                anchors=anchors,
+                masked_videos=masked_videos,
+            ).to(self._device)
+            if self._dtype is not torch.float32:
+                batch.audios = batch.audios.to(self._dtype)
+
+            # Span prediction is skipped upstream when anchors are supplied, so be explicit.
+            predict_spans = bool(options.predict_spans and self.supports_span_prediction and anchors is None)
+            candidates = max(1, int(options.reranking_candidates or 1))
+            notes: list[str] = []
+            if visual is not None and self.mask_mode == "notebook" and candidates > 1:
+                # The ImageBind re-ranker scores audio against the masked video; with the
+                # object zeroed out that comparison is meaningless, so re-ranking is off.
+                notes.append("reranking disabled: notebook mask mode removes the object the visual re-ranker needs")
+                candidates = 1
+            if options.seed is not None:
+                # One seeded draw for the whole batch: reproducible for a fixed batch size.
+                torch.manual_seed(int(options.seed))
+
             with torch.inference_mode(), self._autocast(torch):
                 result = model.separate(
                     batch,
@@ -463,7 +468,7 @@ class SamAudioBackend(Backend):
         except Exception as exc:  # noqa: BLE001 - free first, then let the engine classify
             # Drop the batch/frame references before reclaiming, so the traceback holding
             # these locals alive does not pin a window's worth of device memory.
-            batch = masked_videos = audios = None
+            batch = masked_videos = audios = frames = None
             self._release(torch)
             if _is_oom(exc):
                 raise InsufficientGpuMemory(

@@ -197,6 +197,12 @@ Batching therefore:
   and the model weights are read once per batch rather than once per window;
 * stays deterministic: one seeded draw per call, no interleaved RNG.
 
+Batching is not a speedup multiplier, and nothing here promises one. The total device work
+for `k` windows is unchanged; what batching removes is the per-window Python, processor and
+kernel-launch overhead and the repeated weight reads. On a GPU that one window already
+saturates, `AUDIO_CHUNK_BATCH=k` buys close to nothing while costing `k x` the activation
+memory. Measure before raising it.
+
 Visual windows are the exception and stay sequential, one window per call: `masked_videos`
 is per item upstream and the frames must line up with exactly the audio they came from.
 Anchored and unanchored windows are also not mixed in one call — an empty per-item anchor
@@ -213,7 +219,10 @@ prediction for windows that would otherwise get it.
 * `backends/sam_audio.py` implements it for real: one processor call with `k` audios, `k`
   descriptions and per-item anchors, one `model.separate`, each output trimmed to its own
   input length, and CUDA OOM mapped to `InsufficientGpuMemory` after freeing the batch.
-  The per-thread CUDA stream wrapper is gone.
+  Building the batch and moving it to the device are inside the same guarded block as
+  `model.separate`: `processor(...).to(device)` already holds `k` windows of audio (and a
+  visual window's frames), so an allocation failure there has to free the batch and be
+  classified the same way. The per-thread CUDA stream wrapper is gone.
 * A `threading.Lock` inside `SamAudioBackend` serialises **load and inference**, so the
   shared module can never be entered concurrently regardless of what the engine, the HTTP
   layer or a future caller does above it. This is defence in depth: the engine no longer
@@ -240,14 +249,44 @@ batch sizes — and the response carries the warning
 `GPU memory was insufficient for parallel chunks; processing retried sequentially`. A
 batch-1 OOM is a real failure and is surfaced as `INSUFFICIENT_GPU_MEMORY`.
 
+### What counts as "out of memory"
+
+A full GPU does not always say `out of memory`. The allocation failure surfaces through
+whichever library asked for the block first, and the retry has to trigger for all of them,
+so `errors.is_out_of_memory` — the single classifier shared by the backend's
+`InsufficientGpuMemory` mapping and the engine's batch-1 retry, so the two can never
+disagree — matches, case-insensitively against `"<ClassName>: <message>"`:
+
+| Text | Where it comes from |
+| --- | --- |
+| `out of memory` | the caching allocator (`CUDA out of memory`, `CUDA error: out of memory`) |
+| `CUBLAS_STATUS_ALLOC_FAILED` | cuBLAS workspace allocation for a GEMM, raised as a plain `RuntimeError` |
+| `CUDNN_STATUS_ALLOC_FAILED` | cuDNN workspace allocation in a convolution |
+| `cudaErrorMemoryAllocation` | the raw driver code, from kernels and from `cudaMalloc` inside third-party ops |
+| `CUDA error: an illegal memory access` | what an allocation failure degrades into when a kernel was launched against memory it could not get |
+
+plus any exception whose class (or a base class) is named `OutOfMemoryError`, which covers
+`torch.OutOfMemoryError`, its alias `torch.cuda.OutOfMemoryError` and subclasses without
+importing torch in `errors.py`.
+
+Before this, only the literal `out of memory` matched: the other four became
+`INFERENCE_FAILURE` and killed a request that batch 1 would have completed. The regression
+cover is `tests/test_sam_backend.py::test_every_oom_variant_becomes_insufficient_gpu_memory`,
+`::test_oom_while_moving_the_batch_to_the_device_is_classified_and_freed` and
+`::test_engine_retries_the_whole_signal_at_batch_one_for_every_oom_variant`, which drive the
+real backend against the fake `sam_audio` module once per variant. A genuine bug (for
+example a shape mismatch) still has to come out as `INFERENCE_FAILURE`; that is pinned by
+`::test_a_real_bug_is_still_an_inference_failure`.
+
 ## Operator guidance
 
 `AUDIO_CHUNK_BATCH` (1–8, default 1) replaces `AUDIO_CHUNK_WORKERS`.
 
 `AUDIO_CHUNK_WORKERS` is still accepted as a **deprecated alias**: it now sets the batch
 size and logs a warning at startup, so existing compose files (`compose.cloud.yaml` sets
-`AUDIO_CHUNK_WORKERS=2`) keep working and mean the safe thing. `AUDIO_CHUNK_BATCH` wins if
-both are set. `/capabilities` reports both under `defaults`, with `chunk_workers` mirroring
+`AUDIO_CHUNK_WORKERS: ${AUDIO_CHUNK_WORKERS:-2}` and no `AUDIO_CHUNK_BATCH`, so it runs at
+batch 2) keep working and mean the safe thing. `AUDIO_CHUNK_BATCH` wins if both are set,
+and a warning names the one that won so the alias is never silently ignored. `/capabilities` reports both under `defaults`, with `chunk_workers` mirroring
 `chunk_batch`.
 
 * Start at `AUDIO_CHUNK_BATCH=1`. Raise it only if the GPU has headroom: check

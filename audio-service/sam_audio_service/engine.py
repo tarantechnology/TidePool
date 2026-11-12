@@ -33,6 +33,7 @@ from .errors import (
     InvalidRequest,
     MissingModel,
     UnsupportedOperation,
+    is_out_of_memory,
 )
 from .visual_prompts import translate_visual_prompt
 
@@ -58,11 +59,6 @@ class EngineResult:
     elapsed_seconds: float
 
 
-def _oom(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return "out of memory" in text or "cuda error: out of memory" in text or type(exc).__name__ == "OutOfMemoryError"
-
-
 class Engine:
     def __init__(self, settings: Settings, backend: Backend | None = None):
         self.settings = settings
@@ -86,7 +82,7 @@ class Engine:
         try:
             self.load()
         except Exception as exc:  # noqa: BLE001
-            if _oom(exc):
+            if is_out_of_memory(exc):
                 raise InsufficientGpuMemory("not enough GPU memory to load the model", details={"model_id": self.settings.model_id}) from exc
             raise MissingModel(f"model is not available: {self._load_error}", details={"model_id": self.settings.model_id}) from exc
 
@@ -225,7 +221,7 @@ class Engine:
         except AudioServiceError:
             raise
         except Exception as exc:  # noqa: BLE001
-            if _oom(exc):
+            if is_out_of_memory(exc):
                 raise InsufficientGpuMemory("GPU ran out of memory during inference; try a shorter input, AUDIO_CHUNK_SECONDS, a smaller AUDIO_CHUNK_BATCH or fewer reranking candidates", details={"frames": int(max(len(s) for s in signals)), "batch": len(signals)}) from exc
             raise InferenceFailure(f"{type(exc).__name__}: {exc}") from exc
         if len(results) != len(signals):
@@ -236,17 +232,21 @@ class Engine:
 
     @staticmethod
     def _fit_length(result: BackendResult, n: int) -> None:
-        """Trim/pad a backend result in place so it matches its own window exactly."""
-        if result.target.shape[-1] == n:
-            return
-        m = min(n, result.target.shape[-1])
-        fixed = np.zeros(n, dtype=np.float32)
-        fixed[:m] = result.target[:m]
-        result.target = fixed
-        if result.residual is not None:
-            res = np.zeros(n, dtype=np.float32)
-            res[:m] = result.residual[:m]
-            result.residual = res
+        """Trim/pad a backend result in place so it matches its own window exactly.
+
+        Target and residual are checked independently: a batched backend pads the batch to
+        its longest window, and the crossfade merge adds both into ``n``-sample slices, so a
+        residual left at the padded length would raise a broadcast error rather than be
+        silently wrong.
+        """
+        for attr in ("target", "residual"):
+            arr = getattr(result, attr)
+            if arr is None or arr.shape[-1] == n:
+                continue
+            m = min(n, arr.shape[-1])
+            fixed = np.zeros(n, dtype=np.float32)
+            fixed[:m] = arr[:m]
+            setattr(result, attr, fixed)
 
     def _separate_interval(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, interval: tuple[float, float]) -> BackendResult:
         """Visual prompting: separate only the interval the masks cover, then place the

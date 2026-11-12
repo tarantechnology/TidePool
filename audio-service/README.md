@@ -34,7 +34,7 @@ memory scales with window length). Extra variables, all optional:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `AUDIO_CHUNK_BATCH` | `1` | How many chunk windows go into ONE model batch (1-8). Batch `k` costs roughly `k x` the activation memory of one window; on OOM the whole signal is retried at batch 1. `AUDIO_CHUNK_WORKERS` is a deprecated alias that now sets this and logs a warning. See `docs/chunk_concurrency.md`. |
+| `AUDIO_CHUNK_BATCH` | `1` | How many chunk windows go into ONE model batch (1-8). Batch `k` costs roughly `k x` the activation memory of one window (and buys per-call overhead, not a `k x` speedup); on any GPU allocation failure - `out of memory`, `CUBLAS_STATUS_ALLOC_FAILED`, `CUDNN_STATUS_ALLOC_FAILED`, `cudaErrorMemoryAllocation`, an illegal memory access or `torch.OutOfMemoryError` - the whole signal is retried at batch 1. `AUDIO_CHUNK_WORKERS` is a deprecated alias that now sets this and logs a warning. See `docs/chunk_concurrency.md`. |
 | `AUDIO_VISUAL_MASK_MODE` | `keep_object` | `keep_object` keeps the object and zeroes the background (the paper's `V ⊙ M`); `notebook` zeroes the object, as the official notebook does. Upstream issue #75 is unresolved, so this is an A/B switch. |
 | `AUDIO_LOAD_SPAN_PREDICTOR` | `true` | `false` drops the multi-billion-parameter PE-A-Frame span predictor (big memory saving, no span prediction). |
 | `AUDIO_LOAD_RANKERS` | `true` | `false` drops the CLAP/Judge/ImageBind re-rankers (only used when `AUDIO_RERANKING_CANDIDATES > 1`). |

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { refinementBadge } from '../api/refine'
 import { MAX_GAIN, toDb } from '../edits'
 import type { EditAction, Stem, StemKind, TrackState } from '../types'
 
@@ -26,6 +27,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
       active ? activeCls : 'border-line bg-white/[0.03] text-zinc-500 hover:border-line-strong hover:text-zinc-200'
     }`
+  const refined = refinementBadge(stem.refinement)
   const pos = `${(track.gain / MAX_GAIN) * 100}%`
   const sliderStyle = {
     '--pos': pos,
@@ -60,6 +62,11 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
                 className="shrink-0 font-mono text-[10px] text-amber-300"
               >
                 not synced
+              </span>
+            )}
+            {refined && (
+              <span title={refined.title} className="shrink-0 font-mono text-[10px] text-accent">
+                {refined.text}
               </span>
             )}
           </div>

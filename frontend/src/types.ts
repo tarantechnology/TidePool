@@ -20,6 +20,21 @@ export interface Stem {
   startOffset?: number
   /** Timeline spans where the stem is silent, inclusive at both ends. Read-only here. */
   muteRanges?: MuteRange[]
+  /** How many separation passes produced this stem, when the backend says. Read-only here. */
+  refinement?: Refinement
+}
+
+/**
+ * Extra separation passes rerun the prompt on what was left, to catch sound the
+ * first pass only quieted. Mapped from the backend's `refinement` by toStem.
+ */
+export interface Refinement {
+  passesRequested: number
+  passesRun: number
+  /** Energy pulled out by each pass, in dB, in pass order. */
+  perPassEnergyDb: number[]
+  /** The backend stopped before passesRequested because a pass found little left. */
+  stoppedEarly: boolean
 }
 
 /** [start, end] in timeline seconds, as the backend stores them. */

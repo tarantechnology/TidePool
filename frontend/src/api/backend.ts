@@ -1,5 +1,5 @@
 import { MAX_GAIN } from '../edits'
-import type { Keyframe, MuteRange, Stem, TrackState } from '../types'
+import type { Keyframe, MuteRange, Refinement, Stem, TrackState } from '../types'
 
 // Client for the upstream FastAPI backend. Paths and shapes come from
 // INTEGRATION.md and app/main.py at AkhilNam/SoundCanvas commit 9fc2216. They
@@ -35,6 +35,15 @@ export interface BackendStem {
   sample_rate?: number
   channels?: number
   format?: string
+  /** Sent by backends that run multi-pass separation. Absent or null otherwise. */
+  refinement?: BackendRefinement | null
+}
+
+export interface BackendRefinement {
+  passes_requested: number
+  passes_run: number
+  per_pass_energy_db: number[]
+  stopped_early: boolean
 }
 
 /** A row of GET /api/projects/{id}/stems: the stem as saved right now. */
@@ -143,13 +152,38 @@ export function toTrackState(stem: SavedStem): TrackState {
   }
 }
 
-/** Audio needs the bearer header, so it cannot be a plain URL on the Stem. */
+/**
+ * Audio needs the bearer header, so it cannot be a plain URL on the Stem.
+ * Never from the HTTP cache: Extract more rewrites a stem's audio in place, at
+ * the same URL, and a cached copy would play the old separation.
+ */
 export async function fetchStemBlobUrl(config: BackendConfig, audioUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<string> {
-  const res = await request(config, audioUrl, {}, undefined, timeoutMs)
+  const res = await request(config, audioUrl, { cache: 'no-store' }, undefined, timeoutMs)
   return URL.createObjectURL(await res.blob())
 }
 
+const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1
+
+/**
+ * The backend's refinement block, or undefined when it is absent or does not
+ * make sense. It only feeds a badge, so a bad one is dropped rather than fatal.
+ */
+export function toRefinement(raw: unknown): Refinement | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Partial<Record<keyof BackendRefinement, unknown>>
+  if (!isCount(r.passes_run)) return undefined
+  return {
+    passesRequested: isCount(r.passes_requested) ? r.passes_requested : r.passes_run,
+    passesRun: r.passes_run,
+    perPassEnergyDb: Array.isArray(r.per_pass_energy_db)
+      ? r.per_pass_energy_db.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+      : [],
+    stoppedEarly: r.stopped_early === true,
+  }
+}
+
 export function toStem(stem: BackendStem, url: string): Stem {
+  const refinement = toRefinement(stem.refinement)
   // The backend has no kind field, and kinds are not guessed from names.
   return {
     id: stem.id,
@@ -159,6 +193,7 @@ export function toStem(stem: BackendStem, url: string): Stem {
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
     muteRanges: stem.mute_ranges ?? [],
+    ...(refinement ? { refinement } : {}),
   }
 }
 
@@ -251,8 +286,17 @@ export async function uploadProject(config: BackendConfig, projectId: string, fi
 export async function storeVisualMetadata(config: BackendConfig, projectId: string, metadata: unknown): Promise<void> {
   await request(config, `/api/projects/${encodeURIComponent(projectId)}/visual-metadata`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(metadata)})
 }
-export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), visual_prompt: visualPrompt ?? {}})})
+/**
+ * The `passes` field for a separation request. One pass is the backend's
+ * default, so it is left out and a backend without multi-pass support still
+ * accepts the request.
+ */
+export function passesField(passes = 1): { passes?: number } {
+  return passes > 1 ? { passes } : {}
+}
+
+export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false, passes = 1): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), ...passesField(passes), visual_prompt: visualPrompt ?? {}})})
   return ((await res.json()) as {job_id:string}).job_id
 }
 export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
@@ -317,14 +361,16 @@ export async function getPrepareVisual(config:BackendConfig, jobId:string):Promi
 
 export interface Anchor {token:"+"|"-";start:number;end:number}
 export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
-export interface PreviewOptions {guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality"}
-export interface Capabilities {quality:boolean;visual:boolean;reason:string}
+export interface PreviewOptions {guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
+/** max_passes and refine come from backends with multi-pass separation; older ones omit them. */
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;max_passes?:number;refine?:boolean}
 export async function getCapabilities(config:BackendConfig,projectId:string):Promise<Capabilities> {
   return (await request(config,`/api/projects/${encodeURIComponent(projectId)}/capabilities`)).json() as Promise<Capabilities>
 }
 export interface CandidateInfo {mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
-  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...options})})
+  const {passes,...rest}=options
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})
   return ((await res.json()) as {candidate_id:string}).candidate_id
 }
 export async function getCandidate(config:BackendConfig,id:string):Promise<CandidateInfo> {
@@ -339,4 +385,17 @@ export async function undoCandidate(config:BackendConfig,id:string):Promise<{job
 
 export async function addMuteRange(config:BackendConfig,projectId:string,stem:SavedStem,start:number,end:number):Promise<void> {
   await request(config,`/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stem.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_revision:stem.revision,mute_ranges:[...(stem.mute_ranges || []),[start,end]]})})
+}
+
+/**
+ * Rerun a target stem's prompt on the residual (Extract more). Resolves with the
+ * job to poll. A 409 means the stem cannot be refined right now; its detail
+ * says why (see refineConflictMessage).
+ */
+export async function startRefine(config:BackendConfig,projectId:string,stemId:string,passes?:number,signal?:AbortSignal):Promise<string> {
+  const init:RequestInit=passes===undefined?{method:'POST'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passes})}
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}/refine`,init,signal)
+  const body=(await res.json()) as {job_id?:unknown}
+  if(typeof body.job_id!=='string' || !body.job_id)throw new Error('Backend did not return a refine job')
+  return body.job_id
 }

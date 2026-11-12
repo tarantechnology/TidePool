@@ -414,7 +414,10 @@ def refine_job(jid: str, authorization: str | None=Header(None)):
     return get_job(jid,'refine',authorization)
 
 @app.get('/api/jobs/{jid}')
-def job(jid: str, authorization: str | None=Header(None)): return get_job(jid,'process',authorization)
+def job(jid: str, authorization: str | None=Header(None)):
+    # The editor polls every job here (processing and refine share the response shape).
+    with connect() as db: row=db.execute("SELECT kind FROM jobs WHERE id=? AND kind IN ('process','refine')",(jid,)).fetchone()
+    return get_job(jid,row['kind'] if row else 'process',authorization)
 
 @app.get('/api/projects/{pid}/stems')
 def list_stems(pid: str, authorization: str | None=Header(None)):

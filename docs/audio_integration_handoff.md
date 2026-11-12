@@ -36,7 +36,7 @@ and the upstream sources.
 | Contract version | `2025-11-draft-1` (returned in every response and by `/health`) |
 | Contract details | [`docs/contracts/audio_contracts.md`](contracts/audio_contracts.md) — Contracts A–E |
 | Editor fixture | `audio-service/fixtures/editor/` + `scripts/make_editor_fixture.py` |
-| Test suite | `cd audio-service && .venv/bin/python -m pytest -q` — passes on CPU with the mock backend (163 tests at the time of writing); CI: `.github/workflows/audio-service.yml` |
+| Test suite | `cd audio-service && .venv/bin/python -m pytest -q` — passes on CPU with the mock backend; CI: `.github/workflows/audio-service.yml` |
 
 ---
 
@@ -234,8 +234,11 @@ Guarantees, in one place:
   equal `source.duration` / `source.sample_count` for every stem including the residual. We
   never return a clip of the detected event, so nothing downstream has to reconstruct an
   offset.
-- One stem per prompt (named by `prompts[].name`, else the normalised prompt text), plus one
-  `residual` stem unless `options.residual: "none"`.
+- One stem per prompt, plus one `residual` stem unless `options.residual: "none"`. The stem
+  name is `prompts[].name` if given, else **the caller's own wording** of the prompt with
+  whitespace collapsed (case and punctuation preserved), else Person 2's visual label. The
+  normalised phrase the model saw is reported separately as `stems[].prompt`, so an editor
+  that matches stems against the prompt it sent keeps working without sending a name.
 - With the default `options.residual: "mixture_minus_targets"` the residual is
   `mixture - sum(targets)`, so **`sum(stems) == source`** exactly in float and within
   float32 rounding after encoding. That is what makes "mute the siren" equal "original minus
@@ -704,8 +707,9 @@ if none of it happens, text and interval prompting keep working exactly as today
    is what it already is when `STORAGE_ROOT=/data`.
 3. **Read our error body before raising.** Done on `integration/cloud-editor-gpu`: `app/media.py`
    parses `error.code` / `error.message`, so job errors read e.g.
-   `INVALID_REQUEST: at most 8 prompts per request` (verified live). Still flattened into
-   that one string: `retryable` and `details`. `MISSING_MODEL` / `INSUFFICIENT_GPU_MEMORY` /
+   `INVALID_REQUEST: at most 8 prompts per request` (verified live). `app/media.py` builds
+   that string as `f"{code}: {message}"`, so `retryable` and `details` are not persisted at
+   all — not part of the string either. `MISSING_MODEL` / `INSUFFICIENT_GPU_MEMORY` /
    `STORAGE_FAILURE` / `SERVICE_BUSY` carry `retryable: true`, so a structured job-error field
    would let the editor offer a retry.
 4. **Store our `warnings[]` with the job** (a `warnings` column, or appended to
@@ -801,7 +805,8 @@ allow-listed URLs but send no `Authorization` header, so that needs a small exte
 *Owner: Person 4.*
 Resolved for code + message on `integration/cloud-editor-gpu` (`app/media.py` parses our error
 body; verified live: `INVALID_REQUEST: at most 8 prompts per request`). Remaining: `retryable`
-and `details` are flattened into the error string.
+and `details` are not persisted at all — the job error is `f"{code}: {message}"`, so neither
+field reaches the string.
 *Proposed default:* persist `{code, message, retryable, details}` as a structured job-error
 field alongside the string.
 *Status: partially resolved; structured field awaiting agreement.*
@@ -863,8 +868,9 @@ SAM Audio expects short lowercase noun/verb phrases. A user typing "Please remov
 annoying police siren!!" is not that, and when the prompted sound is absent the model may
 emit unrelated audio.
 *Proposed default:* we normalise defensively (lowercase, strip trailing punctuation and
-leading "isolate the"/"extract the"/"the") and expose `prompts[].name` so the UI keeps the
-user's wording while the model gets the clean phrase. Person 2's `label` is used when a
+leading "isolate the"/"extract the"/"the") for `stems[].prompt`, and default `stems[].name` to
+the user's own wording, so the UI keeps the user's phrasing while the model gets the clean
+phrase; `prompts[].name` overrides that name. Person 2's `label` is used when a
 visual prompt has no text. A curated suggestion list in the editor would help more than any
 parsing we can do.
 *Status: awaiting agreement.*

@@ -165,7 +165,7 @@ Full request:
 | --- | --- | --- | --- |
 | `prompts` | array of string **or** `PromptSpec` | `[]` (then 400) | One stem per entry. Max `AUDIO_MAX_PROMPTS` (8); exceeding it is `INVALID_REQUEST`. Person 4's `Process.prompts: list[str]` is the string form. |
 | `prompts[].text` | string ≤ 500 | `""` | Normalised to a lowercase noun/verb phrase, as SAM Audio was trained ("Isolate the Siren!" → `siren`): trailing punctuation and leading `isolate (the)` / `extract (the)` / `the` are stripped. Required unless the entry has a usable visual prompt. |
-| `prompts[].name` | string ≤ 200 | `text` | The **stem name** shown to the user; becomes `stems[].name`. This is how the editor gets "Police siren" while the model gets `siren`. |
+| `prompts[].name` | string ≤ 500 | the caller's wording of `text` | The **stem name** shown to the user; becomes `stems[].name`. Omit it and we default to your own wording of `text` with whitespace collapsed — case and punctuation preserved ("Isolate the Dog!" stays `Isolate the Dog!` while the model gets `dog`), so an editor that matches stems against the prompt it sent needs no name at all. Pass it to name the stem something else ("Police siren"). Both prompt forms behave identically; a prompt that normalises to nothing (punctuation only) stays unnamed and falls back to the visual label. |
 | `prompts[].anchors` | array of `{token, start, end}` | `[]` | Span prompts. `token` is `"+"` (target audible in this span) or `"-"` (target absent). Seconds on the source timeline, clamped to the source duration. |
 | `prompts[].visual_prompt` | object | `null` | Contract D, per prompt. Overrides the top-level one for that prompt. |
 | `source` | object | `null` | Contract A subset: `asset_id`, `original_ref`, `sha256`, `duration`, `frame_rate`. **Required for mask-based visual prompting** — without `original_ref` we cannot reach the video and fall back to text + anchors with a warning. |
@@ -266,13 +266,13 @@ A committed copy with truncated base64 lives at
 
 | Field | Type | Status | Notes |
 | --- | --- | --- | --- |
-| `stems[].name` | string | **Person 4 reads this today** | `prompts[].name` or the normalised prompt text; the residual uses `options.residual_name`. Person 4 stores it as `stems.name` and matches webhook commands against it case-insensitively, so names should be short and distinct. |
+| `stems[].name` | string | **Person 4 reads this today** | `prompts[].name` if given, else the caller's wording of the prompt with whitespace collapsed (case and punctuation preserved), else Person 2's visual label; the residual uses `options.residual_name`. Person 4 stores it as `stems.name` and matches webhook commands against it case-insensitively, so the default keeps the caller's own phrasing matchable. The **normalised** phrase the model saw is `stems[].prompt`, not this. |
 | `stems[].audio_base64` | string | **Person 4 reads this today** | A complete RIFF WAV (header included), base64, no data URI prefix. Present unless `return_mode: "file"`. Capped by Person 4's `MAX_STEM_BYTES` after decoding. |
 | `stems[].audio_ref` | string | proposed | `file://` URL under `AUDIO_OUTPUT_ROOT`, present instead of `audio_base64` when `return_mode: "file"`. |
 | `stems[].stem_id` | string (32 hex) | proposed | Stable **within one response**. It is not Person 4's `stems.id` (they mint their own) — it is the correlation id between our logs and a stem. |
 | `stems[].role` | `"target"` \| `"residual"` | proposed | Exactly one `residual` unless `options.residual: "none"`. Lets the editor style "everything else" differently without string-matching the name. |
 | `stems[].prompt` | string \| null | proposed | The **normalised** text actually given to the model. `null` for the residual. |
-| `stems[].label` | string \| null | proposed | Human-readable label: the prompt name, Person 2's object label when a visual prompt was used, or `"everything else"` for the residual. |
+| `stems[].label` | string \| null | proposed | The human-facing name of the stem: Person 2's object label when the prompt carried its own visual prompt, otherwise the same value as `stems[].name` (so for a text prompt it is the caller's wording, not the normalised phrase); `"everything else"` for the residual. |
 | `stems[].start_time` | number | proposed, maps to Person 4's `start_offset` | **Always `0.0`.** Stems are full-timeline. Person 4 defaults `stems.start_offset` to 0 and lets the editor change it; our value is the initial one. |
 | `stems[].duration` | number | **Person 4 computes its own** | Equal to `source.duration` for every stem. Person 4 re-probes each WAV and stores its own `duration`; the two agree to within ffprobe's rounding (asserted < 50 ms in the executed test, in practice exact). |
 | `stems[].sample_rate` | int | proposed | Always `48000`. |

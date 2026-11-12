@@ -64,7 +64,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const attachedVideo = useRef<File | null>(null)
   /** Polls and awaited requests outlive the panel, so state is only set while it is mounted. */
   const mounted = useRef(true)
-  useEffect(() => () => { mounted.current = false; abort.current?.abort() }, [])
+  // StrictMode (dev) runs this cleanup once during its simulated unmount, so the effect body
+  // must re-arm the flag on every mount or the panel stays frozen after the first upload.
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; abort.current?.abort() } }, [])
   useEffect(() => { if (selectedVisual) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual])
   useEffect(() => { onProjectState({projectId: project?.project_id ?? null, ...stemsInfo}) }, [project, stemsInfo, onProjectState])
   const config: BackendConfig = {baseUrl, token}

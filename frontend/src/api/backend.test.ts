@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendStem } from './backend'
-import { processProject, toStem } from './backend'
+import { createCandidate, fetchStemBlobUrl, processProject, toRefinement, toStem } from './backend'
 import { buildVisualPrompt, NO_VISUAL_PROMPT } from './separation'
 
 const config = { baseUrl: 'http://api.test:8000', token: 'tok' }
@@ -31,6 +31,48 @@ describe('processProject', () => {
       prompts: ['dog barking'],
       visual_prompt: { detection_id: 'd1', track_id: 2, label: 'dog', interval: { start_seconds: 1, end_seconds: 3 } },
     })
+  })
+})
+
+describe('passes on separation requests', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('process sends passes above one, and leaves the default out', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ job_id: 'j1' })))
+    await processProject(config, 'p1', ['dog'], NO_VISUAL_PROMPT, false, 3)
+    await processProject(config, 'p1', ['dog'], NO_VISUAL_PROMPT)
+    await processProject(config, 'p1', ['dog'], NO_VISUAL_PROMPT, false, 1)
+    expect(bodyOf(0)).toEqual({ prompts: ['dog'], passes: 3, visual_prompt: {} })
+    expect(bodyOf(1)).not.toHaveProperty('passes')
+    expect(bodyOf(2)).not.toHaveProperty('passes')
+  })
+
+  it('candidates send passes above one, and leave the default out', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ candidate_id: 'c1' })))
+    await createCandidate(config, 'p1', null, 'dog', 1, { profile: 'preview', passes: 2 })
+    await createCandidate(config, 'p1', 's1', 'dog', 1, { profile: 'preview', passes: 1 })
+    await createCandidate(config, 'p1', null, 'dog', 1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://api.test:8000/api/projects/p1/candidates')
+    expect(bodyOf(0)).toEqual({ stem_id: null, prompt: 'dog', reranking_candidates: 1, profile: 'preview', passes: 2 })
+    expect(bodyOf(1)).toEqual({ stem_id: 's1', prompt: 'dog', reranking_candidates: 1, profile: 'preview' })
+    expect(bodyOf(2)).not.toHaveProperty('passes')
+  })
+})
+
+describe('fetchStemBlobUrl', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('bypasses the HTTP cache, since Extract more rewrites audio at the same URL', async () => {
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValue(new Response(new Blob([new Uint8Array([1, 2])])))
+    vi.stubGlobal('fetch', fetchMock)
+    const url = await fetchStemBlobUrl(config, '/api/stems/s1/audio')
+    expect(fetchMock.mock.calls[0][1]?.cache).toBe('no-store')
+    URL.revokeObjectURL(url)
   })
 })
 
@@ -66,6 +108,38 @@ describe('toStem', () => {
       duration: 4,
       startOffset: 0,
       muteRanges: [],
+    })
+  })
+
+  it('maps refinement when the backend sends it', () => {
+    const refinement = { passes_requested: 3, passes_run: 2, per_pass_energy_db: [-12.3, -30.8], stopped_early: true }
+    expect(toStem(row({ refinement }), 'blob:x').refinement).toEqual({
+      passesRequested: 3,
+      passesRun: 2,
+      perPassEnergyDb: [-12.3, -30.8],
+      stoppedEarly: true,
+    })
+  })
+
+  it('has no refinement key when it is absent or null', () => {
+    expect(toStem(row({}), 'blob:x')).not.toHaveProperty('refinement')
+    expect(toStem(row({ refinement: null }), 'blob:x')).not.toHaveProperty('refinement')
+  })
+})
+
+describe('toRefinement', () => {
+  it('drops a block without a usable passes_run', () => {
+    expect(toRefinement({ passes_requested: 2 })).toBeUndefined()
+    expect(toRefinement({ passes_run: 0 })).toBeUndefined()
+    expect(toRefinement('2 passes')).toBeUndefined()
+  })
+
+  it('fills in what is missing or malformed instead of failing the load', () => {
+    expect(toRefinement({ passes_run: 2, per_pass_energy_db: [-10, null, 'x', -20] })).toEqual({
+      passesRequested: 2,
+      passesRun: 2,
+      perPassEnergyDb: [-10, -20],
+      stoppedEarly: false,
     })
   })
 })

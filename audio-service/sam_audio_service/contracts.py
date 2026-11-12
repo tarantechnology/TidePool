@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer, model_validator
 
 from . import CONTRACT_VERSION
 
@@ -87,6 +87,9 @@ class InferenceOptions(BaseModel):
     chunk_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     chunk_batch: int | None = Field(default=None, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0)
+    # Multi-pass separation: rerun each prompt on its own residual up to this many times.
+    # The upper bound is AUDIO_MAX_PASSES (checked by the engine, 400 INVALID_REQUEST).
+    passes: int | None = Field(default=None, ge=1, strict=True, description="1..AUDIO_MAX_PASSES; default 1")
     output_format: Literal["pcm_f32le", "pcm_s16le"] = "pcm_f32le"
     # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.
@@ -205,6 +208,15 @@ class SourceInfo(BaseModel):
     sample_count: int
 
 
+class Refinement(BaseModel):
+    """Multi-pass bookkeeping for a target stem (``options.passes``)."""
+
+    passes_requested: int
+    passes_run: int
+    per_pass_energy_db: list[float] = Field(description="10*log10(energy of pass i's extra target / mixture energy), floored at -120")
+    stopped_early: bool
+
+
 class StemResult(BaseModel):
     """Contract C (proposed): one stem. ``name`` + ``audio_base64`` are what Person 4 reads today."""
 
@@ -223,6 +235,16 @@ class StemResult(BaseModel):
     format: str = "wav/pcm_f32le"
     spans: list[list[float]] | None = Field(default=None, description="[[start, end], ...] seconds where the target is active, if known")
     source_asset_id: str | None = None
+    refinement: Refinement | None = Field(default=None, description="Target stems only; null on the residual")
+
+    @model_serializer(mode="wrap")
+    def _keep_refinement_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema
+        # The API serialises with exclude_none, which would drop the key; the contract
+        # promises ``refinement: null`` on residual stems, so always emit it.
+        data = handler(self)
+        if isinstance(data, dict):
+            data.setdefault("refinement", None)
+        return data
 
 
 class ModelInfo(BaseModel):
@@ -234,6 +256,7 @@ class ModelInfo(BaseModel):
     reranking_candidates: int
     stereo_mode: str
     chunked: bool
+    passes: int = Field(default=1, description="Most separation passes run for any prompt")
     elapsed_seconds: float
     chunk_seconds: float = 0
     chunk_overlap_seconds: float = 2

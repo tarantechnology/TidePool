@@ -7,12 +7,15 @@ import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
 import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { pollJob, toJobStatus } from '../api/jobs'
+import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
+import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
 import { HttpStemSource } from '../api/stemSources'
 import type { StemSource } from '../api/stemSources'
 
 import { SoundGuidance } from './SoundGuidance'
 import { CandidateComparison } from './CandidateComparison'
 import { GuidedByChip, ObjectsPanel } from './ObjectsPanel'
+import { PassesSelect } from './PassesSelect'
 
 const field = 'w-full rounded-lg border border-line bg-white/[0.04] px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500'
 const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40'
@@ -81,6 +84,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [clearRanges, setClearRanges] = useState(false)
   const [messages, setMessages] = useState<Array<{id:string;text:string}>>([])
   const [resumeVisual, setResumeVisual] = useState<{projectId:string;jobId:string}|null>(null)
+  const [passes, setPasses] = useState(1)
+  const [retryPasses, setRetryPasses] = useState(1)
+  const [refining, setRefining] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -96,6 +102,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
   useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings})},[projectId,mockStems,candidateWarnings,onProjectState])
   const config: BackendConfig = {baseUrl, token}
+  const choices = passChoices(capabilities?.max_passes)
   const run = async (fn: () => Promise<void>) => {
     setError(''); setMessage(''); setBusy(true)
     try { await fn() } catch (e) { if(mounted.current)setError(e instanceof Error ? e.message : String(e)) }
@@ -159,10 +166,10 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     else if (info.last_completed_job_id) { await onLoadStems(new HttpStemSource(cfg,info.last_completed_job_id), 'Project stems'); setMessage('Project restored.') }
     else { await onLoadStems({load: async () => original ? [{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}] : []}, original ? 'Original audio' : 'No stems yet'); setMessage('Project restored. Upload or start processing.') }
   })
-  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors) => {
+  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
-    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview'})
+    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount})
     for (;;) {
       if(!mounted.current)throw new Error('Preview cancelled')
       const job=await getCandidate(cfg,id)
@@ -184,7 +191,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const scope:EditScope=instruction?.editScope || {action:instruction?.remove?'mute':editAction,...(timedEdit && editAction==='mute'?{interval:{start:editStart,end:editEnd}}:{})}
     let visual:unknown={}
     if(selection)visual={...selection as object,interval:{start_seconds:Number(rangeStart),end_seconds:Number(rangeEnd)}}
-    await previewSound(config,project,sound,scope,visual,null,quality)
+    await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices))
   })
   useImperativeHandle(ref, () => ({ uploadMedia, visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
@@ -307,6 +314,32 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await onLoadStems(new HttpStemSource(config,jobId),'Project stems')
     setSettingsStems([]); setMessage('Stem settings saved. Reload settings to edit again.')
   })
+  /** Rerun the selected target's prompt on the residual, then reload both with their new audio. */
+  const extractMore = () => run(async () => {
+    const stem=settingsStems.find(s => s.id===settingId)
+    if (!project || !jobId || !stem) return
+    await flush()
+    abort.current?.abort(); const controller = new AbortController(); abort.current = controller
+    setRefining(true)
+    try {
+      await runRefine(config, project.project_id, stem.id, {
+        signal: controller.signal, onUpdate: status => setMessage(`Extracting more: ${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''}`),
+      })
+    } catch (e) {
+      if (!mounted.current) return
+      if (isAbort(e) || controller.signal.aborted) { setMessage(CANCELLED_MESSAGE); return }
+      const refused = refineConflictMessage(e)
+      if (refused === null) throw e
+      setMessage(refused); return
+    } finally { if (mounted.current) setRefining(false) }
+    // Same reload as every other job: fresh blob URLs, decoded again by the engine.
+    await onLoadStems(new HttpStemSource(config, jobId), 'Project stems')
+    if (!mounted.current) return
+    setSettingsStems(await getSavedStems(config, project.project_id))
+    setMessage('Extracted more of the sound. The target and residual were reloaded.')
+  })
+  const settingStem = settingsStems.find(s => s.id===settingId)
+  const refineBlocked = settingStem ? refineBlockReason(settingStem, settingsStems, {busy, supported: capabilities?.refine}) : 'Load stem settings first.'
   const prepareRetry = () => run(async () => {
     if (!project) return
     await flush()
@@ -318,7 +351,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   })
   const retry = (quality=false) => run(async () => {
     if(!project || !retryStem) return
-    await previewSound(config,project,retryPrompt,{action:'keep'},selection || {},retryStem,quality)
+    await previewSound(config,project,retryPrompt,{action:'keep'},selection || {},retryStem,quality,anchors,clampPasses(retryPasses,choices))
   })
   const useRetry = () => run(async () => {
     if(!candidateId || !project) return
@@ -358,6 +391,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         <details className="text-xs"><summary className="cursor-pointer">Advanced: import detections</summary><p className="my-1 text-zinc-400">Import detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</details>
         <SoundGuidance duration={project.metadata?.duration || 1} anchors={anchors} onChange={setAnchors}/>
         <label className="block text-xs">Edit after separation<select aria-label="Edit after separation" className={field} value={editAction} onChange={e=>setEditAction(e.target.value as EditScope['action'])}><option value="keep">Keep isolated layer</option><option value="mute">Mute target</option><option value="lower">Lower target 50%</option></select></label>
+        <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
         {editAction==='mute' && <div className="text-xs"><label><input type="checkbox" checked={timedEdit} onChange={e=>setTimedEdit(e.target.checked)}/>Mute only an edit interval</label>{timedEdit && <div className="flex gap-1"><label>Edit start<input aria-label="Edit start" className={field} type="number" min={0} value={editStart} onChange={e=>setEditStart(Number(e.target.value))}/></label><label>Edit end<input aria-label="Edit end" className={field} type="number" min={0} value={editEnd} onChange={e=>setEditEnd(Number(e.target.value))}/></label></div>}</div>}
         {selection !== null && <GuidedByChip selection={selection as {label?:unknown;track_id?:unknown}} start={Number(rangeStart)} end={Number(rangeEnd)} onClear={()=>{setSelection(null);onClearSelection();setSelectionName('')}}/>}
         <div className="flex gap-1"><button className={button} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Preview</button><button className={secondary} disabled={busy || !prompt.trim() || !capabilities?.quality} onClick={()=>void process(true)}>Quality retry</button></div>
@@ -367,11 +401,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         {selectionName && (candidateId || error) && <button className={secondary} disabled={busy} onClick={()=>{setSelection(null);setSelectionName('');onClearSelection();setCandidateId('');setMessage('Mark where you hear the sound with I hear it here, then Preview to retry with text and time.')}}>Retry with text + time</button>}
         {undoId && <button className={secondary} disabled={busy} onClick={undoPreview}>Undo applied preview</button>}
         <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={secondary} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>
-        {jobId && <details className="text-xs"><summary className="cursor-pointer">Stem settings</summary><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load stem settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save stem settings</button></div>}</details>}
+        {jobId && <details className="text-xs"><summary className="cursor-pointer">Stem settings</summary><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load stem settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save stem settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>Extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-zinc-400">{refineBlocked}</p>}</div>}</details>}
         {jobId && <details className="text-xs"><summary className="cursor-pointer">Try another separation</summary>
           <p className="my-1 text-zinc-400">Replace a target in a two-layer project. For multitrack projects, Preview above splits the current residual; replacing an older target requires an earlier source snapshot.</p>
           <button className={secondary} disabled={busy} onClick={prepareRetry}>Choose sound</button>
-          {retryStems.length>0 && <div className="space-y-2"><label>Retry sound description<input className={field} value={retryPrompt} onChange={e=>setRetryPrompt(e.target.value)}/></label><button className={secondary} disabled={busy} onClick={()=>void retry()}>Preview replacement</button><button className={secondary} disabled={busy || !capabilities?.quality} onClick={()=>void retry(true)}>Quality replacement</button></div>}
+          {retryStems.length>0 && <div className="space-y-2"><label>Retry sound description<input className={field} value={retryPrompt} onChange={e=>setRetryPrompt(e.target.value)}/></label><PassesSelect className={field} value={clampPasses(retryPasses,choices)} choices={choices} onChange={setRetryPasses} disabled={busy}/><button className={secondary} disabled={busy} onClick={()=>void retry()}>Preview replacement</button><button className={secondary} disabled={busy || !capabilities?.quality} onClick={()=>void retry(true)}>Quality replacement</button></div>}
         </details>}
         <details className="text-xs"><summary className="cursor-pointer">Remote command test</summary><p className="my-1 text-zinc-500">Local webhook; messaging delivery is not connected.</p><div className="flex gap-1"><input className={field} value={command} onChange={e=>setCommand(e.target.value)} placeholder="Mute the dog"/><button className={secondary} disabled={busy || !command.trim()} onClick={sendCommand}>Send</button></div><button className={`${secondary} mt-1`} disabled={busy} onClick={()=>void run(async()=>{setMessages(await getMessages(config,project.project_id));setMessage('Messages updated.')})}>Refresh messages</button>{messages.map(m=><p key={m.id} className="mt-1 text-zinc-400">{m.text}</p>)}</details>
       </>}

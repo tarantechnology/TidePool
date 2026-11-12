@@ -77,6 +77,8 @@ class Settings:
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
     max_input_bytes: int = field(default_factory=lambda: _int("AUDIO_MAX_INPUT_BYTES", 500 * 1024 * 1024))
     max_prompts: int = field(default_factory=lambda: _int("AUDIO_MAX_PROMPTS", 8))
+    # Upper bound for options.passes (multi-pass separation; each pass is a full model run).
+    max_passes: int = field(default_factory=lambda: _int("AUDIO_MAX_PASSES", 3))
     # Visually prompted requests run the whole selected interval as ONE model window (frames
     # must stay aligned with the audio, so no chunking). Upstream reports ~30 s as the
     # practical ceiling for the large model on an 80 GB GPU.
@@ -140,6 +142,8 @@ class Settings:
             raise ValueError("AUDIO_MAX_VISUAL_INTERVAL_SECONDS must be positive")
         if not 1 <= self.chunk_batch <= 8:
             raise ValueError("AUDIO_CHUNK_BATCH (deprecated alias AUDIO_CHUNK_WORKERS) must be between 1 and 8")
+        if not 1 <= self.max_passes <= 5:
+            raise ValueError("AUDIO_MAX_PASSES must be between 1 and 5")
         if self.chunk_seconds < 0:
             raise ValueError("AUDIO_CHUNK_SECONDS must not be negative")
         if self.chunk_overlap_seconds <= 0:

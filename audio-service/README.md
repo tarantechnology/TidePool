@@ -35,6 +35,7 @@ memory scales with window length). Extra variables, all optional:
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `AUDIO_CHUNK_BATCH` | `1` | How many chunk windows go into ONE model batch (1-8). Batch `k` costs roughly `k x` the activation memory of one window (and buys per-call overhead, not a `k x` speedup); on any GPU allocation failure - `out of memory`, `CUBLAS_STATUS_ALLOC_FAILED`, `CUDNN_STATUS_ALLOC_FAILED`, `cudaErrorMemoryAllocation`, an illegal memory access or `torch.OutOfMemoryError` - the whole signal is retried at batch 1. `AUDIO_CHUNK_WORKERS` is a deprecated alias that now sets this and logs a warning. See `docs/chunk_concurrency.md`. |
+| `AUDIO_MAX_PASSES` | `3` | Upper bound (1-5) for `options.passes`; a request above it is `400 INVALID_REQUEST`. Each pass is a full model run. |
 | `AUDIO_VISUAL_MASK_MODE` | `keep_object` | `keep_object` keeps the object and zeroes the background (the paper's `V ⊙ M`); `notebook` zeroes the object, as the official notebook does. Upstream issue #75 is unresolved, so this is an A/B switch. |
 | `AUDIO_LOAD_SPAN_PREDICTOR` | `true` | `false` drops the multi-billion-parameter PE-A-Frame span predictor (big memory saving, no span prediction). |
 | `AUDIO_LOAD_RANKERS` | `true` | `false` drops the CLAP/Judge/ImageBind re-rankers (only used when `AUDIO_RERANKING_CANDIDATES > 1`). |
@@ -62,6 +63,21 @@ target `sam`) is unaffected: both packages ship manylinux wheels.
 
 The mock backend (`AUDIO_BACKEND=mock`) is a band-pass filter, not separation; every response
 produced by it carries `model.is_mock=true` and a warning.
+
+### Multi-pass separation (`options.passes`)
+
+SAM Audio sometimes only attenuates the described sound: the target stem has it, but the
+residual still carries a quieter copy. `options.passes = n` (1..`AUDIO_MAX_PASSES`, default 1)
+reruns the same prompt (text, anchors and visual prompt) on that prompt's residual and adds
+what it extracts to the target:
+
+| Request option | Default | Effect |
+| --- | --- | --- |
+| `options.passes` | `1` | Pass 1 separates the mixture; pass `k` separates `mixture - (t1 + ... + t(k-1))` and the stem is `t1 + ... + tk`. Each prompt has its own residual chain; the residual stem is still `mixture - all targets`, so stems sum to the mixture exactly. Chunking, `per_channel` stereo, anchors and visual intervals apply unchanged to every pass. A pass extracting less than -30 dB of pass 1's energy is discarded and stops the chain (with a warning), as does a silent residual. Cost is up to `n x` per prompt. |
+
+Each target stem reports `refinement = {passes_requested, passes_run, per_pass_energy_db,
+stopped_early}`; `model.passes` is the most passes run for any prompt. Compare quality across
+pass counts with `python -m benchmarks.run_benchmark --backend sam --passes 2`.
 
 ## GPU deployment and readiness
 

@@ -25,6 +25,11 @@ describe('toCapabilities', () => {
     expect(toCapabilities({ vision: { reason: 'no flag' } }).vision).toBeUndefined()
     expect(toCapabilities(null)).toEqual({ quality: false, visual: false, reason: '' })
   })
+  it('keeps the multi-pass fields next to vision, dropping ones of the wrong type', () => {
+    expect(toCapabilities({ quality: true, visual: false, reason: '', max_passes: 3, refine: true, vision: { available: false } }))
+      .toEqual({ quality: true, visual: false, reason: '', max_passes: 3, refine: true, vision: { available: false, reason: null, model: null, weightsCached: null, device: null } })
+    expect(toCapabilities({ max_passes: '3', refine: 'yes' })).toEqual({ quality: false, visual: false, reason: '' })
+  })
 })
 
 describe('detectorStatus', () => {

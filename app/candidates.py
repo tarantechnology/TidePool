@@ -29,6 +29,7 @@ def build(project, payload, cid):
     inference={}; directory=project_dir(pid)/'stems'
     results=separate(source,directory,payload,report=inference)
     results=[r if isinstance(r,dict) else {'name':r[0],'path':r[1]} for r in results]
+    refinement=next((r.get('refinement') for r in results if r['name'].lower()!='residual'),None)
     targets=[(r['name'],r['path']) for r in results if r['name'].lower()!='residual']
     residuals=[(r['name'],r['path']) for r in results if r['name'].lower()=='residual']
     if len(targets)!=1 or len(residuals)!=1: raise ValueError('Preview requires one target and one residual; current layers were preserved.')
@@ -48,6 +49,7 @@ def build(project, payload, cid):
     target=edit_target(new_row(*targets[0],snapshot['target_id']),payload.get('edit_scope',{'action':'keep'}))
     residual=new_row(*residuals[0],snapshot['residual_id'])
     target['role']='target'; residual['role']='residual'
+    target['refinement']=json.dumps(refinement) if refinement is not None else None
     if not snapshot['target_id']:
         target['prompt']=payload['prompts'][0];target['label']=target['name'];target['source_stem_id']=None
     residual['label']='everything else'
@@ -62,7 +64,8 @@ def build(project, payload, cid):
             'provenance':{'source_sha256':snapshot['source_sha256'],'source_kind':'original' if snapshot['target_id'] or not rows else 'residual',
                           'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':payload.get('anchors',[]),
                           'visual_guidance':bool(payload.get('visual_prompt')),'edit_scope':payload.get('edit_scope'),
-                          'profile':payload.get('profile','preview'),'requested_options':payload['options']}}
+                          'profile':payload.get('profile','preview'),'requested_options':payload['options'],
+                          'passes':payload['options'].get('passes',1),'refinement':refinement}}
 
 
 def completed_job(db,pid):
@@ -78,7 +81,7 @@ def apply(job):
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         current=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-        if db.execute("SELECT 1 FROM jobs WHERE project_id=? AND kind IN ('process','normalize') AND status IN ('queued','processing')",(pid,)).fetchone():
+        if db.execute("SELECT 1 FROM jobs WHERE project_id=? AND kind IN ('process','normalize','refine') AND status IN ('queued','processing')",(pid,)).fetchone():
             raise HTTPException(409,'Wait for active media processing before applying a preview.')
         if db.execute('SELECT 1 FROM candidate_history WHERE candidate_id=?',(job['id'],)).fetchone() or revisions(current)!=revisions(snapshot['rows']):
             raise HTTPException(409,'Layers changed since preview. Generate a new preview.')
@@ -94,6 +97,8 @@ def apply(job):
                 # The snapshot is unchanged, including every existing edit.
                 db.execute('UPDATE stems SET path=?,duration=?,volume=?,muted=?,mute_ranges=?,revision=revision+1 WHERE id=? AND project_id=?',
                            (item['path'],item['duration'],item['volume'],item['muted'],item['mute_ranges'],item['id'],pid))
+                if 'refinement' in item:  # Previews built before refinement existed leave it alone.
+                    db.execute('UPDATE stems SET refinement=? WHERE id=? AND project_id=?',(item['refinement'],item['id'],pid))
             else:
                 keys=list(item)
                 db.execute('INSERT INTO stems('+','.join(keys)+') VALUES('+','.join('?' for _ in keys)+')',list(item.values()))

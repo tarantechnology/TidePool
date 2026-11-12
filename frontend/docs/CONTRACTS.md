@@ -17,7 +17,8 @@ type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience' | 'residual'
 
 type MuteRange = [number, number]
 
-interface Stem { id: string; label: string; kind: StemKind; url: string; duration: number; startOffset?: number; muteRanges?: MuteRange[] }
+interface Stem { id: string; label: string; kind: StemKind; url: string; duration: number; startOffset?: number; muteRanges?: MuteRange[]; refinement?: Refinement }
+interface Refinement { passesRequested: number; passesRun: number; perPassEnergyDb: number[]; stoppedEarly: boolean }
 interface Keyframe { t: number; value: number }
 interface TrackState { stemId: string; gain: number; muted: boolean; solo: boolean; automation: Keyframe[] }
 interface EditList { version: 1; tracks: TrackState[] }
@@ -39,6 +40,7 @@ All additive. No existing field or union member changed.
 
 - `Stem` gained optional `startOffset` and `muteRanges`, and there is a new `MuteRange` type (see "Offsets and mute ranges"). Both come from the backend and are read-only in the editor.
 - `StemKind` gained `residual`, the only kind the backend sets itself: a stem whose `role` is `residual` gets it, and everything else keeps `sfx`. Kinds are still never guessed from names.
+- `Stem` gained optional `refinement` and there is a new `Refinement` type (see "Multi-pass separation"). It comes from the backend and only feeds the track header badge.
 - `EditAction` gained `follow_intensity`. It makes a stem's gain follow how loud the source stems are. That is a loudness proxy, not emotion detection. It is resolved to `set_automation` in the browser (`src/audio/resolve.ts`) because that needs decoded audio, so it never reaches an edit list or an exporter. `applyAction` treats an unresolved one as a no-op. `minValue` is the gain at low loudness and `maxValue` at high loudness. `maxValue` below `minValue` ducks.
 
 ## Edit list
@@ -130,8 +132,10 @@ Every call except project creation needs `Authorization: Bearer <project token>`
 |---|---|---|
 | `getJob`, `HttpStemSource`, `JobStatusCard` | `GET /api/jobs/{id}` | `{ status, progress, error, stems }`. `status` is `queued`, `processing`, `completed` or `failed`. `progress` is 0 to 100. |
 | `fetchStemBlobUrl` | `GET` the stem's `audio_url` | Path relative to the base URL. |
-| `processProject` | `POST /api/projects/{id}/process` | `{ prompts, visual_prompt }`. `visual_prompt` is always sent: `{}` means no selection. Leaving the field out makes the backend substitute the project's stored detections document, which is megabytes of masks. |
-| `getCapabilities` → `toCapabilities` | `GET /api/projects/{id}/capabilities` | `{ quality, visual, reason, vision? }`. `vision` is ASSUMED, being added to the backend: `{ available, reason, model, weights_cached, device }`. Absent fields map to `null` (`weights_cached` becomes `weightsCached`), and a missing `vision` block, or one without a boolean `available`, means "status unknown": Find objects stays enabled and the backend answers. |
+| `processProject` | `POST /api/projects/{id}/process` | `{ prompts, passes?, visual_prompt }`. `visual_prompt` is always sent: `{}` means no selection. Leaving the field out makes the backend substitute the project's stored detections document, which is megabytes of masks. |
+| `createCandidate` | `POST /api/projects/{id}/candidates` | `{ stem_id, prompt, reranking_candidates, guidance, edit_scope, visual_prompt, profile, passes? }`. |
+| `startRefine`, `runRefine` | `POST /api/projects/{id}/stems/{stem_id}/refine` | Optional `{ passes }`. 202 `{ job_id }`, polled through `GET /api/jobs/{id}`. 409 with a string `detail` when the stem cannot be refined. |
+| `getCapabilities` → `toCapabilities` | `GET /api/projects/{id}/capabilities` | `{ quality, visual, reason, vision?, max_passes?, refine? }`. `vision` is ASSUMED, being added to the backend: `{ available, reason, model, weights_cached, device }`. `max_passes` and `refine` come from backends with multi-pass separation and are passed through only when they have the right type. Absent `vision` fields map to `null` (`weights_cached` becomes `weightsCached`), and a missing `vision` block, or one without a boolean `available`, means "status unknown": Find objects stays enabled and the backend answers. |
 | `startVisualAnalysis` | `POST /api/projects/{id}/visual-analyze` | 202 `{ job_id, status, prepared? }`. `prepared: true` means the backend re-encoded a compatible copy first; the editor then reloads the video (and the original audio, if nothing was separated) and says so in the status. 503 `{ detail, code: "vision_unavailable" }` shows "Detector not installed — detail" and disables the button; 409 shows the detail ("already active", "Upload a video first"); 422 means the media cannot be analysed and offers **Prepare compatible copy**. `prepared` and the 503 are ASSUMED. |
 | `getVisualJob` through `followVisualJob` | `GET /api/visual-jobs/{id}` | `{ status, stage?, progress?, error? }`. `stage` is `preparing` or `detecting` (ASSUMED; anything else is ignored), `progress` 0 to 100, clamped. Polled with `pollJob`, so Cancel and unmounting stop it and three failed polls in a row end it. |
 | `getVisualMetadata` | `GET /api/projects/{id}/visual-metadata` | The detections document (`vision/schemas/detections.schema.json`), checked by `asVisualMetadata`. |
@@ -141,6 +145,16 @@ Every call except project creation needs `Authorization: Bearer <project token>`
 Stems may also carry `role` (`target` or `residual`), `source_stem_id`, `prompt`, `label`, `spans`, `sample_rate`, `channels` and `format`. All are optional, and the editor works without any of them: `role` picks the kind and identifies the pair a "remove X" needs, `label` is preferred for display, and the rest are ignored for now. A `remove` whose target or residual cannot be identified (the `fake` adapter returns no residual) loads the stems and reports it, rather than failing the edit.
 
 `project_id` on the job response is read from `get_job` in app/main.py, which returns the whole jobs row. INTEGRATION.md does not list it, so it needs confirming. Without it stems still load, edits stay in the browser, and the status chip says so.
+
+### Multi-pass separation (ASSUMED: written against the agreed contract while the backend was being built)
+
+SAM Audio sometimes only attenuates a described sound: the target has it, and the residual still holds a quieter copy. Rerunning the prompt on the residual recovers the rest.
+
+- **Thoroughness.** The separation form and the "Try another separation" form have a **Passes** select: 1 (fast), 2, 3 (thorough), default 1. It offers 1 up to `max_passes` from capabilities, or up to 3 when that is absent, and never more than 3. It is hidden when only one pass is allowed. `passes` is sent on `/candidates` (and accepted by `processProject`) only when it is above 1, so a backend without the field still accepts every request. Other entry points (prompt bar, visual actions) send one pass.
+- **Extract more.** In **Stem settings**, after **Load stem settings**, the selected stem has an **Extract more** button. It posts to the refine route with no body (the backend picks the pass count), polls the job with `pollJob` (cancellable, and aborted on unmount), then reloads through `HttpStemSource` on the current job, which reads the project's saved rows, so new audio and bumped revisions arrive together. Stem audio is fetched with `cache: 'no-store'`, because the route rewrites audio at the same URL, and the engine decodes the fresh blobs into new buffers. The button is disabled, with the reason as a tooltip, when the stem's `role` is not `target`, when there is not exactly one `role: residual` stem, while a project operation is running, or when capabilities say `refine: false`. A 409 `detail` is shown word for word as a status, not an error. Offset stems are left for the backend to refuse.
+- **Badge.** `toStem` maps `refinement` (`passes_requested`, `passes_run`, `per_pass_energy_db`, `stopped_early`) to `Stem.refinement`. A malformed block is dropped rather than failing the load, and non-numeric energies are skipped. The track header shows "2 passes" when more than one pass ran, adding "stopped early" when flagged (also shown after a single pass that stopped early). Its tooltip gives passes run of requested and each pass's energy rounded to 1 dB.
+
+Helpers are in `src/api/refine.ts` and tested in `src/api/refine.test.ts`. None of this has run against a live backend.
 
 ### Edit sync
 

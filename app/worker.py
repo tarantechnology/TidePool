@@ -1,9 +1,6 @@
 import json
-import os
-import sys
 import threading
 import time
-from pathlib import Path
 from .core import connect, event, project_dir, probe, run, stem, uid
 from .media import InferenceError, separate, export
 from .messaging import provider
@@ -11,12 +8,47 @@ from .visual import project_source, file_sha256, validate_timeline
 
 stop = threading.Event()
 
-def enqueue(pid, kind, payload):
+def enqueue(pid, kind, payload, stage=None):
     job=uid()
     with connect() as db:
-        db.execute('INSERT INTO jobs(id,project_id,kind,status,payload) VALUES(?,?,?,?,?)',(job,pid,kind,'queued',json.dumps(payload)))
+        db.execute('INSERT INTO jobs(id,project_id,kind,status,payload,stage,progress) VALUES(?,?,?,?,?,?,?)',(job,pid,kind,'queued',json.dumps(payload),stage,5 if stage else 0))
         if kind=='process': db.execute("UPDATE projects SET status='queued' WHERE id=?",(pid,))
     return job
+
+def set_stage(job, stage, progress):
+    with connect() as db: db.execute('UPDATE jobs SET stage=?,progress=? WHERE id=?',(stage,progress,job))
+
+def normalize(pid, p, finish=None):
+    """Re-encode a CFR, zero-start, unrotated copy and switch the project to it.
+
+    The uploaded original and old audio stay untouched. ``finish(db)`` runs in the same
+    transaction as the project update. Returns the updated project row as a dict."""
+    from fractions import Fraction
+    info=json.loads(p['metadata']); fps=Fraction(info['frame_rate']).limit_denominator(1001)
+    video=project_dir(pid)/'original'/(uid()+'.mp4')
+    audio=project_dir(pid)/'extracted'/(uid()+'.wav')
+    try:
+        run('ffmpeg','-v','error','-y','-i',p['original'],'-map','0:v:0','-map','0:a:0',
+            '-vf',f'fps={fps.numerator}/{fps.denominator},setpts=PTS-STARTPTS',
+            '-af','asetpts=PTS-STARTPTS','-c:v','libx264','-preset','veryfast','-crf','18',
+            '-pix_fmt','yuv420p','-c:a','alac','-movflags','+faststart',str(video))
+        run('ffmpeg','-v','error','-y','-i',str(video),'-vn','-ac','2','-ar','48000','-c:a','pcm_f32le',str(audio))
+        # The copy was forced to exactly ``fps``; ffprobe's avg_frame_rate re-derives it from
+        # nb_frames/duration and some muxer versions drop the last frame's duration (10
+        # frames over 0.9 s reads as 11.1 fps), which would fail validate_timeline below.
+        info=probe(video); info.update(video_id=pid,source_sha256=file_sha256(video),frame_rate=float(fps))
+        validate_timeline(video,float(fps))
+        (project_dir(pid)/'extracted'/'preview.mp4').unlink(missing_ok=True)
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()
+            if current['original'] != p['original'] or db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone():
+                raise ValueError('Project changed while preparing the video; existing media and layers were preserved.')
+            db.execute("UPDATE projects SET original=?,audio=?,metadata=?,visual=NULL,status='uploaded' WHERE id=?",(str(video),str(audio),json.dumps(info),pid))
+            if finish: finish(db)
+            return dict(db.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone())
+    except Exception:
+        video.unlink(missing_ok=True); audio.unlink(missing_ok=True); raise
 
 def work_once():
     with connect() as db:
@@ -83,42 +115,25 @@ def work_once():
             with connect() as db:
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='normalize':
-            # Work on a new copy; keep the uploaded original and old audio untouched.
-            from fractions import Fraction
-            info=json.loads(p['metadata']); fps=Fraction(info['frame_rate']).limit_denominator(1001)
-            video=project_dir(pid)/'original'/(uid()+'.mp4')
-            audio=project_dir(pid)/'extracted'/(uid()+'.wav')
-            try:
-                run('ffmpeg','-v','error','-y','-i',p['original'],'-map','0:v:0','-map','0:a:0',
-                    '-vf',f'fps={fps.numerator}/{fps.denominator},setpts=PTS-STARTPTS',
-                    '-af','asetpts=PTS-STARTPTS','-c:v','libx264','-preset','veryfast','-crf','18',
-                    '-pix_fmt','yuv420p','-c:a','alac','-movflags','+faststart',str(video))
-                run('ffmpeg','-v','error','-y','-i',str(video),'-vn','-ac','2','-ar','48000','-c:a','pcm_f32le',str(audio))
-                # The copy was forced to exactly ``fps``; ffprobe's avg_frame_rate re-derives it from
-                # nb_frames/duration and some muxer versions drop the last frame's duration (10
-                # frames over 0.9 s reads as 11.1 fps), which would fail validate_timeline below.
-                info=probe(video); info.update(video_id=pid,source_sha256=file_sha256(video),frame_rate=float(fps))
-                validate_timeline(video,float(fps))
-                (project_dir(pid)/'extracted'/'preview.mp4').unlink(missing_ok=True)
-                with connect() as db:
-                    db.execute('BEGIN IMMEDIATE')
-                    current=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()
-                    if current['original'] != p['original'] or db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1',(pid,)).fetchone():
-                        raise ValueError('Project changed while preparing the video; existing media and layers were preserved.')
-                    db.execute("UPDATE projects SET original=?,audio=?,metadata=?,visual=NULL,status='uploaded' WHERE id=?",(str(video),str(audio),json.dumps(info),pid))
-                    db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'prepared':True}),job['id']))
-            except Exception:
-                video.unlink(missing_ok=True); audio.unlink(missing_ok=True); raise
+            def finish(db): db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'prepared':True}),job['id']))
+            normalize(pid,p,finish)
         elif job['kind']=='vision':
+            prepared=False
+            if payload.get('prepare'):
+                try: validate_timeline(p['original'],json.loads(p['metadata'])['frame_rate'])
+                except ValueError:
+                    set_stage(job['id'],'preparing',15)
+                    p=normalize(pid,p); prepared=True
+            set_stage(job['id'],'detecting',30)
             directory=project_dir(pid)/'extracted'/('vision-'+job['id'])
-            model=os.getenv('VISION_MODEL','yolo26n-seg.pt')
-            run(sys.executable,'-m','soundcanvas_cv','--input',p['original'],'--output-dir',str(directory),
-                '--model',model,'--sample-fps','1000','--max-seconds',os.getenv('VISION_MAX_SECONDS','30'),
-                '--device',os.getenv('VISION_DEVICE','cpu'),'--video-id',pid)
-            metadata=json.loads((directory/'detections.json').read_text())
+            from .detector import detect
+            metadata=detect(p['original'],directory,pid)
             with connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                if db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original'] != p['original']:
+                    raise ValueError('Project media changed during object detection; run detection again.')
                 db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(metadata),pid))
-                db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'analyzed_frames':metadata['analyzed_frames'],'processed_duration_seconds':metadata['processed_duration_seconds']}),job['id']))
+                db.execute("UPDATE jobs SET status='completed',stage='completed',progress=100,output=? WHERE id=?",(json.dumps({'analyzed_frames':metadata['analyzed_frames'],'processed_duration_seconds':metadata['processed_duration_seconds'],'prepared':prepared}),job['id']))
         else:
             with connect() as db: stems=[dict(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
             if not stems: raise ValueError('No stems available')

@@ -56,6 +56,10 @@ def validate_identity(detections, project, source):
         raise ValueError('Detections video_id does not identify this project upload')
 
 
+class UnfixableTimeline(ValueError):
+    """Timeline problems that re-encoding with prepare-visual cannot repair."""
+
+
 def validate_timeline(path, fps):
     """The current CV/model contract supports unrotated CFR media starting at zero."""
     data = json.loads(run('ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)))
@@ -67,6 +71,9 @@ def validate_timeline(path, fps):
         if stream['codec_type'] == 'video':
             rotation = float(stream.get('tags', {}).get('rotate', 0))
             rotation += sum(float(s.get('rotation', 0)) for s in stream.get('side_data_list', []))
+            if rotation % 90:
+                raise UnfixableTimeline(f'Video rotation of {rotation:g}° cannot be normalized automatically; '
+                                        're-export the clip upright before visual prompting')
             if rotation % 360:
                 raise ValueError('Normalize video rotation before visual prompting')
     frames = json.loads(run('ffprobe', '-v', 'error', '-select_streams', 'v:0',

@@ -4,6 +4,11 @@ Responsibilities kept here (backend-agnostic): prompt translation (text, span an
 Person 2 visual guidance), stereo strategy, chunked inference with crossfades for long
 inputs, residual computation, sample-accurate length preservation and timing metadata.
 
+Multi-pass ("nested") separation: SAM Audio sometimes only attenuates the described sound,
+leaving a quieter copy in the residual. With ``options.passes = n`` each prompt is rerun on
+its own residual chain (mixture minus that prompt's cumulative target) up to ``n`` times and
+the extra targets are summed, so ``sum(stems) == mixture`` still holds exactly.
+
 Long inputs are cut into overlapping windows and handed to the backend ``AUDIO_CHUNK_BATCH``
 windows at a time (``Backend.separate_many``). Windows are never run on threads: the model
 is shared and not re-entrant, so parallelism belongs in the batch dimension. See
@@ -40,6 +45,20 @@ from .visual_prompts import translate_visual_prompt
 
 log = logging.getLogger("sam_audio_service")
 
+# A pass is "negligible" when it extracts less than this fraction of pass 1's energy (-30 dB).
+NEGLIGIBLE_PASS_RATIO = 10 ** (-30 / 10)
+ENERGY_FLOOR_DB = -120.0
+
+
+def _energy(samples: np.ndarray) -> float:
+    return float(np.sum(np.square(samples, dtype=np.float64)))
+
+
+def _energy_db(energy: float, reference: float) -> float:
+    if energy <= 0 or reference <= 0:
+        return ENERGY_FLOOR_DB
+    return round(max(ENERGY_FLOOR_DB, 10 * float(np.log10(energy / reference))), 3)
+
 
 @dataclass
 class StemArrays:
@@ -50,6 +69,7 @@ class StemArrays:
     label: str | None
     spans: list[list[float]] | None
     stem_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    refinement: dict[str, Any] | None = None  # multi-pass bookkeeping for target stems
 
 
 @dataclass
@@ -109,6 +129,8 @@ class Engine:
         return translation.visual, translation.anchors
 
     def _resolve_options(self, options: InferenceOptions) -> tuple[BackendOptions, str, float]:
+        if options.passes is not None and not 1 <= options.passes <= self.settings.max_passes:
+            raise InvalidRequest(f"options.passes must be between 1 and {self.settings.max_passes} (AUDIO_MAX_PASSES)", details={"max_passes": self.settings.max_passes})
         if options.model_id and options.model_id != self.settings.model_id:
             raise UnsupportedOperation(f"this service serves {self.settings.model_id!r}; model_id {options.model_id!r} is not loaded", details={"available": [self.settings.model_id]})
         predict = self.settings.predict_spans if options.predict_spans is None else options.predict_spans
@@ -136,6 +158,7 @@ class Engine:
             raise InvalidRequest("audio is empty")
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
         batch = metadata.options.chunk_batch or self.settings.chunk_batch
+        passes = metadata.options.passes or 1
         if batch > 1 and backend_options.seed is not None:
             warnings.append(
                 f"seeded inference is reproducible for AUDIO_CHUNK_BATCH={batch}; "
@@ -149,7 +172,9 @@ class Engine:
         stems: list[StemArrays] = []
         model_residuals: list[np.ndarray] = []
         chunked = False
+        oom_retry = False
         effective_batch = batch
+        max_passes_run = 1
         with self._lock:
             self.ensure_loaded()  # under the lock so concurrent first requests load the model once
             torch = sys.modules.get('torch')
@@ -177,22 +202,57 @@ class Engine:
                         warnings.append('Visual ranker unavailable; candidates are ranked using the sound description.')
                 if visual is not None and chunk_seconds and audio.duration > chunk_seconds:
                     warnings.append("chunking disabled for visually prompted request so frames stay aligned")
-                channel_inputs = [mixture[c] for c in range(mixture.shape[0])] if stereo_mode == "per_channel" else [to_mono(mixture)]
-                outs: list[BackendResult] = []
-                for signal in channel_inputs:
-                    if visual is not None:
-                        result, was_chunked = self._separate_interval(signal, prompt, backend_options, visual.interval), False
-                    else:
-                        result, was_chunked = self._separate_signal(signal, prompt, backend_options, chunk_seconds, audio.duration, batch)
+                # Pass 1 separates the mixture; pass k >= 2 reruns the SAME prompt (text, anchors,
+                # visual) on this prompt's residual chain, mixture - sum(previous passes).
+                cumulative = np.zeros_like(mixture, dtype=np.float32)
+                source = mixture
+                mixture_energy = _energy(mixture)
+                first_energy = 0.0
+                per_pass_db: list[float] = []
+                pass_spans: list[tuple[float, float]] = []
+                saw_spans = False
+                stopped_early = False
+                model_residual: np.ndarray | None = None
+                for k in range(1, passes + 1):
+                    pass_started = time.perf_counter()
+                    target, outs, was_chunked, retried = self._separate_pass(source, prompt, backend_options, stereo_mode, visual, chunk_seconds, audio, batch)
                     chunked = chunked or was_chunked
-                    if result.extra.get("parallel_oom_retry"):
+                    if retried:
                         effective_batch = 1
-                        warnings.append("GPU memory was insufficient for parallel chunks; processing retried sequentially")
-                    outs.append(result)
-                target = np.stack([sanitise(o.target) for o in outs]) if stereo_mode == "per_channel" else np.repeat(sanitise(outs[0].target)[None, :], mixture.shape[0], axis=0)
-                target = target[:, : audio.frames].astype(np.float32)
-                if target.shape[1] < audio.frames:
-                    target = np.pad(target, ((0, 0), (0, audio.frames - target.shape[1])))
+                        oom_retry = True
+                    energy = _energy(target)
+                    log.info("prompt %r pass %d/%d: %.1f dB re mixture in %.2fs", spec.display_name, k, passes, _energy_db(energy, mixture_energy), time.perf_counter() - pass_started)
+                    if k == 1:
+                        first_energy = energy
+                    elif energy < first_energy * NEGLIGIBLE_PASS_RATIO:
+                        # Discarded: it stays in the residual, so reconstruction is unaffected.
+                        warnings.append(f"pass {k} extracted negligible energy; stopped after {k - 1} pass(es)")
+                        stopped_early = True
+                        break
+                    cumulative += target
+                    per_pass_db.append(_energy_db(energy, mixture_energy))
+                    if outs[0].spans is not None:
+                        saw_spans = True
+                        pass_spans.extend((float(a), float(b)) for a, b in outs[0].spans)
+                    if outs[0].residual is not None:
+                        res = np.stack([o.residual for o in outs]) if stereo_mode == "per_channel" else np.repeat(outs[0].residual[None, :], mixture.shape[0], axis=0)
+                        model_residual = res[:, : audio.frames].astype(np.float32)
+                    else:
+                        model_residual = None
+                    if k == passes:
+                        break
+                    if first_energy <= 0:
+                        warnings.append("pass 1 extracted negligible energy; stopped after 1 pass(es)")
+                        stopped_early = True
+                        break
+                    source = (mixture - cumulative).astype(np.float32)
+                    if not np.any(source):
+                        warnings.append(f"residual is silent after pass {k}; stopped after {k} pass(es)")
+                        stopped_early = True
+                        break
+                target = cumulative
+                passes_run = len(per_pass_db)
+                max_passes_run = max(max_passes_run, passes_run)
                 if visual is not None:
                     # A near-silent result can indicate the visible object was not
                     # audible or the model failed to associate it with the sound.
@@ -203,14 +263,20 @@ class Engine:
                         target_rms = float(np.sqrt(np.mean(target[:, lo:hi].astype(np.float64) ** 2)))
                         if input_rms > 1e-5 and target_rms < input_rms * 0.01:
                             warnings.append('Very little sound was isolated from the selected object. Listen to the result and try text plus an explicit sound time anchor. No edit has been applied.')
-                spans = [[float(s), float(e)] for s, e in (outs[0].spans or [])] if outs[0].spans is not None else ([[a[1], a[2]] for a in anchors if a[0] == "+"] or None)
-                if outs[0].residual is not None:
-                    res = np.stack([o.residual for o in outs]) if stereo_mode == "per_channel" else np.repeat(outs[0].residual[None, :], mixture.shape[0], axis=0)
-                    model_residuals.append(res[:, : audio.frames].astype(np.float32))
+                if saw_spans:
+                    # One pass keeps the backend's spans verbatim; several are unioned.
+                    spans = [[s, e] for s, e in (_merge_spans(pass_spans) if passes_run > 1 else pass_spans)]
+                else:
+                    spans = [[a[1], a[2]] for a in anchors if a[0] == "+"] or None
+                if model_residual is not None:
+                    model_residuals.append(model_residual)
                 label = spec.visual_prompt.label if spec.visual_prompt and spec.visual_prompt.label else None
-                stems.append(StemArrays(spec.display_name, "target", target, spec.text or None, label or spec.display_name, spans))
+                refinement = {"passes_requested": passes, "passes_run": passes_run, "per_pass_energy_db": per_pass_db, "stopped_early": stopped_early}
+                stems.append(StemArrays(spec.display_name, "target", target, spec.text or None, label or spec.display_name, spans, refinement=refinement))
 
             peak_memory = int(cuda.max_memory_allocated()) if cuda else None
+        if oom_retry:
+            warnings.append("GPU memory was insufficient for parallel chunks; processing retried sequentially")
 
         residual_mode = metadata.options.residual
         if residual_mode == "mixture_minus_targets":
@@ -240,10 +306,34 @@ class Engine:
             "peak_memory_bytes": peak_memory,
             "requested_chunk_batch": batch,
             "effective_chunk_batch": effective_batch if chunked else 1,
+            "passes": max_passes_run,
             "elapsed_seconds": round(elapsed, 3),
             "is_mock": self.backend.is_mock,
         }
         return EngineResult(stems, model, warnings, elapsed)
+
+    # ------------------------------------------------------------------ one pass
+    def _separate_pass(self, source: np.ndarray, prompt: BackendPrompt, options: BackendOptions, stereo_mode: str, visual: VisualInput | None, chunk_seconds: float, audio: DecodedAudio, batch: int) -> tuple[np.ndarray, list[BackendResult], bool, bool]:
+        """Separate ``source`` (channels, frames) for one prompt: the mixture on pass 1, a
+        residual on later passes. Returns the (channels, frames) float32 target, the
+        per-channel backend results, whether chunking ran, and whether a batched OOM forced
+        a sequential retry."""
+        channel_inputs = [source[c] for c in range(source.shape[0])] if stereo_mode == "per_channel" else [to_mono(source)]
+        outs: list[BackendResult] = []
+        chunked = retried = False
+        for signal in channel_inputs:
+            if visual is not None:
+                result, was_chunked = self._separate_interval(signal, prompt, options, visual.interval), False
+            else:
+                result, was_chunked = self._separate_signal(signal, prompt, options, chunk_seconds, audio.duration, batch)
+            chunked = chunked or was_chunked
+            retried = retried or bool(result.extra.get("parallel_oom_retry"))
+            outs.append(result)
+        target = np.stack([sanitise(o.target) for o in outs]) if stereo_mode == "per_channel" else np.repeat(sanitise(outs[0].target)[None, :], source.shape[0], axis=0)
+        target = target[:, : audio.frames].astype(np.float32)
+        if target.shape[1] < audio.frames:
+            target = np.pad(target, ((0, 0), (0, audio.frames - target.shape[1])))
+        return target, outs, chunked, retried
 
     # ------------------------------------------------------------------ chunking
     def _call_backend(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:

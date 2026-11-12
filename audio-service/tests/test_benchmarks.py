@@ -174,3 +174,19 @@ def test_benchmark_rejects_bad_repeat(tmp_path):
 
 def test_metadata_payload_is_person4_shaped():
     assert rb._metadata("siren") == {"prompts": ["siren"]}
+
+
+def test_metadata_payload_with_passes():
+    assert rb._metadata("siren", 1) == {"prompts": ["siren"]}
+    assert rb._metadata("siren", 2) == {"prompts": ["siren"], "options": {"passes": 2}}
+
+
+def test_benchmark_passes_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    out = tmp_path / "passes"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "0", "--fixtures", "music_mix", "--speech-mode", "synthetic",
+                    "--passes", "2", "--out", str(out)]) == 0
+    report = _report(out)
+    assert report["settings"]["passes"] == 2
+    with pytest.raises(SystemExit):
+        rb.main(["--passes", "0", "--out", str(tmp_path)])

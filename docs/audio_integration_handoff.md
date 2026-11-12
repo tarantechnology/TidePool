@@ -702,19 +702,12 @@ if none of it happens, text and interval prompting keep working exactly as today
 
    `original_ref` must be the path **as the audio container sees it** (`/data/...`), which
    is what it already is when `STORAGE_ROOT=/data`.
-3. **Read our error body before raising.** `httpx.raise_for_status()` means the job error
-   text is currently `"Client error '400 Bad Request' for url ..."` and `error.code` never
-   reaches the user. Three lines:
-
-   ```python
-   if response.status_code >= 400:
-       try: err = response.json()['error']
-       except Exception: raise RuntimeError(f'Audio service HTTP {response.status_code}')
-       raise RuntimeError(f"{err['code']}: {err['message']}")   # optionally keep err['retryable']
-   ```
-
-   `MISSING_MODEL` / `INSUFFICIENT_GPU_MEMORY` / `STORAGE_FAILURE` / `SERVICE_BUSY` carry
-   `retryable: true` — useful if you ever add retry, and useful to a human either way.
+3. **Read our error body before raising.** Done on `integration/cloud-editor-gpu`: `app/media.py`
+   parses `error.code` / `error.message`, so job errors read e.g.
+   `INVALID_REQUEST: at most 8 prompts per request` (verified live). Still flattened into
+   that one string: `retryable` and `details`. `MISSING_MODEL` / `INSUFFICIENT_GPU_MEMORY` /
+   `STORAGE_FAILURE` / `SERVICE_BUSY` carry `retryable: true`, so a structured job-error field
+   would let the editor offer a retry.
 4. **Store our `warnings[]` with the job** (a `warnings` column, or appended to
    `jobs.output`) and pass `role`, `label`, `prompt`, `spans` and `model.is_mock` through to
    the stem/job response, so Person 3 can tell a mock run from a real one and a text-only
@@ -806,12 +799,12 @@ allow-listed URLs but send no `Authorization` header, so that needs a small exte
 
 **3. Does `error.code` reach the user?**
 *Owner: Person 4.*
-`httpx.raise_for_status()` discards our JSON error body, so job errors read
-`"Client error '400 Bad Request' for url …"`.
-*Proposed default:* Person 4 reads `response.json()["error"]["code"]` / `["message"]`
-before raising (3 lines, shown above) and stores `retryable`. Until then we keep `detail`
-populated so the FastAPI shape is unchanged and nothing breaks.
-*Status: awaiting agreement.*
+Resolved for code + message on `integration/cloud-editor-gpu` (`app/media.py` parses our error
+body; verified live: `INVALID_REQUEST: at most 8 prompts per request`). Remaining: `retryable`
+and `details` are flattened into the error string.
+*Proposed default:* persist `{code, message, retryable, details}` as a structured job-error
+field alongside the string.
+*Status: partially resolved; structured field awaiting agreement.*
 
 **4. Visual mask polarity.**
 *Owners: Person 1 + Person 2 (upstream: `facebookresearch/sam-audio#75`).*

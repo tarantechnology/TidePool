@@ -476,12 +476,9 @@ served at `GET /capabilities` under `error_codes`.
 | `SERVICE_BUSY` | 503 | **yes** | Reserved for admission control. Not raised today — one request at a time is serialised by a lock instead. |
 | `INTERNAL_ERROR` | 500 | no | Anything unhandled. `message` carries the exception type only. |
 
-**Compatibility.** Person 4's worker calls `httpx.raise_for_status()`, so the job error
-text is currently httpx's `"Client error '400 Bad Request' for url ..."` and `error.code`
-never reaches the user — confirmed by
-`tests/test_integration_person4_backend.py::test_backend_surfaces_audio_service_error`,
-which asserts the job fails but cannot assert *why*. Reading
-`response.json()["error"]["code"]` before raising is a ~3-line change on Person 4's side and
-is Open Question 3 in the handoff doc. Retry policy: Person 4 has no automatic retry ("to
+**Compatibility.** Person 4's worker (`app/media.py` on `integration/cloud-editor-gpu`) parses
+`error.code` and `error.message` and stores `"<CODE>: <message>"` as the job error (verified
+live: `INVALID_REQUEST: at most 8 prompts per request`); `retryable` and `details` are not yet
+persisted (Open Question 3 in the handoff doc). Retry policy: Person 4 has no automatic retry ("to
 retry, submit a new processing job"), so `retryable` is advice for a human or a future
 scheduler, not a promise that we will be retried.

@@ -53,13 +53,13 @@ Failure and retry (backend restarted with `INFERENCE_TIMEOUT_SECONDS=3`):
 | --- | --- |
 | 3 s timeout against a ~9 s inference | `failed`, error `Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS` |
 | New `/process` after restoring 3600 s | `completed`, stems `siren`, `residual` |
-| 9 prompts (service limit 8) | service returns `400 INVALID_REQUEST`; the backend records httpx's status text (see note) |
+| 9 prompts (service limit 8) | service returns `400 INVALID_REQUEST`; at the time of this run the backend recorded only httpx's status text; fixed since on `integration/cloud-editor-gpu` (see note) |
 | Empty prompt | rejected by the backend with `422 At least one nonempty audio prompt is required for HTTP inference` |
 
 Note: during one attempt the host disk filled while the service spooled the upload, which
-surfaced as a 500. That path now raises `STORAGE_FAILURE` (retryable). Person 4's worker still
-reads only the HTTP status, so our `error.code` does not reach the job error text (Open
-Question 3 in `docs/audio_integration_handoff.md`).
+surfaced as a 500. That path now raises `STORAGE_FAILURE` (retryable). At the time of this run Person 4's worker read only the HTTP status; on
+`integration/cloud-editor-gpu` it parses our error body and the job error reads
+`INVALID_REQUEST: at most 8 prompts per request`.
 
 ## 3. Processing time and memory (acceptance item 4)
 

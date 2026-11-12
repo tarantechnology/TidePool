@@ -161,7 +161,9 @@ class SeparationMetadata(BaseModel):
     def resolved_prompts(self, max_prompts: int) -> list[PromptSpec]:
         specs: list[PromptSpec] = []
         for item in self.prompts:
-            spec = PromptSpec(text=item) if isinstance(item, str) else item
+            # Plain strings keep the caller's wording as the stem name (Person 3 matches stems by the
+            # prompt it sent); only the model sees the normalised phrase in ``text``.
+            spec = PromptSpec(text=item, name=(item.strip()[:200] or None)) if isinstance(item, str) else item
             if self.anchors and not spec.anchors:
                 spec = spec.model_copy(update={"anchors": list(self.anchors)})
             specs.append(spec)

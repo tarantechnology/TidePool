@@ -1,7 +1,11 @@
 // Shared contracts. Anything the team (audio pipeline, vision, backend) needs
 // to agree on lives here: Stem comes in, EditList goes out to export.
 
-export type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience'
+/**
+ * What part a stem plays. 'residual' is everything a separation did not pull
+ * out, which the backend labels itself; the rest are picked by hand.
+ */
+export type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience' | 'residual'
 
 /** One isolated audio layer, as produced by the audio pipeline. */
 export interface Stem {

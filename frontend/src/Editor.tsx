@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
+import { NO_PROJECT_HINT, planOutcome, plannerFailure } from './agent/planOutcome'
 import { validateActions } from './agent/validate'
-import type { SyncTarget, VisualMetadata } from './api/backend'
+import type { AgentPlan, SyncTarget, VisualMetadata } from './api/backend'
 import type { VisualSelection } from './visual'
-import { loadFromSource } from './api/loadStems'
+import { loadFromSource, stemFailureMessage } from './api/loadStems'
 import { FileStemSource, isAudioFile, isVideoFile, MockStemSource } from './api/stemSources'
 import type { StemSource } from './api/stemSources'
 import { AudioEngine } from './audio/engine'
@@ -25,6 +26,8 @@ import { canRedo, canUndo, commit, createHistory, redo, undo } from './state/his
 import type { History } from './state/history'
 import { createEditorState, mergeKinds, setKindOverride } from './state/kinds'
 import type { EditorState } from './state/kinds'
+import { NO_PROJECT_STEMS, showsMockBadge } from './state/projectStems'
+import type { ProjectStemsState } from './state/projectStems'
 import type { EditAction, Stem, StemKind, TrackState } from './types'
 
 type Status = 'loading' | 'ready' | 'error'
@@ -60,6 +63,9 @@ export default function Editor() {
   const [visual, setVisual] = useState<VisualMetadata | null>(null)
   const [visualSelection, setVisualSelection] = useState<VisualSelection | null>(null)
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
+  const [projectStems, setProjectStems] = useState<ProjectStemsState>(NO_PROJECT_STEMS)
+  /** A video dropped in the editor: planCommand uploads it, so AI commands work from it. */
+  const [hasLocalVideo, setHasLocalVideo] = useState(false)
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
   const projectPanel = useRef<ProjectPanelHandle>(null)
@@ -87,10 +93,10 @@ export default function Editor() {
     mock
       .load()
       .then((loadedStems) => eng.replaceStems(loadedStems))
-      .then((loaded) => {
-        if (cancelled || !loaded) return
-        setBaseStems(loaded)
-        setHistory(createHistory(createEditorState(initialTracks(loaded))))
+      .then((result) => {
+        if (cancelled || !result) return
+        setBaseStems(result.stems)
+        setHistory(createHistory(createEditorState(initialTracks(result.stems))))
         setEngine(eng)
         setStatus('ready')
       })
@@ -134,6 +140,9 @@ export default function Editor() {
         setStemsLabel(label)
         setSyncTarget(source.syncTarget ?? null)
         setSyncIssue(source.syncIssue ?? '')
+        // Stems that would not decode are missing from the timeline, which the
+        // user has to be told about: the rest played fine.
+        setLoadError(stemFailureMessage(loaded.failures))
       } catch (err) {
         // The engine keeps the previous stems when a load fails.
         if (isLatest()) setLoadError(err instanceof Error ? err.message : String(err))
@@ -169,6 +178,7 @@ export default function Editor() {
   const loadVideo = useCallback(
     (file: File, withAudio: boolean) => {
       originalVideo.current = file
+      setHasLocalVideo(true)
       setVisual(null); setVisualSelection(null)
       setVideoSrc(URL.createObjectURL(file))
       setVideoDuration(null)
@@ -210,9 +220,18 @@ export default function Editor() {
       if (!engine) return { message: 'Engine not ready.', ok: false }
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
-      const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate') return {message:plan.remove ? `Separated and muted ${plan.description}. Export when ready.` : `Separated ${plan.description}.`,ok:true}
-      if (plan.kind === 'clarify') return {message:plan.message,ok:false}
+      let plan: AgentPlan
+      try {
+        plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
+      } catch (err) {
+        // A planner that is not configured, or a cancelled run, is a status the
+        // user can act on rather than a failed prompt.
+        const known = plannerFailure(err)
+        if (!known) throw err
+        return known
+      }
+      const outcome = planOutcome(plan)
+      if (outcome) return outcome
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
       const res = {actions:checked.actions,message:plan.message}
@@ -259,6 +278,11 @@ export default function Editor() {
   }, [])
 
   const duration = engine?.duration ?? 0
+  // AI commands run against a project: an uploaded one, or a video in the
+  // editor that planCommand uploads to create one.
+  const promptReady = projectStems.projectId !== null || hasLocalVideo
+  /** Mock output stays visible while the project's stems are on the timeline. */
+  const mockStems = showsMockBadge(projectStems, stemsLabel)
 
   return (
     <div
@@ -327,6 +351,14 @@ export default function Editor() {
             {status === 'ready' && (chipErrors[0] || stemsLabel)}
             {status === 'error' && 'Load failed'}
           </span>
+          {mockStems && (
+            <span
+              title="The separation backend reported mock output, so these stems are synthetic placeholders rather than the video's separated audio."
+              className="shrink-0 rounded-full border border-amber-300/40 bg-amber-300/10 px-2.5 py-1 font-mono text-[10px] text-amber-300"
+            >
+              test stems — no AI separation
+            </span>
+          )}
         </div>
       </header>
 
@@ -345,7 +377,7 @@ export default function Editor() {
               onSelection={setVisualSelection}
             />
             <div className="flex min-h-0 w-80 shrink-0 flex-col gap-2">
-              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setVideoSrc(url) }} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} />
+              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} flush={flush} onVisual={setVisual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onProjectState={setProjectStems} />
               <details className="shrink-0 text-xs text-zinc-400"><summary className="cursor-pointer">Edit history</summary><EditLog log={log} /></details>
             </div>
           </div>
@@ -369,7 +401,12 @@ export default function Editor() {
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready'} agentLabel="GPT-6 Luna" onRun={runPrompt} />
+      <PromptBar
+        disabled={status !== 'ready' || !promptReady}
+        disabledReason={promptReady ? '' : NO_PROJECT_HINT}
+        agentLabel="GPT-6 Luna"
+        onRun={runPrompt}
+      />
     </div>
   )
 }

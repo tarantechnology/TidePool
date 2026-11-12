@@ -20,6 +20,9 @@ export interface StemSource {
   readsSavedState?: boolean
 }
 
+/** The stems label for anything loaded out of a backend project. */
+export const PROJECT_STEMS_LABEL = 'Project stems'
+
 const AUDIO_EXT = /\.(wav|mp3|m4a|aac|flac|ogg|opus)$/i
 
 export function isAudioFile(file: { name: string; type: string }): boolean {

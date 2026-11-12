@@ -1,4 +1,4 @@
-import type { BackendJob } from './backend'
+import type { BackendJob, ExportInfo } from './backend'
 
 export type JobState = 'queued' | 'processing' | 'done' | 'failed'
 
@@ -24,6 +24,11 @@ export function toJobStatus(job: BackendJob): JobStatus {
     ...(typeof progress === 'number' ? { progress } : {}),
     ...(error ? { error } : {}),
   }
+}
+
+/** Exports report the same state names as jobs, and no progress. */
+export function toExportStatus(info: ExportInfo): JobStatus {
+  return toJobStatus({ status: info.status, ...(info.error ? { error: info.error } : {}) })
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

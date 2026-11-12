@@ -5,6 +5,15 @@ from pathlib import Path
 import httpx
 from .core import run, probe, uid
 
+
+class InferenceError(RuntimeError):
+    """Audio-service failure that carries the service's structured error fields."""
+    def __init__(self, message, code=None, retryable=None):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+
+
 def separate(audio, directory, payload, report=None):
     directory.mkdir(parents=True, exist_ok=True)
     mode = os.getenv('INFERENCE_ADAPTER', 'fake')
@@ -16,7 +25,8 @@ def separate(audio, directory, payload, report=None):
         for name in (payload.get('prompts') or ['Audio']):
             path = directory / (uid() + '.wav')
             run('ffmpeg','-v','error','-y','-i',str(audio),'-c:a','pcm_s16le',str(path))
-            results.append((name, path))
+            # Every fake stem stands in for a prompt; the adapter never fabricates a residual.
+            results.append({'name': name, 'path': path, 'role': 'target', 'prompt': name, 'label': name})
         return results
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
     url = os.getenv('SAM_AUDIO_SERVICE_URL')
@@ -27,12 +37,16 @@ def separate(audio, directory, payload, report=None):
     except httpx.TimeoutException as exc:
         raise RuntimeError('Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS') from exc
     if response.is_error:
+        code = retryable = None
         try:
             error = response.json()['error']
-            message = f"{error['code']}: {error['message']}"
+            code = error['code']
+            message = f"{code}: {error['message']}"
+            if isinstance(error.get('retryable'), bool): retryable = error['retryable']
         except (ValueError, KeyError, TypeError):
+            code = None
             message = f'Audio service HTTP {response.status_code}'
-        raise RuntimeError(message)
+        raise InferenceError(message, code, retryable)
     result = response.json()
     if report is not None:
         report.update({key:result[key] for key in ('model','warnings','source','request_id','contract_version') if key in result})
@@ -52,7 +66,9 @@ def separate(audio, directory, payload, report=None):
                     or (info['sample_rate'], info['channels']) != (source_info['sample_rate'], source_info['channels'])):
                 path.unlink(missing_ok=True)
                 raise ValueError('Visual stem must start at zero and match the full extracted audio duration, sample rate and channels')
-        stems.append((name,path))
+        stems.append({'name': name, 'path': path, 'role': item.get('role'), 'source_stem_id': item.get('stem_id'),
+                      'prompt': item.get('prompt'), 'label': item.get('label'), 'sample_rate': item.get('sample_rate'),
+                      'channels': item.get('channels'), 'format': item.get('format'), 'spans': item.get('spans')})
     return stems
 
 def export(stems, original, destination, fmt, include_video):

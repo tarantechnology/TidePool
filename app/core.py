@@ -30,7 +30,7 @@ def connect():
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
-                ('format', 'TEXT'), ('spans', 'TEXT'))
+                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'))
 JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():
@@ -52,6 +52,11 @@ def init():
         db.execute("CREATE TABLE IF NOT EXISTS candidate_history (candidate_id TEXT PRIMARY KEY REFERENCES jobs(id), previous_rows TEXT NOT NULL, applied_revisions TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0)")
         # Staged (vision) jobs restart from the queued stage; others keep their old 0 progress.
         db.execute("UPDATE jobs SET status='queued', progress=CASE WHEN stage IS NULL THEN 0 ELSE 5 END, stage=CASE WHEN stage IS NULL THEN NULL ELSE 'queued' END WHERE status='processing'")
+
+def max_passes():
+    """Upper bound for separation passes per request (MAX_PASSES, default 3)."""
+    try: return max(1,int(os.getenv('MAX_PASSES','3')))
+    except ValueError: return 3
 
 def digest(token): return hashlib.sha256(token.encode()).hexdigest()
 
@@ -83,6 +88,7 @@ def stem(row):
     d['muted'], d['solo'] = bool(d['muted']), bool(d['solo'])
     d['automation'], d['mute_ranges'] = json.loads(d['automation']), json.loads(d['mute_ranges'])
     d['spans'] = json.loads(d['spans']) if d.get('spans') else None
+    d['refinement'] = json.loads(d['refinement']) if d.get('refinement') else None
     d.pop('path')
     d['audio_url'] = f"/api/projects/{d['project_id']}/stems/{d['id']}/audio"
     return d

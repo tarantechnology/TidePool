@@ -20,7 +20,7 @@ def test_health_and_capabilities(client):
     assert caps["prompting_modes"]["text"] is True
     assert "INVALID_MEDIA" in caps["error_codes"]
     defaults = caps["defaults"]
-    assert defaults["refine"] == {"mode": "off", "p": 2.0, "n_fft": 2048, "floor": 0.0, "blend": 1.0, "threshold": 0.0, "gate_db": 0.0}
+    assert defaults["refine"] == {"mode": "off", "p": 2.0, "n_fft": 2048, "floor": 0.0, "blend": 1.0, "threshold": 0.0, "residual_threshold": 0.0, "gate_db": 0.0}
     assert defaults["candidates"] == 1 and defaults["candidate_select"] == "overlap"
 
 

@@ -98,6 +98,7 @@ class InferenceOptions(BaseModel):
     refine_floor: float | None = Field(default=None, ge=0, le=0.5, allow_inf_nan=False)
     refine_blend: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     refine_threshold: float | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+    refine_residual_threshold: float | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
     refine_gate_db: float | None = Field(default=None, ge=0, le=80, allow_inf_nan=False)
     # Independent noise draws returned per chunk window and the rule that picks one
     # (distinct from reranking_candidates, which the model ranks internally). See candidates.py.
@@ -277,7 +278,7 @@ class ModelInfo(BaseModel):
     effective_chunk_batch: int = 1
     peak_memory_bytes: int | None = None
     is_mock: bool = False
-    refine: dict[str, Any] | None = Field(default=None, description="Effective mask refinement {mode, p, n_fft, floor, blend, threshold, gate_db}; null when off")
+    refine: dict[str, Any] | None = Field(default=None, description="Effective mask refinement {mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}; null when off")
     candidates: int = Field(default=1, description="Noise draws returned per window (options.candidates)")
     candidate_select: str = Field(default="first", description="How a draw was picked per window; 'first' when candidates == 1")
 

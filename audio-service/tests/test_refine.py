@@ -13,7 +13,7 @@ from sam_audio_service.backends.mock import MockBackend
 from sam_audio_service.config import Settings
 from sam_audio_service.contracts import SeparationMetadata
 from sam_audio_service.engine import Engine
-from sam_audio_service.refine import apply_gate, apply_threshold, istft, mask_refine, stft
+from sam_audio_service.refine import apply_gate, apply_residual_threshold, apply_threshold, istft, mask_refine, stft
 
 from test_multipass import SR as FRACTION_SR, FractionBackend, _reconstructs, _run, _signal
 
@@ -114,6 +114,31 @@ def test_threshold_removes_a_partially_attenuated_interferer():
     assert 10 * np.log10(_band_energy(cut[:, inner], 950, 1050) / _band_energy(target[:, inner], 950, 1050)) > -1
 
 
+def test_residual_threshold_mirrored_knee():
+    np.testing.assert_allclose(apply_residual_threshold(np.array([0.8]), 0.3), [1.0])
+    np.testing.assert_allclose(apply_residual_threshold(np.array([0.35]), 0.3), [0.5])
+    m = np.array([0.0, 0.25, 0.5, 0.6, 1.0])
+    np.testing.assert_allclose(apply_residual_threshold(m, 0.5), [0.0, 0.5, 1.0, 1.0, 1.0])
+    # Both knees together: near-binary.
+    np.testing.assert_allclose(apply_residual_threshold(apply_threshold(m, 0.5), 0.5), [0.0, 0.0, 0.0, 0.4, 1.0])
+
+
+def test_residual_threshold_clears_the_target_from_the_residual():
+    t = np.arange(RATE) / RATE
+    loud = 0.5 * np.sin(2 * np.pi * 1000 * t)
+    quiet = 0.05 * np.sin(2 * np.pi * 300 * t)
+    mixture = (loud + quiet).astype(np.float32)[None, :]
+    target = (0.8 * loud).astype(np.float32)[None, :]  # the model left 20% of the tone behind
+    refined = mask_refine(mixture, target, residual_threshold=0.5)
+    inner = slice(2048, -2048)
+    before = _band_energy((mixture - target)[:, inner], 950, 1050)
+    after = _band_energy((mixture - refined)[:, inner], 950, 1050)
+    assert 10 * np.log10(after / before) < -20
+    # The quiet non-target tone stays in the residual.
+    kept = _band_energy((mixture - refined)[:, inner], 250, 350) / _band_energy(mixture[:, inner], 250, 350)
+    assert 10 * np.log10(kept) > -1
+
+
 def test_gate_silences_frames_where_the_target_is_absent():
     x = _noise()
     half = x.shape[1] // 2
@@ -140,7 +165,9 @@ def test_gate_hold_keeps_neighbours_of_open_frames():
 def test_defaults_are_off_for_threshold_and_gate():
     x = _noise()
     target = 0.3 * x + 0.05 * _noise(seed=1)
-    np.testing.assert_array_equal(mask_refine(x, target), mask_refine(x, target, threshold=0.0, gate_db=0.0))
+    np.testing.assert_array_equal(mask_refine(x, target), mask_refine(x, target, threshold=0.0, residual_threshold=0.0, gate_db=0.0))
+    with pytest.raises(ValueError, match="residual_threshold"):
+        mask_refine(x, target, residual_threshold=1.0)
 
 
 # ------------------------------------------------------------------- engine hook
@@ -158,16 +185,18 @@ def test_engine_mask_refinement_keeps_reconstruction_and_passes():
     np.testing.assert_allclose(total, signal, atol=1e-5)
     assert refined.stems[0].refinement["passes_run"] == raw.stems[0].refinement["passes_run"]
     assert not np.allclose(refined.stems[0].samples, raw.stems[0].samples)
-    assert refined.model["refine"] == {"mode": "mask", "p": 2.0, "n_fft": 2048, "floor": 0.0, "blend": 1.0, "threshold": 0.0, "gate_db": 0.0}
+    assert refined.model["refine"] == {"mode": "mask", "p": 2.0, "n_fft": 2048, "floor": 0.0, "blend": 1.0, "threshold": 0.0, "residual_threshold": 0.0, "gate_db": 0.0}
     assert raw.model["refine"] is None
 
 
 def test_engine_refine_options_override_settings():
-    _, audio = _mock_audio(0.5)
+    signal, audio = _mock_audio(0.5)
     engine = Engine(Settings(refine="mask", refine_p=1.0), MockBackend())
-    result = engine.separate(audio, SeparationMetadata.model_validate({"prompts": ["siren"], "options": {"refine_n_fft": 1024, "refine_threshold": 0.4, "refine_gate_db": 40}}))
+    result = engine.separate(audio, SeparationMetadata.model_validate({"prompts": ["siren"], "options": {"refine_n_fft": 1024, "refine_threshold": 0.4, "refine_residual_threshold": 0.3, "refine_gate_db": 40}}))
     assert result.model["refine"]["p"] == 1.0 and result.model["refine"]["n_fft"] == 1024
     assert result.model["refine"]["threshold"] == 0.4 and result.model["refine"]["gate_db"] == 40.0
+    assert result.model["refine"]["residual_threshold"] == 0.3
+    np.testing.assert_allclose(sum(s.samples.astype(np.float64) for s in result.stems), signal, atol=1e-5)
     off = engine.separate(audio, SeparationMetadata.model_validate({"prompts": ["siren"], "options": {"refine": "off"}}))
     assert off.model["refine"] is None
 
@@ -199,13 +228,13 @@ def test_default_off_leaves_fraction_backend_exact():
     assert result.model["refine"] is None
 
 
-@pytest.mark.parametrize("options", [{"refine": "wiener"}, {"refine_p": 0}, {"refine_p": 9}, {"refine_n_fft": 300}, {"refine_floor": 0.6}, {"refine_blend": 1.5}, {"refine_threshold": 1.0}, {"refine_gate_db": 81}])
+@pytest.mark.parametrize("options", [{"refine": "wiener"}, {"refine_p": 0}, {"refine_p": 9}, {"refine_n_fft": 300}, {"refine_floor": 0.6}, {"refine_blend": 1.5}, {"refine_threshold": 1.0}, {"refine_residual_threshold": 1.0}, {"refine_residual_threshold": -0.1}, {"refine_gate_db": 81}])
 def test_invalid_refine_options_are_rejected(options):
     with pytest.raises(ValueError):
         SeparationMetadata.model_validate({"prompts": ["voice"], "options": options})
 
 
-@pytest.mark.parametrize(("var", "value"), [("AUDIO_REFINE", "wiener"), ("AUDIO_REFINE_P", "0"), ("AUDIO_REFINE_NFFT", "1000"), ("AUDIO_REFINE_FLOOR", "0.7"), ("AUDIO_REFINE_BLEND", "2"), ("AUDIO_REFINE_THRESHOLD", "1"), ("AUDIO_REFINE_GATE_DB", "-1")])
+@pytest.mark.parametrize(("var", "value"), [("AUDIO_REFINE", "wiener"), ("AUDIO_REFINE_P", "0"), ("AUDIO_REFINE_NFFT", "1000"), ("AUDIO_REFINE_FLOOR", "0.7"), ("AUDIO_REFINE_BLEND", "2"), ("AUDIO_REFINE_THRESHOLD", "1"), ("AUDIO_REFINE_RESIDUAL_THRESHOLD", "1"), ("AUDIO_REFINE_GATE_DB", "-1")])
 def test_refine_settings_are_validated(monkeypatch, var, value):
     from sam_audio_service.config import load_settings
 

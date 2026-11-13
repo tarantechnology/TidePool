@@ -79,6 +79,7 @@ class Settings:
     refine_floor: float = field(default_factory=lambda: _float("AUDIO_REFINE_FLOOR", 0.0))
     refine_blend: float = field(default_factory=lambda: _float("AUDIO_REFINE_BLEND", 1.0))
     refine_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_THRESHOLD", 0.0))
+    refine_residual_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_RESIDUAL_THRESHOLD", 0.0))
     refine_gate_db: float = field(default_factory=lambda: _float("AUDIO_REFINE_GATE_DB", 0.0))
     # Noise draws returned per chunk window and how one is picked (candidates.py). Each
     # extra draw costs one more batch item (K x compute and activation memory).
@@ -185,6 +186,8 @@ class Settings:
             raise ValueError("AUDIO_REFINE_BLEND must be in [0, 1]")
         if not 0 <= self.refine_threshold < 1:
             raise ValueError("AUDIO_REFINE_THRESHOLD must be in [0, 1)")
+        if not 0 <= self.refine_residual_threshold < 1:
+            raise ValueError("AUDIO_REFINE_RESIDUAL_THRESHOLD must be in [0, 1)")
         if not 0 <= self.refine_gate_db <= 80:
             raise ValueError("AUDIO_REFINE_GATE_DB must be in [0, 80]")
         if not 1 <= self.candidates <= 8:

@@ -96,11 +96,12 @@ pass counts with `python -m benchmarks.run_benchmark --backend sam --passes 2`.
 | `options.refine_floor` (`AUDIO_REFINE_FLOOR`) | `0.0` | Minimum mask value, [0, 0.5]: fewer musical-noise holes, more leakage. |
 | `options.refine_blend` (`AUDIO_REFINE_BLEND`) | `1.0` | [0, 1]: `blend * refined + (1 - blend) * model target`. |
 | `options.refine_threshold` (`AUDIO_REFINE_THRESHOLD`) | `0.0` | [0, 1): soft-knee cut, `M' = 0 if M < t else (M - t) / (1 - t)`. 0.3-0.5 removes background bins the model only partially attenuated (the faint, muffled rest of the mix), accepting some artefacts. |
+| `options.refine_residual_threshold` (`AUDIO_REFINE_RESIDUAL_THRESHOLD`) | `0.0` (off) | [0, 1): mirrored soft knee, `M' = 1 if M > 1 - t else M / (1 - t)`, applied after `refine_threshold` and before the gate/floor. Bins where the target dominates go fully to the target, so the residual (what "Mute target" / "Lower target" leaves) no longer carries a faint copy of the removed sound. 0.3-0.5 is a sensible range; with `refine_threshold` also set the mask becomes near-binary (cleaner stems both ways, more artefacts). Measured by the benchmark's `residual_leakage_db`. |
 | `options.refine_gate_db` (`AUDIO_REFINE_GATE_DB`) | `0` (off) | [0, 80]: silence the stem where the sound is not really present. STFT frames whose masked target is more than this many dB below the mixture frame are zeroed in every bin, with a 3-frame hold so words are not clipped. |
 | `options.candidates` (`AUDIO_CANDIDATES`) | `1` | 1-8 independent noise draws per chunk window; the engine keeps one per window (below). Distinct from `reranking_candidates` (ranked inside the model, needs a ranker); both can be combined at `K x R` cost. Costs `K x` compute and activation memory per window; the window batch is divided by `K` so one model call never exceeds `AUDIO_CHUNK_BATCH` rows. Backends that cannot draw several (the mock) add a warning and use one draw. |
 | `options.candidate_select` (`AUDIO_CANDIDATE_SELECT`) | `overlap` | `overlap`: the draw whose head best correlates with what the previous window put into the shared overlap (first window / quiet overlap: medoid for `K >= 3`, else draw 0), so neighbouring windows agree and seams do not flip. `mean`: average of the draws (ensemble). `first`: draw 0. |
 
-`model.refine` reports the effective `{mode, p, n_fft, floor, blend, threshold, gate_db}` (absent when
+`model.refine` reports the effective `{mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}` (absent when
 off); `model.candidates` / `model.candidate_select` report K and the rule (`first` when K = 1).
 `/capabilities` `defaults` lists all of them.
 

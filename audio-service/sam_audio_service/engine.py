@@ -163,12 +163,13 @@ class Engine:
             "floor": float(pick(options.refine_floor, s.refine_floor)),
             "blend": float(pick(options.refine_blend, s.refine_blend)),
             "threshold": float(pick(options.refine_threshold, s.refine_threshold)),
+            "residual_threshold": float(pick(options.refine_residual_threshold, s.refine_residual_threshold)),
             "gate_db": float(pick(options.refine_gate_db, s.refine_gate_db)),
         }
 
     @staticmethod
     def _refine_target(mixture: np.ndarray, target: np.ndarray, cfg: dict[str, Any], stereo_mode: str) -> np.ndarray:
-        kwargs = {k: cfg[k] for k in ("p", "n_fft", "floor", "blend", "threshold", "gate_db")}
+        kwargs = {k: cfg[k] for k in ("p", "n_fft", "floor", "blend", "threshold", "residual_threshold", "gate_db")}
         if stereo_mode == "per_channel":
             return np.concatenate([mask_refine(mixture[c : c + 1], target[c : c + 1], **kwargs) for c in range(mixture.shape[0])])
         return mask_refine(mixture, target, **kwargs)

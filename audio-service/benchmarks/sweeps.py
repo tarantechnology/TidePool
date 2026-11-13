@@ -2,7 +2,8 @@
 
 Each sweep is a list of configs; each config is a dict keyed by the runner's CLI dest names
 (``ode_step``, ``window_candidates``, ``select``, ``refine``, ``refine_p``, ``refine_nfft``,
-``refine_floor``, ``refine_blend``, ``refine_threshold``, ``refine_gate_db``,
+``refine_floor``, ``refine_blend``, ``refine_threshold``, ``refine_residual_threshold``,
+``refine_gate_db``,
 ``chunk_seconds``, ``chunk_overlap``, ``candidates``, ``seed``, ``passes``, ``model_id``)
 plus a ``"name"``. Keys a config leaves out keep the value given on the command line (or
 the default). The **first config is the baseline** every other row's Δ is measured against.
@@ -65,6 +66,21 @@ SWEEPS: dict[str, list[dict[str, Any]]] = {
     "gate": [
         {"name": "thr0.5-gate0", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "refine_gate_db": 0},
         *[{"name": f"thr0.5-gate{g}", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "refine_gate_db": g} for g in (10, 15, 20)],
+    ],
+    # Leakage in both directions: refine_threshold cleans the target stem, refine_residual_threshold
+    # clears the target out of the residual ("Mute target" leftovers); plus passes and candidates.
+    "leakage-v2": [
+        {"name": "mask", **_MASK},
+        {"name": "thr0.5", **_MASK, "refine_threshold": 0.5},
+        {"name": "rthr0.5", **_MASK, "refine_residual_threshold": 0.5},
+        {"name": "both0.5", **_MASK, "refine_threshold": 0.5, "refine_residual_threshold": 0.5},
+        {"name": "both0.7", **_MASK, "refine_threshold": 0.7, "refine_residual_threshold": 0.7},
+        {"name": "p4-both0.5", **_MASK, "refine_p": 4, "refine_threshold": 0.5, "refine_residual_threshold": 0.5},
+        {"name": "passes2", **_MASK, "passes": 2},
+        {"name": "passes2-both0.5", **_MASK, "passes": 2, "refine_threshold": 0.5, "refine_residual_threshold": 0.5},
+        {"name": "k3auto-both0.5", **_MASK, "window_candidates": 3, "select": "auto", "refine_threshold": 0.5, "refine_residual_threshold": 0.5},
+        {"name": "k3auto-passes2-both0.5", **_MASK, "window_candidates": 3, "select": "auto", "passes": 2,
+         "refine_threshold": 0.5, "refine_residual_threshold": 0.5},
     ],
     # Chunk window length (0 = whole file in one window).
     "chunks": [

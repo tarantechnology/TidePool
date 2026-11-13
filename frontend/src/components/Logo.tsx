@@ -5,7 +5,7 @@ export function Logo({ className = '' }: { className?: string }) {
         <rect x="1.5" y="1.5" width="21" height="21" rx="6" stroke="currentColor" strokeOpacity="0.28" />
         <path
           d="M6 13v-2M9 16V8M12 18V6M15 15V9M18 13v-2"
-          stroke="#3dff8b"
+          stroke="#2b7bd6"
           strokeWidth="1.8"
           strokeLinecap="round"
         />

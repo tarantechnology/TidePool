@@ -9,7 +9,7 @@ import { MaskOverlay } from './MaskOverlay'
 import { useVideoSync } from '../hooks/useVideoSync'
 
 function Corner({ cls }: { cls: string }) {
-  return <span className={`absolute h-3 w-3 border-white/25 ${cls}`} />
+  return <span className={`absolute h-3 w-3 border-tint/25 ${cls}`} />
 }
 
 interface Props {
@@ -69,15 +69,40 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
   const pickButton = (
     <button
       onClick={() => picker.current?.click()}
-      className="rounded-full border border-line px-2.5 py-1 font-mono text-[10px] text-zinc-400 transition-colors hover:border-line-strong hover:bg-white/[0.04] hover:text-zinc-100"
+      className={src ? 'rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur hover:bg-white' : 'rounded-full bg-accent px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3]'}
     >
-      {src ? 'Replace video' : 'Load video'}
+      {src ? 'Replace video' : 'Choose a video'}
     </button>
   )
 
+  const overlay = (() => {
+    if (!visual || bounds.width <= 0 || bounds.videoWidth <= 0) return null
+    const w=bounds.width, h=bounds.height
+    const scale=Math.min(w/(bounds.videoWidth || visual.width), h/(bounds.videoHeight || visual.height))
+    const vw=(bounds.videoWidth || visual.width)*scale, vh=(bounds.videoHeight || visual.height)*scale
+    const left=(w-vw)/2, top=(h-vh)/2
+    const current=engine?.duration ? t : previewTime
+    const frame=frameAt(visual,current)
+    const selectedTrack=selection?.track_id ?? null
+    // With Show objects off, only the selected object stays visible.
+    const boxes=overlayBoxes(frame,selectedTrack).filter(b=>showObjects || b.selected)
+    return {w,h,vw,vh,left,top,current,selectedTrack,boxes}
+  })()
+  // The action card sits beside the selected object when it is on screen, else bottom left.
+  const popoverStyle = (() => {
+    const b = overlay?.boxes.find(x=>x.selected)
+    if (!overlay || !b) return { left: 12, bottom: 12 }
+    const [x1,,x2,y2] = b.box
+    const right = overlay.left + x2*overlay.vw
+    const leftEdge = overlay.left + x1*overlay.vw
+    const x = right + 268 < overlay.w ? right + 8 : Math.max(8, leftEdge - 264)
+    const y = Math.min(Math.max(8, overlay.top + y2*overlay.vh - 180), Math.max(8, overlay.h - 200))
+    return { left: x, top: y }
+  })()
+
   if (src) {
     return (
-      <div className="group relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-line bg-black">
+      <div className="shadow-card group relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-line bg-[#dce8f5]">
         <video
           ref={video}
           src={src}
@@ -90,36 +115,27 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
           onLoadedMetadata={(e) => onDuration(e.currentTarget.duration)}
           onError={() => onError('This browser could not play the video.')}
         />
-        {visual && bounds.width > 0 && bounds.videoWidth > 0 && (() => {
-          const w=bounds.width, h=bounds.height
-          const scale=Math.min(w/(bounds.videoWidth || visual.width), h/(bounds.videoHeight || visual.height))
-          const vw=(bounds.videoWidth || visual.width)*scale, vh=(bounds.videoHeight || visual.height)*scale
-          const left=(w-vw)/2, top=(h-vh)/2
-          const current=engine?.duration ? t : previewTime
-          const frame=frameAt(visual,current)
-          const selectedTrack=selection?.track_id ?? null
-          // With Show objects off, only the selected object stays visible.
-          const boxes=overlayBoxes(frame,selectedTrack).filter(b=>showObjects || b.selected)
-          return <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">
-            {selectedTrack !== null && boxes.filter(b=>b.selected).map(b=><MaskOverlay key={`mask-${b.object.detection_id}`} mask={b.object.mask} color={trackColor(b.trackId).rgb} style={{left,top,width:vw,height:vh}}/>)}
-            {boxes.map(b => {
-              const [x1,y1,x2,y2]=b.box
-              return <button key={b.object.detection_id} type="button" title={`Select ${b.label}`} aria-label={`Select ${b.label}`} aria-pressed={b.selected}
-                className={`pointer-events-auto absolute rounded-[2px] ${b.selected ? 'border-[3px] shadow-[0_0_0_1px_rgb(0_0_0/0.6)]' : 'border-2 opacity-80 hover:opacity-100'}`}
-                style={{left:left+x1*vw,top:top+y1*vh,width:(x2-x1)*vw,height:(y2-y1)*vh,borderColor:b.color,background:b.selected ? 'transparent' : 'rgb(0 0 0 / 0.05)'}}
-                onClick={() => {const selected=selectVisual(visual,current,b.object); if(selected) { video.current?.pause(); engine?.pause(); setSound(''); onSelection(selected) }}}>
-                <span className={`absolute top-0 left-0 whitespace-nowrap px-1 font-mono text-[10px] leading-4 text-black ${b.selected ? 'font-semibold' : ''}`} style={{background:b.color}}>{b.label}</span>
-              </button>
-            })}
-          </div>
-        })()}
-        {visual && <label className="absolute top-2 left-2 z-10 flex cursor-pointer items-center gap-1 rounded-full border border-line bg-black/70 px-2 py-0.5 font-mono text-[10px] text-zinc-300">
+        {overlay && <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">
+          {overlay.selectedTrack !== null && overlay.boxes.filter(b=>b.selected).map(b=><MaskOverlay key={`mask-${b.object.detection_id}`} mask={b.object.mask} color={trackColor(b.trackId).rgb} style={{left:overlay.left,top:overlay.top,width:overlay.vw,height:overlay.vh}}/>)}
+          {overlay.boxes.map(b => {
+            const [x1,y1,x2,y2]=b.box
+            return <button key={b.object.detection_id} type="button" title={`Select ${b.label}`} aria-label={`Select ${b.label}`} aria-pressed={b.selected}
+              className={`pointer-events-auto absolute rounded-md transition-[box-shadow,opacity,background-color] duration-200 ${b.selected ? 'border-[3px] [animation:box-pulse_1.8s_ease-in-out_infinite]' : 'border-2 opacity-75 hover:bg-white/10 hover:opacity-100 hover:shadow-[0_0_0_4px_rgb(140_196_242/0.55),0_0_24px_rgb(140_196_242/0.6)]'}`}
+              style={{left:overlay.left+x1*overlay.vw,top:overlay.top+y1*overlay.vh,width:(x2-x1)*overlay.vw,height:(y2-y1)*overlay.vh,borderColor:b.color}}
+              onClick={() => {const selected=selectVisual(visual!,overlay.current,b.object); if(selected) { video.current?.pause(); engine?.pause(); setSound(b.label); onSelection(selected) }}}>
+              <span className={`absolute -top-5 left-[-2px] whitespace-nowrap rounded-md px-1.5 text-[10px] leading-4 font-medium text-white shadow-sm ${b.selected ? '' : 'opacity-90'}`} style={{background:b.color}}>{b.label}</span>
+            </button>
+          })}
+        </div>}
+        {visual && <label className="absolute top-2 left-2 z-10 flex cursor-pointer items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-1 text-[11px] text-fg shadow-sm backdrop-blur">
           <input type="checkbox" className="accent-accent" checked={showObjects} onChange={e => { setShowObjects(e.target.checked); writeShowObjects(e.target.checked) }} />Show objects
         </label>}
-        {selection && <div className="absolute bottom-3 left-3 z-10 w-64 space-y-2 rounded-xl border border-line bg-ink-950/95 p-3 text-xs text-zinc-100 shadow-xl" aria-label="Selected object actions">
-          <p className="text-amber-300">Experimental visual guidance. Visibility does not prove sound.</p><p>Selected: <strong>{selection.label}{selection.track_id !== null ? ` #${selection.track_id}` : ''}</strong> ({selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s)</p>
-          <label className="block">Describe its sound<input aria-label="Selected object sound" className="mt-1 w-full rounded border border-line bg-black px-2 py-1" value={sound} onChange={e=>setSound(e.target.value)} /></label>
-          <div className="flex gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !sound.trim()} className="rounded border border-line px-2 py-1 capitalize disabled:opacity-40" onClick={()=>{setActionPending(true);void onVisualAction(selection,sound,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action === 'lower' ? 'Preview lower' : `Preview ${action}`} </button>)}</div>
+        {visual && !selection && showObjects && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur">Click an object to hear just that sound</div>}
+        {selection && <div className="rise-in shadow-card absolute z-20 w-64 space-y-2 rounded-xl border border-line bg-surface p-3 text-xs text-fg" style={popoverStyle} aria-label="Selected object actions">
+          <div className="flex items-center justify-between gap-2"><p className="font-semibold">{selection.label}</p><span className="text-[10px] text-subtle">{selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s</span></div>
+          <label className="block text-muted">What does it sound like?<input aria-label="Selected object sound" className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15" value={sound} onChange={e=>setSound(e.target.value)} placeholder="e.g. dog barking" /></label>
+          <div className="grid grid-cols-3 gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !sound.trim()} className={`rounded-lg px-2 py-1.5 font-medium capitalize transition-colors disabled:opacity-40 ${action==='isolate' ? 'bg-accent text-white hover:bg-[#1b62b3]' : 'border border-line text-fg hover:bg-surface-2'}`} onClick={()=>{setActionPending(true);void onVisualAction(selection,sound,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action}</button>)}</div>
+          <p className="text-[10px] text-subtle">Seeing an object does not guarantee it makes a sound.</p>
         </div>}
         {input}
         <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">{pickButton}</div>
@@ -128,20 +144,20 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
   }
 
   return (
-    <div className="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-line bg-black">
+    <div className="shadow-card relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="bg-grid fade-edges absolute inset-0 opacity-70" />
-      <div className="relative flex aspect-video h-[88%] max-w-[94%] flex-col items-center justify-center rounded-lg border border-line bg-gradient-to-b from-white/[0.03] to-transparent">
+      <div className="relative flex aspect-video h-[88%] max-w-[94%] flex-col items-center justify-center rounded-lg border border-line bg-gradient-to-b from-tint/[0.03] to-transparent">
         <Corner cls="top-2 left-2 border-t border-l" />
         <Corner cls="top-2 right-2 border-t border-r" />
         <Corner cls="bottom-2 left-2 border-b border-l" />
         <Corner cls="right-2 bottom-2 border-r border-b" />
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" className="text-zinc-600" aria-hidden="true">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" className="text-accent" aria-hidden="true">
           <rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" strokeWidth="1.5" />
           <path d="M10 9.5v5l4-2.5-4-2.5z" fill="currentColor" />
         </svg>
-        <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-600">No video loaded</div>
-        <div className="mt-1 font-mono text-3xl tabular-nums text-zinc-300">{t.toFixed(2)}</div>
-        <div className="mt-2">{pickButton}</div>
+        <div className="mt-3 text-sm font-medium text-fg">Start with a video</div>
+        <div className="mt-1 max-w-xs text-center text-xs text-muted">Drop a clip anywhere, then click what you want to hear.</div>
+        <div className="mt-4">{pickButton}</div>
         {input}
       </div>
     </div>

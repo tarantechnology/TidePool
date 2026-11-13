@@ -8,14 +8,14 @@ import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 
 const tones: Record<StatusTone, string> = {
-  muted: 'border-line text-zinc-400',
+  muted: 'border-line text-muted',
   ready: 'border-accent/40 text-accent',
-  busy: 'border-sky-400/40 text-sky-300',
+  busy: 'border-sky-300 text-sky-700',
   ok: 'border-accent/40 text-accent',
-  warn: 'border-amber-400/40 text-amber-300',
-  error: 'border-red-400/40 text-red-300',
+  warn: 'border-amber-300 text-amber-700',
+  error: 'border-red-200 text-red-600',
 }
-const dot: Record<StatusTone, string> = { muted: 'bg-zinc-500', ready: 'bg-accent', busy: 'bg-sky-300 animate-pulse', ok: 'bg-accent', warn: 'bg-amber-300', error: 'bg-red-400' }
+const dot: Record<StatusTone, string> = { muted: 'bg-faint', ready: 'bg-accent', busy: 'bg-sky-300 animate-pulse', ok: 'bg-accent', warn: 'bg-amber-300', error: 'bg-red-400' }
 
 interface Props {
   config: BackendConfig
@@ -116,10 +116,9 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
   const progress = run.phase === 'detecting' ? run.progress : undefined
 
   return (
-    <section ref={section} aria-label="Objects" className="space-y-2 rounded-lg border border-line bg-white/[0.02] p-2 text-xs">
+    <section ref={section} aria-label="Objects" className="space-y-2 text-xs">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-semibold text-zinc-100">Objects</h3>
-        <span className="text-[10px] text-zinc-500">Experimental</span>
+        <h3 className="font-medium text-fg">Objects in the video</h3>
       </div>
       <p role="status" className={`flex items-start gap-1.5 rounded-full border px-2 py-1 leading-snug ${tones[status.tone]}`}>
         <span aria-hidden="true" className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot[status.tone]}`} />
@@ -127,37 +126,37 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
       </p>
       {status.running ? (
         <div className="flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-label="Detection progress" aria-valuemin={0} aria-valuemax={100} {...(progress !== undefined ? { 'aria-valuenow': progress } : {})}>
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-tint/10" role="progressbar" aria-label="Detection progress" aria-valuemin={0} aria-valuemax={100} {...(progress !== undefined ? { 'aria-valuenow': progress } : {})}>
             <div className={`h-full bg-accent transition-[width] ${progress === undefined ? 'w-1/3 animate-pulse' : ''}`} style={progress !== undefined ? { width: `${progress}%` } : undefined} />
           </div>
-          <button type="button" className="rounded-lg border border-line px-2 py-1 text-zinc-200" onClick={cancel}>Cancel</button>
+          <button type="button" className="rounded-lg border border-line px-2 py-1 text-fg" onClick={cancel}>Cancel</button>
         </div>
       ) : (
-        <button type="button" className="rounded-lg border border-accent/50 px-3 py-1.5 text-accent disabled:opacity-40" disabled={disabled || !status.canStart} onClick={() => void detect(null)}>
+        <button type="button" className="w-full rounded-lg border border-accent/40 bg-accent-soft px-3 py-1.5 font-medium text-accent transition-colors hover:border-accent/60 disabled:opacity-40" disabled={disabled || !status.canStart} onClick={() => void detect(null)}>
           Find objects in video
         </button>
       )}
       {run.phase === 'failed' && run.status === 422 && !status.running && (canPrepare ? (
         <div className="space-y-1">
-          <p className="text-zinc-400">This server did not re-encode the video itself. Prepare a compatible copy here and detection runs again; the uploaded file is kept.</p>
-          <button type="button" className="rounded-lg bg-accent px-3 py-1.5 font-medium text-black disabled:opacity-40" disabled={disabled} onClick={() => void prepareThenDetect()}>Prepare a compatible copy</button>
+          <p className="text-muted">This server did not re-encode the video itself. Prepare a compatible copy here and detection runs again; the uploaded file is kept.</p>
+          <button type="button" className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white disabled:opacity-40" disabled={disabled} onClick={() => void prepareThenDetect()}>Prepare a compatible copy</button>
         </div>
       ) : (
-        <p className="text-zinc-400">A compatible copy can only be prepared before any sound is separated. Start a new project from this video to analyse it.</p>
+        <p className="text-muted">A compatible copy can only be prepared before any sound is separated. Start a new project from this video to analyse it.</p>
       ))}
       {tracks.length > 0 && (
         <>
-          <p className="text-zinc-500">Pick an object to guide separation. A visible object may be silent.</p>
+          <p className="text-subtle">Pick one to hear just that sound.</p>
           <ul aria-label="Detected objects" className="max-h-32 space-y-0.5 overflow-y-auto">
             {tracks.map((t) => {
               const selected = selection?.track_id === t.trackId
               return (
                 <li key={t.trackId}>
                   <button type="button" aria-pressed={selected} onClick={() => pick(t.trackId)}
-                    className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-white/[0.06] ${selected ? 'bg-white/[0.08] ring-1 ring-accent/60' : ''}`}>
+                    className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-tint/[0.06] ${selected ? 'bg-tint/[0.08] ring-1 ring-accent/60' : ''}`}>
                     <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: trackColor(t.trackId).css }} />
-                    <span className="min-w-0 flex-1 truncate text-zinc-100">{t.label} <span className="text-zinc-500">#{t.trackId}</span></span>
-                    <span className="shrink-0 font-mono text-[10px] text-zinc-400">{t.firstSeconds.toFixed(1)}–{t.lastSeconds.toFixed(1)} s · {t.frames} fr</span>
+                    <span className="min-w-0 flex-1 truncate text-fg">{t.label} <span className="text-subtle">#{t.trackId}</span></span>
+                    <span className="shrink-0 font-mono text-[10px] text-muted">{t.firstSeconds.toFixed(1)}–{t.lastSeconds.toFixed(1)} s · {t.frames} fr</span>
                   </button>
                 </li>
               )
@@ -173,7 +172,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
 export function GuidedByChip({ selection, start, end, onClear }: { selection: { label?: unknown; track_id?: unknown }; start: number; end: number; onClear: () => void }) {
   const color = typeof selection.track_id === 'number' ? trackColor(selection.track_id).css : undefined
   return (
-    <div className="flex items-center gap-2 rounded-full border border-line bg-white/[0.04] px-2 py-1 text-xs text-zinc-200" aria-label="Visual guidance">
+    <div className="flex items-center gap-2 rounded-full border border-line bg-tint/[0.04] px-2 py-1 text-xs text-fg" aria-label="Visual guidance">
       {color && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />}
       <span className="min-w-0 flex-1 truncate">{guidedByText(selection, start, end)}</span>
       <button type="button" className="text-accent" onClick={onClear}>Clear</button>

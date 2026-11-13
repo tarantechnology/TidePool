@@ -12,18 +12,12 @@ interface Props {
   /** Why the bar is disabled, shown as helper text and as the tooltip. */
   disabledReason?: string
   agentLabel: string
+  /** One-click prompts, ideally built from what is in the video. */
+  suggestions: string[]
   onRun: (text: string) => Promise<{ message: string; ok: boolean }>
 }
 
-const SUGGESTIONS = [
-  'Make the siren louder whenever the argument gets intense',
-  'Make the siren louder from 8 to 16 seconds',
-  'Mute Speaker B at 12 seconds',
-  'Solo Speaker A',
-  'Make the siren quieter',
-]
-
-export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: Props) {
+export function PromptBar({ disabled, disabledReason = '', agentLabel, suggestions, onRun }: Props) {
   const [text, setText] = useState('')
   const [history, setHistory] = useState<Entry[]>([])
   const [pending, setPending] = useState(false)
@@ -58,10 +52,10 @@ export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: 
     <div className="relative z-10 shrink-0 px-4 pt-1 pb-4">
       <div className="mx-auto max-w-3xl">
         {history.length > 0 && (
-          <div className="mb-2 space-y-0.5 px-1 font-mono text-[11px]">
+          <div className="mb-2 space-y-0.5 px-1 text-[11px]">
             {history.map((h, i) => (
-              <div key={i} className={h.ok ? 'text-zinc-400' : 'text-amber-300'}>
-                <span className="text-zinc-600">&gt; {h.prompt}</span>
+              <div key={i} className={h.ok ? 'text-muted' : 'text-amber-700'}>
+                <span className="text-faint">&gt; {h.prompt}</span>
                 <span className="ml-2">{h.message}</span>
               </div>
             ))}
@@ -70,7 +64,7 @@ export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: 
         <form
           onSubmit={submit}
           title={reason}
-          className="flex items-center gap-3 rounded-2xl border border-line-strong bg-ink-900/90 py-2 pr-2 pl-4 shadow-2xl shadow-black/60 backdrop-blur transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_4px_rgb(61_255_139/0.08),0_0_48px_-12px_rgb(61_255_139/0.4)]"
+          className="flex items-center gap-3 rounded-2xl border border-line-strong bg-surface py-2 pr-2 pl-4 shadow-[0_12px_40px_-16px_rgb(29_90_158/0.35)] transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_4px_rgb(34_112_200/0.12),0_12px_40px_-16px_rgb(29_90_158/0.45)]"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0 text-accent" aria-hidden="true">
             <path
@@ -83,20 +77,20 @@ export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: 
             value={text}
             onChange={(e) => setText(e.target.value)}
             disabled={disabled || pending}
-            placeholder={reason || 'Describe an edit, e.g. make the siren louder from 8 to 16 seconds'}
-            className="h-9 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600 disabled:opacity-50"
+            placeholder={reason || 'Describe a sound to find or an edit to make, e.g. isolate the dog barking'}
+            className="h-9 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={disabled || pending || !text.trim()}
-            className="flex h-9 items-center gap-2 rounded-xl bg-accent px-3.5 text-sm font-medium text-black transition-all hover:brightness-110 disabled:bg-white/[0.06] disabled:text-zinc-600"
+            className="flex h-9 items-center gap-2 rounded-xl bg-accent px-3.5 text-sm font-medium text-white transition-all hover:bg-[#1b62b3] disabled:bg-tint/[0.06] disabled:text-faint"
           >
             {pending ? (
-              <span className="font-mono text-xs">Thinking...</span>
+              <span className="text-xs">Thinking…</span>
             ) : (
               <>
                 Apply
-                <kbd className="rounded border border-black/20 px-1 font-mono text-[10px]">&#8629;</kbd>
+                <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">&#8629;</kbd>
               </>
             )}
           </button>
@@ -104,7 +98,7 @@ export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: 
         <div className="mt-2.5 flex items-center gap-3 px-1">
           {/* One row, so the timeline keeps its height. The rest scrolls sideways. */}
           <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [scrollbar-width:none]">
-            {SUGGESTIONS.map((s) => (
+            {suggestions.map((s) => (
               <button
                 key={s}
                 type="button"
@@ -114,13 +108,13 @@ export function PromptBar({ disabled, disabledReason = '', agentLabel, onRun }: 
                   setText(s)
                   input.current?.focus()
                 }}
-                className="shrink-0 whitespace-nowrap rounded-full border border-line px-2.5 py-1 text-[11px] text-zinc-400 transition-colors hover:border-line-strong hover:bg-white/[0.04] hover:text-zinc-100 disabled:opacity-40"
+                className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent disabled:opacity-40"
               >
                 {s}
               </button>
             ))}
           </div>
-          <span className="shrink-0 font-mono text-[10px] text-zinc-600">{reason || agentLabel}</span>
+          <span className="shrink-0 text-[10px] text-faint">{reason || agentLabel}</span>
         </div>
       </div>
     </div>

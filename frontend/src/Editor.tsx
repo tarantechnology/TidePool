@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent } from 'react'
+import type { ChangeEvent, DragEvent, ReactNode } from 'react'
 import { NO_PROJECT_HINT } from './agent/planOutcome'
 import { NO_PROJECT_STEMS, showsMockBadge } from './state/projectStems'
 import type { ProjectStemsState } from './state/projectStems'
@@ -37,8 +37,6 @@ const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api'
 const MOCK_LABEL = 'Mock stems'
 const VIDEO_AUDIO_LABEL = 'Original audio'
 
-const HEADER_BUTTON =
-  'rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:border-line-strong hover:bg-white/[0.04] hover:text-zinc-100 disabled:opacity-40'
 
 /** Range sliders are inputs too, but undo should still work while one has focus. */
 function isTextEntry(el: HTMLElement): boolean {
@@ -69,6 +67,8 @@ export default function Editor() {
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
   const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
+  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null)
+  const [working, setWorking] = useState<string | null>(null)
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
   const projectPanel = useRef<ProjectPanelHandle>(null)
@@ -282,10 +282,13 @@ export default function Editor() {
   }, [])
 
   const duration = engine?.duration ?? 0
+  const suggestions = useMemo(() => promptSuggestions(visual), [visual])
+  const hasLayers = stems.length > 0
+  const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel)
 
   return (
     <div
-      className="relative flex h-screen flex-col overflow-hidden bg-ink-950"
+      className="relative flex h-screen flex-col overflow-hidden bg-canvas"
       onDragOver={(e) => {
         e.preventDefault()
         setDragging(true)
@@ -296,72 +299,71 @@ export default function Editor() {
       onDrop={onDrop}
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded-xl border border-dashed border-accent/60 bg-ink-950/70 font-mono text-xs text-accent backdrop-blur">
-          Drop audio files to replace the stems, or a video
+        <div className="pointer-events-none absolute inset-3 z-50 flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-accent/50 bg-accent-soft/80 text-sm font-medium text-accent backdrop-blur-sm">
+          Drop a video to start a project
+          <span className="text-xs font-normal text-muted">or audio files to replace the layers</span>
         </div>
       )}
-      <div className="bg-dots fade-edges pointer-events-none absolute inset-0 opacity-70" />
-      <div className="pointer-events-none absolute -top-48 left-1/2 h-80 w-[56rem] -translate-x-1/2 rounded-full bg-accent/10 blur-[130px]" />
+      <div className="pointer-events-none absolute -top-40 left-1/2 h-80 w-[60rem] -translate-x-1/2 rounded-full bg-sky/30 blur-[120px]" />
 
-      <header className="relative z-10 grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-line bg-ink-950/60 px-4 backdrop-blur">
-        <a href="#/" className="text-zinc-100 transition-opacity hover:opacity-80">
+      <header className="relative z-20 flex h-14 shrink-0 items-center gap-4 border-b border-line bg-surface/70 px-4 backdrop-blur">
+        <a href="#/" className="shrink-0 text-fg transition-opacity hover:opacity-80">
           <Logo />
         </a>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
           <Transport engine={engine} playing={playing} duration={duration} />
-          {originalSrc && stemsLabel === 'Project stems' && <button className={HEADER_BUTTON} onClick={()=>setCompareOriginal(v=>!v)} aria-pressed={compareOriginal}>{compareOriginal ? 'Listening: original' : 'Compare original'}</button>}
+          {originalSrc && stemsLabel === 'Project stems' && (
+            <div className="flex rounded-full border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to">
+              {([false, true] as const).map((orig) => (
+                <button key={String(orig)} aria-pressed={compareOriginal === orig} onClick={() => setCompareOriginal(orig)}
+                  className={`rounded-full px-2.5 py-1 transition-colors ${compareOriginal === orig ? 'bg-accent text-white' : 'text-muted hover:text-fg'}`}>
+                  {orig ? 'Original' : 'Edited'}
+                </button>
+              ))}
+            </div>
+          )}
           {isDurationMismatch(videoDuration, duration) && (
-            <span className="font-mono text-[10px] text-amber-300">
-              Video {videoDuration?.toFixed(1)}s, audio {duration.toFixed(1)}s
+            <span className="hidden font-mono text-[10px] text-amber-700 xl:inline" title="The video and audio lengths differ">
+              Video {videoDuration?.toFixed(1)}s · audio {duration.toFixed(1)}s
             </span>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           <input ref={picker} type="file" accept="audio/*" multiple hidden onChange={onPick} />
-          <button
-            disabled={status !== 'ready'}
-            onClick={() => picker.current?.click()}
-            className={HEADER_BUTTON}
-          >
-            Import audio
-          </button>
-          <button className={HEADER_BUTTON} disabled={!canUndo(history)} onClick={()=>setHistory(h=>undo(h))} title="Undo (⌘Z)">Undo</button>
-          <button className={HEADER_BUTTON} disabled={!canRedo(history)} onClick={()=>setHistory(h=>redo(h))} title="Redo (⇧⌘Z)">Redo</button>
-          <button
-            disabled={status !== 'ready'}
-            onClick={() => downloadText(serializeEditList(tracks), 'soundcanvas-edit-list.json')}
-            className={HEADER_BUTTON}
-          >
-            Export edit list (JSON)
-          </button>
+          <IconButton label="Undo (⌘Z)" disabled={!canUndo(history)} onClick={() => setHistory((h) => undo(h))}>
+            <path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" />
+          </IconButton>
+          <IconButton label="Redo (⇧⌘Z)" disabled={!canRedo(history)} onClick={() => setHistory((h) => redo(h))}>
+            <path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />
+          </IconButton>
           <span
-            title={chipErrors.join(' ')}
-            className="inline-flex max-w-64 items-center gap-2 truncate rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-zinc-400"
+            title={chipErrors.join(' ') || statusText}
+            className="ml-1 inline-flex max-w-52 items-center gap-2 truncate rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted"
           >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                chipErrors.length > 0
-                  ? 'bg-red-400'
-                  : status === 'ready'
-                  ? 'bg-accent shadow-[0_0_8px_rgb(61_255_139/0.8)]'
-                  : status === 'error'
-                    ? 'bg-red-400'
-                    : 'animate-pulse-dot bg-zinc-400'
-              }`}
-            />
-            {status === 'loading' && 'Loading stems'}
-            {status === 'ready' && (chipErrors[0] || stemsLabel)}
-            {status === 'error' && 'Load failed'}
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipErrors.length > 0 || status === 'error' ? 'bg-red-400' : status === 'ready' ? 'bg-accent' : 'animate-pulse-dot bg-faint'}`} />
+            <span className="truncate">{statusText}</span>
           </span>
-          {showsMockBadge(projectStems,stemsLabel) && <span className="text-xs text-amber-300">test stems — no AI separation</span>}
+          <details className="relative">
+            <summary aria-label="More" title="More" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-full text-muted transition-colors hover:bg-tint/[0.06] hover:text-fg">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+            </summary>
+            <div className="shadow-card absolute right-0 top-10 z-30 w-64 rounded-xl border border-line bg-surface p-1.5 text-xs">
+              <button className={MENU_ITEM} disabled={status !== 'ready'} onClick={() => picker.current?.click()}>Import audio files</button>
+              <button className={MENU_ITEM} disabled={status !== 'ready'} onClick={() => downloadText(serializeEditList(tracks), 'soundcanvas-edit-list.json')}>Download edit list (JSON)</button>
+              <div className="mt-1 border-t border-line px-2 pt-2 pb-1">
+                <p className="mb-1 font-medium text-fg">Edit history</p>
+                <div className="max-h-40 overflow-y-auto"><EditLog log={log} /></div>
+              </div>
+            </div>
+          </details>
         </div>
       </header>
 
       {status === 'error' ? (
-        <div className="relative z-10 flex flex-1 items-center justify-center p-8 text-sm text-red-400">{error}</div>
+        <div className="relative z-10 flex flex-1 items-center justify-center p-8 text-sm text-red-600">{error}</div>
       ) : (
         <main className="relative z-10 flex min-h-0 flex-1 flex-col">
-          <div className="flex h-[38%] min-h-[190px] shrink-0 gap-3 p-3 pb-2">
+          <div className="flex h-[40%] min-h-[200px] shrink-0 gap-3 p-3 pb-2">
             <VideoPanel
               engine={engine}
               src={videoSrc}
@@ -374,13 +376,12 @@ export default function Editor() {
               seekTo={seekTo}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
-            <div className="flex min-h-0 w-80 shrink-0 flex-col gap-2">
-              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} />
-              <details className="shrink-0 text-xs text-zinc-400"><summary className="cursor-pointer">Edit history</summary><EditLog log={log} /></details>
+            <div className="flex min-h-0 w-[21rem] shrink-0 flex-col">
+              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
             </div>
           </div>
-          <div className="mx-3 mb-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-ink-900/60 backdrop-blur">
-            {engine && status === 'ready' ? (
+          <div className="shadow-card relative mx-3 mb-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
+            {engine && status === 'ready' && hasLayers ? (
               <Timeline
                 engine={engine}
                 stems={stems}
@@ -391,15 +392,61 @@ export default function Editor() {
                 syncing={syncTarget !== null}
               />
             ) : (
-              <div className="flex flex-1 items-center justify-center font-mono text-xs text-zinc-600">
-                Loading stems...
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                {status === 'ready' ? (
+                  <>
+                    <WaveIcon />
+                    <p className="text-sm font-medium text-fg">Your layers will appear here</p>
+                    <p className="max-w-sm text-xs text-muted">Pick a sound in the video or describe it below. Each separated sound becomes its own layer you can mute, solo and automate.</p>
+                  </>
+                ) : (
+                  <p className="text-xs text-subtle">Loading layers…</p>
+                )}
               </div>
             )}
+            {working && (
+              <div className="pointer-events-none absolute inset-0 z-10" aria-hidden="true">
+                <div className="shimmer absolute inset-0" />
+                <div className="absolute top-2 right-3 flex items-center gap-2 rounded-full bg-surface/90 px-3 py-1 text-[11px] text-accent shadow-sm">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />{working}
+                </div>
+              </div>
+            )}
+            <div ref={setPreviewSlot} className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center [&>*]:pointer-events-auto" />
           </div>
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} agentLabel="GPT-6 Luna" onRun={runPrompt} />
+      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} agentLabel="SoundCanvas AI" suggestions={suggestions} onRun={runPrompt} />
     </div>
   )
+}
+
+const MENU_ITEM = 'block w-full rounded-lg px-2 py-1.5 text-left text-fg transition-colors hover:bg-surface-2 disabled:opacity-40'
+
+function IconButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button aria-label={label} title={label} disabled={disabled} onClick={onClick}
+      className="flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-tint/[0.06] hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
+    </button>
+  )
+}
+
+function WaveIcon() {
+  return (
+    <div className="mb-1 flex h-12 items-center gap-1" aria-hidden="true">
+      {[10, 22, 34, 18, 40, 26, 14, 30, 20, 8].map((h, i) => (
+        <span key={i} className="w-1.5 rounded-full bg-sky" style={{ height: h, opacity: 0.5 + (i % 3) * 0.2 }} />
+      ))}
+    </div>
+  )
+}
+
+/** Prompt ideas from what the detector found in the video, so the first command works on this clip. */
+function promptSuggestions(visual: VisualMetadata | null): string[] {
+  const labels = new Set<string>()
+  for (const frame of visual?.frames ?? []) for (const o of frame.objects ?? []) if (o.label) labels.add(o.label)
+  const found = [...labels].slice(0, 3).flatMap((label) => [`Isolate the ${label}`, `Mute the ${label}`])
+  return [...found, 'Remove the background music', 'Make the voices clearer', 'Lower the crowd noise']
 }

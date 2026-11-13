@@ -25,13 +25,13 @@ const KINDS = Object.keys(KIND_LABEL) as StemKind[]
 export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced }: Props) {
   const btn = (active: boolean, activeCls: string) =>
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
-      active ? activeCls : 'border-line bg-white/[0.03] text-zinc-500 hover:border-line-strong hover:text-zinc-200'
+      active ? activeCls : 'border-line bg-tint/[0.03] text-subtle hover:border-line-strong hover:text-fg'
     }`
   const refined = refinementBadge(stem.refinement)
   const pos = `${(track.gain / MAX_GAIN) * 100}%`
   const sliderStyle = {
     '--pos': pos,
-    '--fill': audible ? '#3dff8b' : '#52525b',
+    '--fill': audible ? '#2b7bd6' : '#b5c3d4',
   } as CSSProperties
 
   return (
@@ -48,10 +48,10 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
                 // Hand the keyboard back, so Space plays again.
                 e.target.blur()
               }}
-              className="-ml-0.5 min-w-0 cursor-pointer bg-transparent font-mono text-[10px] uppercase tracking-wider text-zinc-500 outline-none transition-colors hover:text-zinc-200"
+              className="-ml-0.5 min-w-0 cursor-pointer bg-transparent font-mono text-[10px] uppercase tracking-wider text-subtle outline-none transition-colors hover:text-fg"
             >
               {KINDS.map((kind) => (
-                <option key={kind} value={kind} className="bg-ink-900 text-zinc-200">
+                <option key={kind} value={kind} className="bg-surface text-fg">
                   {KIND_LABEL[kind]}
                 </option>
               ))}
@@ -59,7 +59,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             {unsynced && (
               <span
                 title="This curve has a hard step, which the backend cannot store, so its export keeps the previous curve."
-                className="shrink-0 font-mono text-[10px] text-amber-300"
+                className="shrink-0 font-mono text-[10px] text-amber-700"
               >
                 not synced
               </span>
@@ -73,14 +73,14 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
         </div>
         <button
           title="Mute"
-          className={btn(track.muted, 'border-red-400/40 bg-red-500/15 text-red-300')}
+          className={btn(track.muted, 'border-red-200 bg-red-50 text-red-600')}
           onClick={() => onAction({ type: 'set_mute', stemId: stem.id, muted: !track.muted })}
         >
           M
         </button>
         <button
           title="Solo"
-          className={btn(track.solo, 'border-amber-300/40 bg-amber-300/15 text-amber-200')}
+          className={btn(track.solo, 'border-amber-300 bg-amber-50 text-amber-700')}
           onClick={() => onAction({ type: 'set_solo', stemId: stem.id, solo: !track.solo })}
         >
           S
@@ -88,7 +88,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
       </div>
       <div className="flex items-center gap-2.5">
         <div className="relative flex-1">
-          <div className="pointer-events-none absolute top-1/2 left-1/2 h-2 w-px -translate-y-1/2 bg-white/25" />
+          <div className="pointer-events-none absolute top-1/2 left-1/2 h-2 w-px -translate-y-1/2 bg-tint/25" />
           <input
             type="range"
             min={0}
@@ -104,7 +104,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             onDoubleClick={() => onAction({ type: 'set_gain', stemId: stem.id, value: 1 })}
           />
         </div>
-        <span className="w-14 text-right font-mono text-[10px] tabular-nums text-zinc-500">
+        <span className="w-14 text-right font-mono text-[10px] tabular-nums text-subtle">
           {toDb(track.gain)}
         </span>
       </div>

@@ -89,12 +89,12 @@ function useTypewriter(phrases: string[]): string {
 export function HeroPreview() {
   const typed = useTypewriter(PHRASES)
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-line-strong bg-ink-900/80 shadow-[0_40px_120px_-30px_rgb(61_255_139/0.25),0_30px_80px_-20px_rgb(0_0_0/0.8)] backdrop-blur">
+    <div className="relative overflow-hidden rounded-2xl border border-line-strong bg-surface/80 shadow-[0_40px_120px_-30px_rgb(43_123_214/0.25),0_30px_80px_-20px_rgb(0_0_0/0.8)] backdrop-blur">
       <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-        <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
-        <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
-        <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
-        <span className="mx-auto font-mono text-[11px] text-zinc-500">argument-scene</span>
+        <span className="h-2.5 w-2.5 rounded-full bg-tint/10" />
+        <span className="h-2.5 w-2.5 rounded-full bg-tint/10" />
+        <span className="h-2.5 w-2.5 rounded-full bg-tint/10" />
+        <span className="mx-auto font-mono text-[11px] text-subtle">argument-scene</span>
         <span className="w-10" />
       </div>
 
@@ -103,7 +103,7 @@ export function HeroPreview() {
           <div key={row.label} className="grid grid-cols-[7.5rem_1fr] border-b border-line last:border-b-0 sm:grid-cols-[10rem_1fr]">
             <div className="flex flex-col justify-center border-r border-line px-4 py-3">
               <div className="text-[12px] font-medium tracking-tight sm:text-[13px]">{row.label}</div>
-              <div className="font-mono text-[9px] uppercase tracking-wider text-zinc-500">{row.kind}</div>
+              <div className="font-mono text-[9px] uppercase tracking-wider text-subtle">{row.kind}</div>
             </div>
             <div className="relative h-14 px-2 sm:h-[4.5rem]">
               <div className="flex h-full items-center gap-[2px]">
@@ -123,7 +123,7 @@ export function HeroPreview() {
                 >
                   <polyline
                     fill="none"
-                    stroke="white"
+                    stroke="#0e2440"
                     strokeWidth={1.5}
                     vectorEffect="non-scaling-stroke"
                     points="0,62 38,62 44,14 76,14 82,62 100,62"
@@ -134,19 +134,19 @@ export function HeroPreview() {
           </div>
         ))}
         <div className="pointer-events-none absolute top-0 right-2 bottom-0 left-[7.5rem] sm:left-[10rem]">
-          <div className="absolute top-0 bottom-0 w-px animate-playhead bg-accent shadow-[0_0_12px_2px_rgb(61_255_139/0.5)]" />
+          <div className="absolute top-0 bottom-0 w-px animate-playhead bg-accent shadow-[0_0_12px_2px_rgb(43_123_214/0.5)]" />
         </div>
       </div>
 
       <div className="border-t border-line p-3">
-        <div className="flex items-center gap-3 rounded-xl border border-line-strong bg-ink-950/80 px-4 py-3">
+        <div className="flex items-center gap-3 rounded-xl border border-line-strong bg-canvas/80 px-4 py-3">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="shrink-0 text-accent" aria-hidden="true">
             <path
               d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"
               fill="currentColor"
             />
           </svg>
-          <div className="min-w-0 flex-1 truncate text-sm text-zinc-200">
+          <div className="min-w-0 flex-1 truncate text-sm text-fg">
             {typed}
             <span className="ml-0.5 inline-block h-4 w-px animate-caret bg-accent align-middle" />
           </div>

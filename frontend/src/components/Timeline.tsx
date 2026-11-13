@@ -9,7 +9,7 @@ import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
 
-const ACCENT = '#3dff8b'
+const ACCENT = '#5b9be3'
 const COLS = 'grid grid-cols-[15rem_minmax(0,1fr)]'
 
 interface Props {
@@ -36,14 +36,14 @@ function Playhead({ engine, duration }: { engine: AudioEngine; duration: number 
     <>
       {/* Dim the part of the timeline that has not played yet. */}
       <div
-        className="pointer-events-none absolute right-0 bottom-0 top-8 bg-black/40"
+        className="pointer-events-none absolute right-0 bottom-0 top-8 bg-tint/[0.06]"
         style={{ left: `${pct}%` }}
       />
       <div
-        className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent shadow-[0_0_12px_2px_rgb(61_255_139/0.5)]"
+        className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent shadow-[0_0_12px_2px_rgb(43_123_214/0.5)]"
         style={{ left: `${pct}%` }}
       >
-        <div className="absolute top-1 left-1/2 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 font-mono text-[10px] font-medium text-black">
+        <div className="absolute top-1 left-1/2 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 font-mono text-[10px] font-medium text-white">
           {t.toFixed(1)}
         </div>
       </div>
@@ -144,25 +144,25 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
-      {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-300">{limitMessage}</div>}
+      {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
-        <div className={`${COLS} h-8 border-b border-line bg-white/[0.02]`}>
-          <div className="flex items-center border-r border-line px-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+        <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
+          <div className="flex items-center border-r border-line px-4 font-mono text-[10px] uppercase tracking-wider text-subtle">
             Layers
           </div>
           <div className="relative">
             {minors.map((t) => (
               <div
                 key={`m${t}`}
-                className="absolute bottom-0 h-1.5 border-l border-white/10"
+                className="absolute bottom-0 h-1.5 border-l border-tint/10"
                 style={{ left: `${(t / duration) * 100}%` }}
               />
             ))}
             {majors.map((t) => (
               <div
                 key={t}
-                className="absolute bottom-0 h-3 border-l border-white/25 pl-1.5 font-mono text-[10px] leading-3 text-zinc-500"
+                className="absolute bottom-0 h-3 border-l border-tint/25 pl-1.5 font-mono text-[10px] leading-3 text-subtle"
                 style={{ left: `${(t / duration) * 100}%` }}
               >
                 <span className="absolute -top-4">{t}s</span>
@@ -187,11 +187,11 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
               />
-              <div className="relative overflow-hidden bg-gradient-to-b from-white/[0.02] to-transparent">
+              <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">
                 {majors.map((t) => (
                   <div
                     key={t}
-                    className="absolute top-0 bottom-0 border-l border-white/[0.04]"
+                    className="absolute top-0 bottom-0 border-l border-tint/[0.04]"
                     style={{ left: `${(t / duration) * 100}%` }}
                   />
                 ))}
@@ -209,7 +209,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                   <div
                     key={`${a}-${b}`}
                     data-mute-range
-                    className="absolute inset-y-0 border-x border-line-strong bg-black/50"
+                    className="absolute inset-y-0 border-x border-line-strong bg-tint/[0.08]"
                     style={{
                       left: `${(Math.max(a, 0) / duration) * 100}%`,
                       width: `${((Math.min(b, duration) - Math.max(a, 0)) / duration) * 100}%`,
@@ -219,7 +219,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 {track.automation.length > 0 && (
                   <>
                     <div
-                      className="absolute right-0 left-0 border-t border-dashed border-white/20"
+                      className="absolute right-0 left-0 border-t border-dashed border-tint/20"
                       style={{ top: `${(1 - 1 / MAX_GAIN) * 100}%` }}
                     />
                     <svg
@@ -229,7 +229,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                     >
                       <polyline
                         fill="none"
-                        stroke="white"
+                        stroke="#0e2440"
                         strokeWidth={1.5}
                         vectorEffect="non-scaling-stroke"
                         points={track.automation

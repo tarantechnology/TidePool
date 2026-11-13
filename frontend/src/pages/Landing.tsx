@@ -6,7 +6,7 @@ function OpenButton({ children, large = false }: { children: ReactNode; large?: 
   return (
     <a
       href="#/app"
-      className={`glow-accent inline-flex items-center gap-2 rounded-full bg-accent font-medium text-black transition-all hover:brightness-110 ${
+      className={`glow-accent inline-flex items-center gap-2 rounded-full bg-accent font-medium text-white transition-all hover:brightness-110 ${
         large ? 'h-12 px-7 text-[15px]' : 'h-9 px-4 text-sm'
       }`}
     >
@@ -80,7 +80,7 @@ const FEATURES: Array<{ title: string; body: string; status: Status; icon: React
 function StatusChip({ status }: { status: Status }) {
   const cls =
     status === 'Soon'
-      ? 'border-line text-zinc-500'
+      ? 'border-line text-subtle'
       : 'border-accent/30 bg-accent/10 text-accent'
   return (
     <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${cls}`}>
@@ -91,18 +91,18 @@ function StatusChip({ status }: { status: Status }) {
 
 export default function Landing() {
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-ink-950 text-zinc-100">
+    <div className="relative min-h-screen overflow-x-clip bg-canvas text-fg">
       {/* Nav */}
-      <nav className="sticky top-0 z-40 border-b border-line bg-ink-950/70 backdrop-blur-xl">
+      <nav className="sticky top-0 z-40 border-b border-line bg-canvas/70 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5">
-          <a href="#/" className="text-zinc-100">
+          <a href="#/" className="text-fg">
             <Logo />
           </a>
-          <div className="hidden items-center gap-8 text-sm text-zinc-400 sm:flex">
-            <a href="#how" className="transition-colors hover:text-white">
+          <div className="hidden items-center gap-8 text-sm text-muted sm:flex">
+            <a href="#how" className="transition-colors hover:text-fg">
               How it works
             </a>
-            <a href="#features" className="transition-colors hover:text-white">
+            <a href="#features" className="transition-colors hover:text-fg">
               Features
             </a>
           </div>
@@ -116,14 +116,14 @@ export default function Landing() {
         <div className="pointer-events-none absolute -top-32 left-1/2 h-[26rem] w-[50rem] -translate-x-1/2 rounded-full bg-accent/15 blur-[140px]" />
 
         <div className="relative mx-auto max-w-6xl px-5 pt-20 pb-16 text-center sm:pt-28">
-          <div className="mx-auto mb-7 inline-flex items-center gap-2 rounded-full border border-line-strong bg-white/[0.03] px-3 py-1.5 font-mono text-[11px] text-zinc-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_rgb(61_255_139/0.9)]" />
+          <div className="mx-auto mb-7 inline-flex items-center gap-2 rounded-full border border-line-strong bg-tint/[0.03] px-3 py-1.5 font-mono text-[11px] text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_rgb(43_123_214/0.9)]" />
             Prompt-driven audio editing, early prototype
           </div>
           <h1 className="text-gradient mx-auto max-w-3xl text-5xl leading-[1.04] font-semibold tracking-tight sm:text-7xl">
             Edit sound with a sentence.
           </h1>
-          <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-zinc-400 sm:text-lg">
+          <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
             Split a clip into layers, then mute a voice, bring up a siren, or automate the mix over time. Say what you
             want and hear it change.
           </p>
@@ -131,7 +131,7 @@ export default function Landing() {
             <OpenButton large>Open the editor</OpenButton>
             <a
               href="#how"
-              className="inline-flex h-12 items-center rounded-full border border-line-strong px-6 text-[15px] text-zinc-300 transition-colors hover:bg-white/[0.04] hover:text-white"
+              className="inline-flex h-12 items-center rounded-full border border-line-strong px-6 text-[15px] text-fg-2 transition-colors hover:bg-tint/[0.04] hover:text-fg"
             >
               How it works
             </a>
@@ -151,10 +151,10 @@ export default function Landing() {
         </div>
         <div className="grid gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-3">
           {STEPS.map((s) => (
-            <div key={s.n} className="group bg-ink-900 p-7 transition-colors hover:bg-ink-850">
+            <div key={s.n} className="group bg-surface p-7 transition-colors hover:bg-surface-2">
               <div className="font-mono text-xs text-accent">{s.n}</div>
               <div className="mt-8 text-xl font-medium tracking-tight">{s.title}</div>
-              <p className="mt-2 text-sm leading-relaxed text-zinc-400">{s.body}</p>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{s.body}</p>
             </div>
           ))}
         </div>
@@ -170,11 +170,11 @@ export default function Landing() {
           {FEATURES.map((f) => (
             <div
               key={f.title}
-              className="group relative overflow-hidden rounded-2xl border border-line bg-ink-900 p-6 transition-colors hover:border-line-strong"
+              className="group relative overflow-hidden rounded-2xl border border-line bg-surface p-6 transition-colors hover:border-line-strong"
             >
               <div className="pointer-events-none absolute -top-16 -right-16 h-40 w-40 rounded-full bg-accent/0 blur-3xl transition-all group-hover:bg-accent/10" />
               <div className="flex items-center justify-between">
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-white/[0.03] text-accent">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-tint/[0.03] text-accent">
                   <svg
                     width="18"
                     height="18"
@@ -192,7 +192,7 @@ export default function Landing() {
                 <StatusChip status={f.status} />
               </div>
               <div className="mt-6 text-[17px] font-medium tracking-tight">{f.title}</div>
-              <p className="mt-2 text-sm leading-relaxed text-zinc-400">{f.body}</p>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{f.body}</p>
             </div>
           ))}
         </div>
@@ -200,13 +200,13 @@ export default function Landing() {
 
       {/* CTA */}
       <section className="relative mx-auto max-w-6xl px-5 pt-12 pb-28">
-        <div className="relative overflow-hidden rounded-3xl border border-line-strong bg-ink-900 px-6 py-16 text-center">
+        <div className="relative overflow-hidden rounded-3xl border border-line-strong bg-surface px-6 py-16 text-center">
           <div className="bg-grid fade-edges pointer-events-none absolute inset-0 opacity-60" />
           <div className="pointer-events-none absolute -bottom-24 left-1/2 h-56 w-[34rem] -translate-x-1/2 rounded-full bg-accent/20 blur-[100px]" />
           <h2 className="text-gradient relative text-3xl font-semibold tracking-tight sm:text-5xl">
             Hear it before you read about it.
           </h2>
-          <p className="relative mx-auto mt-4 max-w-md text-zinc-400">
+          <p className="relative mx-auto mt-4 max-w-md text-muted">
             The editor runs in your browser on a mock scene: two voices, a siren, a room.
           </p>
           <div className="relative mt-8">
@@ -216,8 +216,8 @@ export default function Landing() {
       </section>
 
       <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-6 font-mono text-[11px] text-zinc-600">
-          <Logo className="text-zinc-500" />
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-6 font-mono text-[11px] text-faint">
+          <Logo className="text-subtle" />
           <span>Hackathon prototype</span>
         </div>
       </footer>

@@ -1,4 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, SavedStem, VisualMetadata } from '../api/backend'
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
@@ -17,9 +19,9 @@ import { CandidateComparison } from './CandidateComparison'
 import { GuidedByChip, ObjectsPanel } from './ObjectsPanel'
 import { PassesSelect } from './PassesSelect'
 
-const field = 'w-full rounded-lg border border-line bg-white/[0.04] px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500'
-const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40'
-const secondary = 'rounded-lg border border-line px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-40'
+const field = 'w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15'
+const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3] disabled:opacity-40'
+const secondary = 'rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-fg transition-colors hover:border-line-strong hover:bg-surface-2 disabled:opacity-40'
 interface Props {
   baseUrl: string
   onProjectState: (state:ProjectStemsState)=>void
@@ -35,6 +37,10 @@ interface Props {
   onSeek: (seconds: number) => void
   /** The detections the editor is showing, for the object list. */
   visual: VisualMetadata | null
+  /** Where the preview comparison card renders, over the timeline. */
+  previewSlot: HTMLElement | null
+  /** What the panel is busy with, for the timeline's working state; null when idle. */
+  onBusy?: (label: string | null) => void
 }
 
 export interface ProjectPanelHandle {
@@ -45,7 +51,7 @@ export interface ProjectPanelHandle {
 }
 
 /** Project credentials remain in component memory; the user may copy them for resuming. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, previewSlot, onBusy}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -89,6 +95,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [refining, setRefining] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  // A manual open/close lasts until the flow moves on (a new project, preview or apply).
+  const [manualStep, setManualStep] = useState<{key:string;id:StepId|'none'}|null>(null)
   const [error, setError] = useState('')
   const abort = useRef<AbortController | null>(null)
   const attachedVideo = useRef<File | null>(null)
@@ -101,6 +109,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const projectId=project?.project_id
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
   useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings})},[projectId,mockStems,candidateWarnings,onProjectState])
+  useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
   const run = async (fn: () => Promise<void>) => {
@@ -116,7 +125,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const track = async (cfg: BackendConfig, id: string) => {
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller
     const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {
-      signal: controller.signal, onUpdate: status => setMessage(`Finding sound: ${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''}`),
+      signal: controller.signal, onUpdate: status => setMessage(status.progress !== undefined ? `Separating the sound… ${status.progress}%` : 'Separating the sound…'),
     })
     if (result.state === 'failed') throw new Error(result.error || 'Processing failed')
     const job = await getJob(cfg, id)
@@ -124,7 +133,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     setJobId(id)
     const model = job.inference?.model
     setMockStems(model?.is_mock ?? null)
-    const summary = model?.is_mock ? 'Ready — test stems; no AI separation was performed.' : model?.is_mock === false ? 'Stems ready to edit.' : 'Stems ready; model identity unavailable.'
+    const summary = model?.is_mock ? 'Layers ready (demo model).' : model?.is_mock === false ? 'Layers ready to edit.' : 'Layers ready.'
     setMessage([summary, ...(job.inference?.warnings || [])].join(' '))
     return job.inference?.warnings || []
   }
@@ -144,7 +153,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}]}, 'Original audio')
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav')
     await loadVideo(cfg, info)
-    setMessage('Upload complete. Add a sound prompt and process.')
+    setMessage('Uploaded. Pick a sound to separate.')
   })
   const resume = () => run(async () => {
     if (!resumeId.trim() || !resumeToken.trim()) throw new Error('Enter both project ID and token.')
@@ -179,9 +188,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
         setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
-        setMessage(['Preview ready. Listen to the target and edited mix, then Apply preview.',...(job.inference?.warnings || [])].join(' '));return
+        setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
       }
-      setMessage(`Preparing preview: ${job.status}`);await new Promise(resolve=>setTimeout(resolve,1000))
+      setMessage(job.status === 'queued' ? 'Waiting for the separator…' : 'Separating the sound…');await new Promise(resolve=>setTimeout(resolve,1000))
     }
   }
   const process = (quality=false) => run(async () => {
@@ -239,10 +248,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         await uploadProject(cfg,created.project_id,video); attachedVideo.current=video
         current=await getProject(cfg,created.project_id); setProject(current); setFormat('mp4')
       }
-      if (!current || !currentToken) throw new Error('Upload a video in Project first to use AI commands.')
+      if (!current || !currentToken) throw new Error('Upload a video first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
       const hasStems=Boolean(currentJob)
-      const result=await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null})
+      // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
+      const local=separationCommand(text)
+      const result:AgentPlan=await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
       if(result.kind==='edit' && Array.isArray(result.actions) && result.actions.some(a=>a.type==='mute_range')) {
         if(result.actions.some(a=>a.type!=='mute_range'))throw new Error('Apply timed mute separately from other commands.')
         for(const action of result.actions as Array<{stemId:string;start:number;end:number}>) {
@@ -258,7 +269,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if (result.use_visual && !selectedVisual) throw new Error('The selected object is no longer available; choose it again.')
         setPrompt(result.description);setEditAction(result.edit_scope?.action || (result.remove?'mute':'keep'))
         await previewSound(cfg,current,result.description,result.edit_scope || {action:result.remove?'mute':'keep'},result.use_visual?selectedVisual:{},null,false,result.guidance?.anchors || [])
-        result.message='Preview ready. Listen and apply it in Project.'
+        result.message='Preview ready. Compare it above the timeline, then apply.'
       } else setMessage(result.message)
       return result
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); throw e }
@@ -286,7 +297,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if (!info.download_url) throw new Error('Export has no download URL')
         await downloadExport(config,info.download_url,`soundcanvas.${extension}`); setMessage('Export downloaded.'); return
       }
-      setMessage(`Export: ${info.status}`); await new Promise(resolve => setTimeout(resolve,1000))
+      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
   const exportFile = () => run(async () => {
@@ -377,41 +388,134 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (result.status === 'accepted' && result.export_id) await finishExport(result.export_id, 'mp4')
     if (result.status === 'applied' && jobId) await onLoadStems(new HttpStemSource(config,jobId),'Project stems')
   })
-  return <section className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-line bg-ink-900/80 p-3 text-zinc-200" aria-label="Project controls">
-    <div className="mb-2 flex items-center justify-between"><h2 className="text-sm font-semibold">Project</h2><span className="text-[10px] text-zinc-500">{project?.status || 'New'}</span></div>
-    <div className="space-y-2">
-      {/* First in the panel: it is short and scrolls, and detection status must be seen without scrolling. */}
-      {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
-      <label className="block text-xs">Media<input className={`${field} mt-1`} type="file" accept=".mp4,.mov,.wav,.mp3" onChange={e => setFile(e.target.files?.[0] || null)} /></label>
-      <button className={button} disabled={busy || !file} onClick={()=>{if(file) void uploadMedia(file)}}>Create & upload</button>
-      {project && <details className="text-xs"><summary className="cursor-pointer">Project credentials</summary><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e => e.currentTarget.select()} /></label><p className="text-zinc-500">Copy these to resume this project later.</p></details>}
-      <details className="text-xs"><summary className="cursor-pointer">Resume a project</summary><div className="mt-2 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={resume}>Resume</button></div></details>
-      {project && <>
-        <label className="block text-xs">Sound description<input className={`${field} mt-1`} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="dog barking" /></label>
-        <details className="text-xs"><summary className="cursor-pointer">Advanced: import detections</summary><p className="my-1 text-zinc-400">Import detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</details>
-        <SoundGuidance duration={project.metadata?.duration || 1} anchors={anchors} onChange={setAnchors}/>
-        <label className="block text-xs">Edit after separation<select aria-label="Edit after separation" className={field} value={editAction} onChange={e=>setEditAction(e.target.value as EditScope['action'])}><option value="keep">Keep isolated layer</option><option value="mute">Mute target</option><option value="lower">Lower target 50%</option></select></label>
-        <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
-        {editAction==='mute' && <div className="text-xs"><label><input type="checkbox" checked={timedEdit} onChange={e=>setTimedEdit(e.target.checked)}/>Mute only an edit interval</label>{timedEdit && <div className="flex gap-1"><label>Edit start<input aria-label="Edit start" className={field} type="number" min={0} value={editStart} onChange={e=>setEditStart(Number(e.target.value))}/></label><label>Edit end<input aria-label="Edit end" className={field} type="number" min={0} value={editEnd} onChange={e=>setEditEnd(Number(e.target.value))}/></label></div>}</div>}
-        {selection !== null && <GuidedByChip selection={selection as {label?:unknown;track_id?:unknown}} start={Number(rangeStart)} end={Number(rangeEnd)} onClear={()=>{setSelection(null);onClearSelection();setSelectionName('')}}/>}
-        <div className="flex gap-1"><button className={button} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Preview</button><button className={secondary} disabled={busy || !prompt.trim() || !capabilities?.quality} onClick={()=>void process(true)}>Quality retry</button></div>
-        {!capabilities?.quality && <p className="text-xs text-zinc-400">{capabilities?.reason || 'Checking quality retry availability…'}</p>}
-        {project.metadata?.audio_quality?.findings.map(f=><p key={f} className="text-xs text-amber-300">{f}</p>)}
-        {candidateId && <><CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl}/><button className={button} disabled={busy} onClick={useRetry}>Apply preview</button></>}
-        {selectionName && (candidateId || error) && <button className={secondary} disabled={busy} onClick={()=>{setSelection(null);setSelectionName('');onClearSelection();setCandidateId('');setMessage('Mark where you hear the sound with I hear it here, then Preview to retry with text and time.')}}>Retry with text + time</button>}
-        {undoId && <button className={secondary} disabled={busy} onClick={undoPreview}>Undo applied preview</button>}
-        <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={secondary} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>
-        {jobId && <details className="text-xs"><summary className="cursor-pointer">Stem settings</summary><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load stem settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save stem settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>Extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-zinc-400">{refineBlocked}</p>}</div>}</details>}
-        {jobId && <details className="text-xs"><summary className="cursor-pointer">Try another separation</summary>
-          <p className="my-1 text-zinc-400">Replace a target in a two-layer project. For multitrack projects, Preview above splits the current residual; replacing an older target requires an earlier source snapshot.</p>
-          <button className={secondary} disabled={busy} onClick={prepareRetry}>Choose sound</button>
-          {retryStems.length>0 && <div className="space-y-2"><label>Retry sound description<input className={field} value={retryPrompt} onChange={e=>setRetryPrompt(e.target.value)}/></label><PassesSelect className={field} value={clampPasses(retryPasses,choices)} choices={choices} onChange={setRetryPasses} disabled={busy}/><button className={secondary} disabled={busy} onClick={()=>void retry()}>Preview replacement</button><button className={secondary} disabled={busy || !capabilities?.quality} onClick={()=>void retry(true)}>Quality replacement</button></div>}
-        </details>}
-        <details className="text-xs"><summary className="cursor-pointer">Remote command test</summary><p className="my-1 text-zinc-500">Local webhook; messaging delivery is not connected.</p><div className="flex gap-1"><input className={field} value={command} onChange={e=>setCommand(e.target.value)} placeholder="Mute the dog"/><button className={secondary} disabled={busy || !command.trim()} onClick={sendCommand}>Send</button></div><button className={`${secondary} mt-1`} disabled={busy} onClick={()=>void run(async()=>{setMessages(await getMessages(config,project.project_id));setMessage('Messages updated.')})}>Refresh messages</button>{messages.map(m=><p key={m.id} className="mt-1 text-zinc-400">{m.text}</p>)}</details>
-      </>}
-      {busy && <p role="status" className="text-xs text-accent">{message || 'Working…'}</p>}
-      {!busy && message && <p role="status" className="text-xs text-accent">{message}</p>}
-      {error && <p role="alert" className="break-words text-xs text-red-400">{error}</p>}
+  const hasProject = Boolean(project)
+  const ready = Boolean(project?.metadata)
+  const durationSeconds = project?.metadata?.duration
+  // Where the user is in Upload, Pick a sound, Preview and apply, Export.
+  const current: StepId = !ready ? 'upload' : candidateId ? 'preview' : jobId ? 'export' : 'sound'
+  const flowKey = `${project?.project_id ?? ''}|${candidateId}|${jobId}`
+  const openStep = manualStep?.key === flowKey ? manualStep.id : null
+  const setOpenStep = (next: StepId | 'none' | ((prev: StepId | 'none' | null) => StepId | 'none')) => setManualStep({key:flowKey,id:typeof next === 'function' ? next(openStep) : next})
+  const open = (id: StepId) => openStep === id || (openStep === null && current === id)
+  const toggle = (id: StepId) => setOpenStep(prev => (prev === id || (prev === null && current === id)) ? 'none' : id)
+  const status = (id: StepId): StepStatus => {
+    const order: StepId[] = ['upload','sound','preview','export']
+    if (id === 'upload' && ready) return 'done'
+    if (id === 'sound' && (candidateId || jobId)) return 'done'
+    if (id === 'preview' && jobId && !candidateId) return 'done'
+    return order.indexOf(id) <= order.indexOf(current) ? 'active' : 'todo'
+  }
+  const fileName = file?.name
+  const comparison = candidateId ? (
+    <div className="rise-in shadow-card w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-line bg-surface p-4" aria-label="Preview ready">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-accent">Preview ready</p>
+          <p className="mt-0.5 text-sm font-semibold text-fg">{prompt.trim() || 'Separated sound'}</p>
+        </div>
+        <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); setMessage('Preview discarded.') }}>Discard</button>
+      </div>
+      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl}/>
+      <div className="mt-3 flex items-center gap-2">
+        <button className={`${button} flex-1 py-2 text-sm`} disabled={busy} onClick={useRetry}>Apply to timeline</button>
+        <button className={secondary} disabled={busy || !capabilities?.quality} title={capabilities?.quality ? 'Run a slower, higher-quality pass' : (capabilities?.reason || '')} onClick={() => void process(true)}>Higher quality</button>
+      </div>
+      {selectionName && <button className="mt-2 text-xs text-accent hover:underline" disabled={busy} onClick={()=>{setSelection(null);setSelectionName('');onClearSelection();setCandidateId('');setOpenStep('sound');setMessage('Mark where you hear the sound, then preview again using text and time.')}}>Not right? Retry with text and time instead of the object</button>}
     </div>
+  ) : null
+
+  return <section className="shadow-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface text-fg" aria-label="Project controls">
+    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <ol className="space-y-1">
+        <Step n={1} title="Upload" status={status('upload')} open={open('upload')} onToggle={() => toggle('upload')}
+          summary={ready ? `${fileName || 'Video'}${durationSeconds ? ` · ${durationSeconds.toFixed(1)}s` : ''}` : undefined}>
+          <label className={`flex cursor-pointer flex-col items-center gap-1 rounded-xl border border-dashed px-3 py-3 text-center transition-colors ${file ? 'border-accent/50 bg-accent-soft' : 'border-line-strong hover:border-accent/50 hover:bg-accent-soft/60'}`}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-accent" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <span className="text-xs font-medium text-fg">{file ? file.name : 'Choose a video or audio file'}</span>
+            <span className="text-[11px] text-subtle">MP4, MOV, WAV or MP3. You can also drop it anywhere.</span>
+            <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3" aria-label="Media" onChange={e => { const f=e.target.files?.[0] || null; setFile(f); if (f) void uploadMedia(f) }} />
+          </label>
+        </Step>
+
+        <Step n={2} title="Pick a sound" status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
+          summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
+          <div className="space-y-3">
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            <div className="rounded-xl bg-surface-2 p-3 text-xs">
+              {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
+                : <p className="text-muted">Click an object in the video, or type what you want to hear in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}
+              {selection !== null && <div className="mt-2"><GuidedByChip selection={selection as {label?:unknown;track_id?:unknown}} start={Number(rangeStart)} end={Number(rangeEnd)} onClear={()=>{setSelection(null);onClearSelection();setSelectionName('')}}/></div>}
+            </div>
+            {project && <details className="group text-xs">
+              <summary className="cursor-pointer list-none text-muted hover:text-fg"><span className="inline-block transition-transform group-open:rotate-90">›</span> Fine-tune</summary>
+              <div className="mt-2 space-y-2">
+                <SoundGuidance duration={project.metadata?.duration || 1} anchors={anchors} onChange={setAnchors}/>
+                <label className="block">After separating<select aria-label="Edit after separation" className={`${field} mt-1`} value={editAction} onChange={e=>setEditAction(e.target.value as EditScope['action'])}><option value="keep">Keep it as its own layer</option><option value="mute">Mute it</option><option value="lower">Lower it by half</option></select></label>
+                {editAction==='mute' && <div><label className="flex items-center gap-1.5"><input type="checkbox" className="accent-accent" checked={timedEdit} onChange={e=>setTimedEdit(e.target.checked)}/>Only mute between</label>{timedEdit && <div className="mt-1 flex gap-1"><label>Start<input aria-label="Edit start" className={field} type="number" min={0} value={editStart} onChange={e=>setEditStart(Number(e.target.value))}/></label><label>End<input aria-label="Edit end" className={field} type="number" min={0} value={editEnd} onChange={e=>setEditEnd(Number(e.target.value))}/></label></div>}</div>}
+                <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
+              </div>
+            </details>}
+            {project && <button className={`${button} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Preview separation</button>}
+            {project?.metadata?.audio_quality?.findings.map(f=><p key={f} className="text-xs text-amber-700">{f}</p>)}
+          </div>
+        </Step>
+
+        <Step n={3} title="Preview and apply" status={status('preview')} open={open('preview') && (Boolean(candidateId) || Boolean(undoId))} onToggle={() => toggle('preview')}
+          summary={status('preview') === 'done' ? 'Applied to the timeline' : undefined}>
+          <div className="space-y-2 text-xs">
+            {candidateId ? <p className="text-muted">Compare the original, the edited mix and the isolated sound above the timeline, then apply.</p> : null}
+            {undoId && <button className={secondary} disabled={busy} onClick={undoPreview}>Undo the last apply</button>}
+          </div>
+        </Step>
+
+        <Step n={4} title="Export" status={status('export')} open={open('export') && Boolean(jobId)} onToggle={() => jobId && toggle('export')}>
+          {project && <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>}
+        </Step>
+      </ol>
+    </div>
+
+    {(busy || message || error) && <div className="border-t border-line px-3 py-2 text-xs">
+      {busy && <p role="status" className="flex items-center gap-2 text-accent"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent"/>{message || 'Working…'}</p>}
+      {!busy && message && !error && <p role="status" className="text-muted">{message}</p>}
+      {error && <p role="alert" className="break-words text-red-600">{error}</p>}
+    </div>}
+
+    <details className="border-t border-line text-xs">
+      <summary className="cursor-pointer list-none px-3 py-2 text-subtle hover:text-fg">Advanced</summary>
+      <div className="max-h-64 space-y-3 overflow-y-auto px-3 pb-3">
+        {project && <div><p className="font-medium text-fg">Project credentials</p><p className="mt-1 break-all text-muted">ID: {project.project_id}</p><label className="mt-1 block">Token<input className={field} readOnly value={token} type="text" onFocus={e => e.currentTarget.select()} /></label><p className="text-subtle">Copy these to resume this project later.</p></div>}
+        <div><p className="font-medium text-fg">Resume a project</p><div className="mt-1 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={resume}>Resume</button></div></div>
+        {project && <div><p className="font-medium text-fg">Import detections</p><p className="my-1 text-muted">Detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</div>}
+        {jobId && <div><p className="font-medium text-fg">Layer settings</p><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load layer settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save layer settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>Extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-muted">{refineBlocked}</p>}</div>}</div>}
+        {jobId && <div><p className="font-medium text-fg">Try another separation</p>
+          <p className="my-1 text-muted">Replace a target in a two-layer project. For multitrack projects, a new preview splits the current residual.</p>
+          <button className={secondary} disabled={busy} onClick={prepareRetry}>Choose sound</button>
+          {retryStems.length>0 && <div className="mt-1 space-y-2"><label>Sound to find instead<input className={field} value={retryPrompt} onChange={e=>setRetryPrompt(e.target.value)}/></label><PassesSelect className={field} value={clampPasses(retryPasses,choices)} choices={choices} onChange={setRetryPasses} disabled={busy}/><div className="flex gap-1"><button className={secondary} disabled={busy} onClick={()=>void retry()}>Preview replacement</button><button className={secondary} disabled={busy || !capabilities?.quality} onClick={()=>void retry(true)}>Higher quality</button></div></div>}
+        </div>}
+        {project && <div><p className="font-medium text-fg">Remote command test</p><div className="mt-1 flex gap-1"><input className={field} value={command} onChange={e=>setCommand(e.target.value)} placeholder="Mute the dog"/><button className={secondary} disabled={busy || !command.trim()} onClick={sendCommand}>Send</button></div><button className={`${secondary} mt-1`} disabled={busy} onClick={()=>void run(async()=>{setMessages(await getMessages(config,project.project_id));setMessage('Messages updated.')})}>Refresh messages</button>{messages.map(m=><p key={m.id} className="mt-1 text-muted">{m.text}</p>)}</div>}
+      </div>
+    </details>
+    {previewSlot && comparison && createPortal(comparison, previewSlot)}
   </section>
 })
+
+type StepId = 'upload' | 'sound' | 'preview' | 'export'
+type StepStatus = 'done' | 'active' | 'todo'
+
+function Step({ n, title, status, open, onToggle, summary, children }: { n: number; title: string; status: StepStatus; open: boolean; onToggle: () => void; summary?: string; children: ReactNode }) {
+  const item = useRef<HTMLLIElement>(null)
+  // Keep the step the flow just moved to in view: the panel is short and scrolls.
+  useEffect(() => { if (open) item.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }) }, [open])
+  return <li ref={item} className={`rounded-xl transition-colors ${open ? 'bg-surface-2/70' : ''}`}>
+    <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left hover:bg-surface-2">
+      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${status === 'done' ? 'bg-accent text-white' : status === 'active' ? 'bg-accent-soft text-accent ring-1 ring-accent/40' : 'bg-surface-2 text-faint'}`}>
+        {status === 'done' ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/></svg> : n}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-[13px] font-medium ${status === 'todo' ? 'text-faint' : 'text-fg'}`}>{title}</span>
+        {summary && !open && <span className="block truncate text-[11px] text-subtle">{summary}</span>}
+      </span>
+    </button>
+    {open && <div className="rise-in px-2 pb-3 pl-10">{children}</div>}
+  </li>
+}

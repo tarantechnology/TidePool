@@ -1,9 +1,11 @@
 #!/bin/bash
-# One-shot setup of the SoundCanvas audio service on a RunPod (or any Ubuntu + NVIDIA) host.
+# One-shot setup of the SoundCanvas audio service on a RunPod pod or any Ubuntu/Debian VM with an NVIDIA GPU (H100 etc).
 # Run ON THE POD as root:  bash runpod_setup.sh [branch]      (HF_TOKEN must be in the environment)
 # Afterwards:  bash /workspace/soundcanvas/scripts/runpod_setup.sh start|stop|status|bench
 set -euo pipefail
-WS=/workspace; REPO=$WS/soundcanvas; VENV=$WS/venv; PY=$VENV/bin/python
+# Work directory: /workspace on RunPod, else $HOME/soundcanvas-work; override with WS=... .
+WS=${WS:-$([ -d /workspace ] && echo /workspace || echo "$HOME/soundcanvas-work")}; mkdir -p "$WS"
+REPO=$WS/soundcanvas; VENV=$WS/venv; PY=$VENV/bin/python
 BRANCH=${1:-main}; LOG=$WS/audio.log
 cmd=${1:-setup}
 model_for_gpu() {
@@ -12,7 +14,7 @@ model_for_gpu() {
 }
 chunk_for_gpu() {
   local mb; mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
-  if [ "$mb" -ge 70000 ]; then echo 30; elif [ "$mb" -ge 40000 ]; then echo 20; else echo 10; fi
+  if [ "$mb" -ge 70000 ]; then echo 30; elif [ "$mb" -ge 40000 ]; then echo 20; else echo 10; fi   # H100 80 GB -> 30 s windows
 }
 case "$cmd" in
   start)

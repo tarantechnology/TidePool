@@ -35,9 +35,10 @@ done and measured, then merge the PR.
   single-window clips but hurts chunked ones (hence `auto`); 30 dB gate never triggers.
 
 ## Remaining steps
-1. On the GPU host: `HF_TOKEN=... bash scripts/runpod_setup.sh audio/quality-sweep` (installs,
-   prefetches large on ≥40 GB GPUs). Confirm `python -m pytest -q` in `audio-service/` with
-   the CUDA venv (`/workspace/venv`).
+1. On the H100 VM (any Ubuntu/Debian with NVIDIA drivers): `HF_TOKEN=... bash scripts/runpod_setup.sh audio/quality-sweep`
+   (installs, prefetches sam-audio-large on ≥40 GB GPUs). Work dir is `/workspace` if it
+   exists, else `$HOME/soundcanvas-work` (override with `WS=`); the CUDA venv is `$WS/venv`.
+   Confirm `python -m pytest -q` in `audio-service/` with that venv.
 2. Sweeps with `bash scripts/runpod_setup.sh bench --sweep NAME --out /workspace/bench/NAME`
    (use `--speech-mode synthetic` on Linux; macOS `say` is unavailable):
    `gate` (interrupted on the Mac after 2 of 4 configs), `quality-v1` (final head-to-head),

@@ -51,6 +51,25 @@ case "$cmd" in
     echo "repo at $(git -C $REPO rev-parse --short HEAD) ($(git -C $REPO branch --show-current))"
     [ -x $PY ] || uv venv --python 3.12 $VENV
     uv pip install --python $PY -e "$REPO/audio-service[sam,dev]"
+    # perception_models imports symbols that newer xformers wheels no longer export (AttentionBias);
+    # the model uses sdpa attention, so guard the imports exactly as the macOS build does.
+    SP=$($PY -c "import sysconfig;print(sysconfig.get_paths()['purelib'])")
+    $PY - "$SP" <<'PYEOF'
+import re, sys
+from pathlib import Path
+sp = Path(sys.argv[1])
+for name in ["probe.py", "profiling.py", "distributed.py", "transformer.py"]:
+    p = sp / "core" / name
+    if not p.exists(): continue
+    out, changed = [], False
+    for line in p.read_text().splitlines(keepends=True):
+        m = re.match(r"^(from xformers[^\n]*|import xformers[^\n]*)\n$", line)
+        if m:
+            out.append("try:\n    " + m.group(1) + "\nexcept ImportError:  # guarded: model uses sdpa attention\n    AttentionBias = fmha = None\n"); changed = True
+        else:
+            out.append(line)
+    if changed: p.write_text("".join(out)); print("patched", name)
+PYEOF
     $PY -c "import torch, sam_audio; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
     mkdir -p ~/.cache/huggingface && printf '%s' "$HF_TOKEN" > ~/.cache/huggingface/token && chmod 600 ~/.cache/huggingface/token
     MODEL=$(model_for_gpu); echo "prefetching $MODEL"

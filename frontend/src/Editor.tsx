@@ -17,6 +17,7 @@ import { ProjectPanel } from './components/ProjectPanel'
 import type { ProjectPanelHandle } from './components/ProjectPanel'
 import { Logo } from './components/Logo'
 import { Splitter } from './components/Splitter'
+import { DropLoader } from './components/DropLoader'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
 import { Transport } from './components/Transport'
@@ -409,16 +410,13 @@ export default function Editor() {
                     <p className="max-w-sm text-xs text-muted">Pick a sound in the video or describe it below. Each separated sound becomes its own layer you can mute, solo and automate.</p>
                   </>
                 ) : (
-                  <p className="text-xs text-subtle">Loading layers…</p>
+                  <DropLoader size={56} label="Loading layers…" />
                 )}
               </div>
             )}
             {working && (
-              <div className="pointer-events-none absolute inset-0 z-10" aria-hidden="true">
-                <div className="shimmer absolute inset-0" />
-                <div className="absolute top-2 right-3 flex items-center gap-2 rounded-full bg-surface/90 px-3 py-1 text-[11px] text-accent shadow-sm">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />{working}
-                </div>
+              <div className="rise-in pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-surface/60 backdrop-blur-[2px]">
+                <DropLoader size={96} label={working} />
               </div>
             )}
             <div ref={setPreviewSlot} className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center [&>*]:pointer-events-auto" />

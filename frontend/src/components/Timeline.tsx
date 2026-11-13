@@ -8,6 +8,7 @@ import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../k
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
+import { FEATURES } from '../features'
 
 const ACCENT = '#5b9be3'
 const COLS = 'grid grid-cols-[15rem_minmax(0,1fr)]'
@@ -149,7 +150,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
         {/* Ruler */}
         <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
           <div className="flex items-center border-r border-line px-4 font-mono text-[10px] uppercase tracking-wider text-subtle">
-            Layers
+            {FEATURES.timeline}
           </div>
           <div className="relative">
             {minors.map((t) => (

@@ -18,6 +18,9 @@ import { SoundGuidance } from './SoundGuidance'
 import { CandidateComparison } from './CandidateComparison'
 import { GuidedByChip, ObjectsPanel } from './ObjectsPanel'
 import { PassesSelect } from './PassesSelect'
+import { DropLoader } from './DropLoader'
+import { FEATURES } from '../features'
+import { FeatureTag } from './FeatureTag'
 
 const field = 'w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15'
 const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3] disabled:opacity-40'
@@ -410,7 +413,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     <div className="rise-in shadow-card w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-line bg-surface p-4" aria-label="Preview ready">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-accent">Preview ready</p>
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-accent"><FeatureTag name={FEATURES.compare}/>Preview ready</p>
           <p className="mt-0.5 text-sm font-semibold text-fg">{prompt.trim() || 'Separated sound'}</p>
         </div>
         <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); setMessage('Preview discarded.') }}>Discard</button>
@@ -418,7 +421,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl}/>
       <div className="mt-3 flex items-center gap-2">
         <button className={`${button} flex-1 py-2 text-sm`} disabled={busy} onClick={useRetry}>Apply to timeline</button>
-        <button className={secondary} disabled={busy || !capabilities?.quality} title={capabilities?.quality ? 'Run a slower, higher-quality pass' : (capabilities?.reason || '')} onClick={() => void process(true)}>Higher quality</button>
+        <button className={secondary} disabled={busy || !capabilities?.quality} title={capabilities?.quality ? 'Deep dive: a slower, higher-quality pass' : (capabilities?.reason || '')} onClick={() => void process(true)}>{FEATURES.quality}</button>
       </div>
       {selectionName && <button className="mt-2 text-xs text-accent hover:underline" disabled={busy} onClick={()=>{setSelection(null);setSelectionName('');onClearSelection();setCandidateId('');setOpenStep('sound');setMessage('Mark where you hear the sound, then preview again using text and time.')}}>Not right? Retry with text and time instead of the object</button>}
     </div>
@@ -437,13 +440,13 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           </label>
         </Step>
 
-        <Step n={2} title="Pick a sound" status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
+        <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
           summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
           <div className="space-y-3">
             {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
-                : <p className="text-muted">Click an object in the video, or type what you want to hear in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}
+                : <p className="text-muted">Click an object in the video ({FEATURES.visual}), or tell {FEATURES.command} in the bar below, like <span className="text-fg">“isolate the dog barking”</span>. {FEATURES.separate} pulls it into its own layer.</p>}
               {selection !== null && <div className="mt-2"><GuidedByChip selection={selection as {label?:unknown;track_id?:unknown}} start={Number(rangeStart)} end={Number(rangeEnd)} onClear={()=>{setSelection(null);onClearSelection();setSelectionName('')}}/></div>}
             </div>
             {project && <details className="group text-xs">
@@ -455,12 +458,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
                 <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
               </div>
             </details>}
-            {project && <button className={`${button} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Preview separation</button>}
+            {project && <button className={`${button} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
             {project?.metadata?.audio_quality?.findings.map(f=><p key={f} className="text-xs text-amber-700">{f}</p>)}
           </div>
         </Step>
 
-        <Step n={3} title="Preview and apply" status={status('preview')} open={open('preview') && (Boolean(candidateId) || Boolean(undoId))} onToggle={() => toggle('preview')}
+        <Step n={3} title="Preview and apply" tag={FEATURES.compare} status={status('preview')} open={open('preview') && (Boolean(candidateId) || Boolean(undoId))} onToggle={() => toggle('preview')}
           summary={status('preview') === 'done' ? 'Applied to the timeline' : undefined}>
           <div className="space-y-2 text-xs">
             {candidateId ? <p className="text-muted">Compare the original, the edited mix and the isolated sound above the timeline, then apply.</p> : null}
@@ -468,14 +471,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           </div>
         </Step>
 
-        <Step n={4} title="Export" status={status('export')} open={open('export') && Boolean(jobId)} onToggle={() => jobId && toggle('export')}>
+        <Step n={4} title="Export" tag={FEATURES.export} status={status('export')} open={open('export') && Boolean(jobId)} onToggle={() => jobId && toggle('export')}>
           {project && <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>}
         </Step>
       </ol>
     </div>
 
     {(busy || message || error) && <div className="border-t border-line px-3 py-2 text-xs">
-      {busy && <p role="status" className="flex items-center gap-2 text-accent"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent"/>{message || 'Working…'}</p>}
+      {busy && <p className="flex items-center gap-2 text-accent"><DropLoader size={22}/>{message || 'Working…'}</p>}
       {!busy && message && !error && <p role="status" className="text-muted">{message}</p>}
       {error && <p role="alert" className="break-words text-red-600">{error}</p>}
     </div>}
@@ -486,7 +489,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         {project && <div><p className="font-medium text-fg">Project credentials</p><p className="mt-1 break-all text-muted">ID: {project.project_id}</p><label className="mt-1 block">Token<input className={field} readOnly value={token} type="text" onFocus={e => e.currentTarget.select()} /></label><p className="text-subtle">Copy these to resume this project later.</p></div>}
         <div><p className="font-medium text-fg">Resume a project</p><div className="mt-1 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={resume}>Resume</button></div></div>
         {project && <div><p className="font-medium text-fg">Import detections</p><p className="my-1 text-muted">Detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</div>}
-        {jobId && <div><p className="font-medium text-fg">Layer settings</p><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load layer settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save layer settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>Extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-muted">{refineBlocked}</p>}</div>}</div>}
+        {jobId && <div><p className="font-medium text-fg">Layer settings</p><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load layer settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save layer settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>{FEATURES.refine}: extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-muted">{refineBlocked}</p>}</div>}</div>}
         {jobId && <div><p className="font-medium text-fg">Try another separation</p>
           <p className="my-1 text-muted">Replace a target in a two-layer project. For multitrack projects, a new preview splits the current residual.</p>
           <button className={secondary} disabled={busy} onClick={prepareRetry}>Choose sound</button>
@@ -502,7 +505,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
 type StepId = 'upload' | 'sound' | 'preview' | 'export'
 type StepStatus = 'done' | 'active' | 'todo'
 
-function Step({ n, title, status, open, onToggle, summary, children }: { n: number; title: string; status: StepStatus; open: boolean; onToggle: () => void; summary?: string; children: ReactNode }) {
+function Step({ n, title, tag, status, open, onToggle, summary, children }: { n: number; title: string; tag?: string; status: StepStatus; open: boolean; onToggle: () => void; summary?: string; children: ReactNode }) {
   const item = useRef<HTMLLIElement>(null)
   // Keep the step the flow just moved to in view: the panel is short and scrolls.
   useEffect(() => { if (open) item.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }) }, [open])
@@ -512,7 +515,7 @@ function Step({ n, title, status, open, onToggle, summary, children }: { n: numb
         {status === 'done' ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/></svg> : n}
       </span>
       <span className="min-w-0 flex-1">
-        <span className={`block text-[13px] font-medium ${status === 'todo' ? 'text-faint' : 'text-fg'}`}>{title}</span>
+        <span className={`flex items-center gap-1.5 text-[13px] font-medium ${status === 'todo' ? 'text-faint' : 'text-fg'}`}>{title}{tag && <FeatureTag name={tag} className={status === 'todo' ? 'opacity-50' : ''} />}</span>
         {summary && !open && <span className="block truncate text-[11px] text-subtle">{summary}</span>}
       </span>
     </button>

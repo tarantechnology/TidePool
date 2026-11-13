@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { FEATURES } from '../features'
+import { FeatureTag } from './FeatureTag'
 
 interface Entry {
   prompt: string
@@ -63,18 +65,13 @@ export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
           title={reason}
           className="flex items-center gap-3 rounded-2xl border border-line-strong bg-surface py-2 pr-2 pl-4 shadow-[0_12px_40px_-16px_rgb(29_90_158/0.35)] transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_4px_rgb(34_112_200/0.12),0_12px_40px_-16px_rgb(29_90_158/0.45)]"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0 text-accent" aria-hidden="true">
-            <path
-              d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"
-              fill="currentColor"
-            />
-          </svg>
+          <FeatureTag name={FEATURES.command} className="shrink-0 py-0.5 text-[11px]" />
           <input
             ref={input}
             value={text}
             onChange={(e) => setText(e.target.value)}
             disabled={disabled || pending}
-            placeholder={reason || 'Describe a sound to find or an edit to make, e.g. isolate the dog barking'}
+            placeholder={reason || 'Tell Current what to change, e.g. isolate the dog barking'}
             className="h-9 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
           />
           <button

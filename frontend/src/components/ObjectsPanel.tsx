@@ -6,6 +6,8 @@ import { IDLE, detectorStatus, followVisualJob, guidedByText, objectTracks, runF
 import type { DetectionRun, StatusTone } from '../objects'
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
+import { FEATURES } from '../features'
+import { FeatureTag } from './FeatureTag'
 
 const tones: Record<StatusTone, string> = {
   muted: 'border-line text-muted',
@@ -119,7 +121,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
   return (
     <section ref={section} aria-label="Objects" className="space-y-2 text-xs">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium text-fg">Objects in the video</h3>
+        <h3 className="flex items-center gap-1.5 font-medium text-fg">Objects in the video <FeatureTag name={FEATURES.visual} /></h3>
       </div>
       {unavailable ? (
         <p role="status" className="leading-snug text-subtle" title={status.text}>Object detection isn't set up on this server, so describe the sound in the bar below instead.</p>

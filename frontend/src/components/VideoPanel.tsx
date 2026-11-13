@@ -7,6 +7,8 @@ import type { VisualSelection } from '../visual'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { MaskOverlay } from './MaskOverlay'
 import { useVideoSync } from '../hooks/useVideoSync'
+import { FEATURES } from '../features'
+import { FeatureTag } from './FeatureTag'
 
 function Corner({ cls }: { cls: string }) {
   return <span className={`absolute h-3 w-3 border-tint/25 ${cls}`} />
@@ -130,9 +132,9 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
         {visual && <label className="absolute top-2 left-2 z-10 flex cursor-pointer items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-1 text-[11px] text-fg shadow-sm backdrop-blur">
           <input type="checkbox" className="accent-accent" checked={showObjects} onChange={e => { setShowObjects(e.target.checked); writeShowObjects(e.target.checked) }} />Show objects
         </label>}
-        {visual && !selection && showObjects && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur">Click an object to hear just that sound</div>}
+        {visual && !selection && showObjects && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur">{FEATURES.visual}: click an object to hear just that sound</div>}
         {selection && <div className="rise-in shadow-card absolute z-20 w-64 space-y-2 rounded-xl border border-line bg-surface p-3 text-xs text-fg" style={popoverStyle} aria-label="Selected object actions">
-          <div className="flex items-center justify-between gap-2"><p className="font-semibold">{selection.label}</p><span className="text-[10px] text-subtle">{selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s</span></div>
+          <div className="flex items-center justify-between gap-2"><p className="flex items-center gap-1.5 font-semibold">{selection.label}<FeatureTag name={FEATURES.visual} /></p><span className="text-[10px] text-subtle">{selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s</span></div>
           <label className="block text-muted">What does it sound like?<input aria-label="Selected object sound" className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15" value={sound} onChange={e=>setSound(e.target.value)} placeholder="e.g. dog barking" /></label>
           <div className="grid grid-cols-3 gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !sound.trim()} className={`rounded-lg px-2 py-1.5 font-medium capitalize transition-colors disabled:opacity-40 ${action==='isolate' ? 'bg-accent text-white hover:bg-[#1b62b3]' : 'border border-line text-fg hover:bg-surface-2'}`} onClick={()=>{setActionPending(true);void onVisualAction(selection,sound,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action}</button>)}</div>
           <p className="text-[10px] text-subtle">Seeing an object does not guarantee it makes a sound.</p>

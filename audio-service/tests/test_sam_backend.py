@@ -792,3 +792,21 @@ def test_judge_only_defers_text_ranker_until_after_main_model_moves():
                               load_visual_ranker=False, judge_only=True)
     kwargs = backend._model_kwargs()
     assert kwargs['text_ranker'] is None and kwargs['visual_ranker'] is None
+
+
+def test_visual_microbatch_retains_encoder_and_resolution(fake_sam, monkeypatch):
+    from sam_audio_service.backends.sam_audio import SamAudioBackend
+    original = FakeSAMAudio.__init__
+    def init(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        self.vision_encoder.batch_size = 300
+    monkeypatch.setattr(FakeSAMAudio, '__init__', init)
+    backend = SamAudioBackend(model_id='m', device='cpu', visual_batch_size=8)
+    try:
+        backend.load()
+        assert backend._model.vision_encoder.batch_size == 8
+        assert backend._model.vision_encoder.image_size == 336
+        assert backend.info()['visual_batch_size'] == 8
+        assert backend._model.moved == [{'device': torch.device('cpu'), 'dtype': torch.float32}]
+    finally:
+        backend.unload()

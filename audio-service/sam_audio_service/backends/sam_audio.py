@@ -156,6 +156,7 @@ class SamAudioBackend(Backend):
         ode_method: str = "midpoint",
         ode_step_size: float = 2 / 32,
         frame_size: int = 336,
+        visual_batch_size: int | None = None,
         ffmpeg: str = "ffmpeg",
         ffprobe: str = "ffprobe",
         ffmpeg_timeout: int = 600,
@@ -171,6 +172,9 @@ class SamAudioBackend(Backend):
         self.load_visual_ranker = load_visual_ranker
         self.judge_only = judge_only
         self.frame_size = frame_size
+        if visual_batch_size is not None and (type(visual_batch_size) is not int or visual_batch_size <= 0):
+            raise ValueError('visual_batch_size must be a positive integer')
+        self.visual_batch_size = visual_batch_size
         self.ode_opt: dict[str, Any] = {"method": ode_method, "options": {"step_size": ode_step_size}}
         self.ffmpeg, self.ffprobe, self.ffmpeg_timeout = ffmpeg, ffprobe, ffmpeg_timeout
         # Span prediction needs the span predictor; shadow the class flag per instance.
@@ -225,9 +229,14 @@ class SamAudioBackend(Backend):
                 ) from exc
             raise InferenceFailure(f"loading {self.model_id} failed: {type(exc).__name__}: {exc}") from exc
 
-        model = model.eval().to(device=device)
-        if dtype is not torch.float32:
-            model = model.to(dtype=dtype)
+        # Transfer directly in the requested dtype, avoiding a temporary full-fp32
+        # GPU copy when bfloat16 is explicitly requested on a 24-GB device.
+        model = model.eval().to(device=device, dtype=dtype)
+        if self.visual_batch_size is not None:
+            vision = getattr(model, 'vision_encoder', None)
+            if vision is None or not hasattr(vision, 'batch_size'):
+                raise InferenceFailure('Loaded model lacks the official visual encoder batch_size control')
+            vision.batch_size = self.visual_batch_size
         if self.load_rankers and self.judge_only:
             # Loading both checkpoints before moving SAM to the GPU can exhaust a
             # 50 GB host even when the models fit in VRAM. Load the judge afterwards.
@@ -367,6 +376,7 @@ class SamAudioBackend(Backend):
             "loaded": self.loaded,
             "mask_mode": self.mask_mode,
             "frame_size": self.frame_size,
+            "visual_batch_size": self.visual_batch_size,
             "ode": {"method": self.ode_opt["method"], "step_size": self.ode_opt["options"]["step_size"]},
             "load_span_predictor": self.load_span_predictor,
             "load_rankers": self.load_rankers,

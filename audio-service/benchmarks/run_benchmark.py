@@ -76,6 +76,7 @@ REQUEST_OPTIONS = {
     "refine_floor": "refine_floor",
     "refine_blend": "refine_blend",
     "refine_threshold": "refine_threshold",
+    "refine_residual_threshold": "refine_residual_threshold",
     "refine_gate_db": "refine_gate_db",
     "chunk_seconds": "chunk_seconds",
 }
@@ -194,6 +195,18 @@ def run_http(url: str, fixture: Fixture, *, repeat: int, timeout: float, passes:
 
 
 # ---------------------------------------------------------------------------- metrics
+def residual_leakage_db(residual: np.ndarray | None, fixture: Fixture) -> float | None:
+    """Energy of the TARGET sound left inside the residual stem relative to the wanted
+    non-target content, in dB (lower is better): what "Mute target" still lets through.
+    ``None`` when there is no residual stem (or its length does not match the fixture)."""
+    if residual is None:
+        return None
+    try:
+        return spectral_leakage_db(residual, fixture.interference, fixture.target_signal)
+    except ValueError:
+        return None
+
+
 def measure(fixture: Fixture, outcome: Outcome) -> dict[str, Any]:
     """All quality metrics for one fixture/outcome pair, plus latency and RTF."""
     reference, interference, mixture = fixture.target_signal, fixture.interference, fixture.mixture
@@ -206,6 +219,7 @@ def measure(fixture: Fixture, outcome: Outcome) -> dict[str, Any]:
         "si_sdri_db": si_sdr_improvement(outcome.target, reference, mixture),
         "sdr_db": sdr(outcome.target, reference),
         "leakage_db": spectral_leakage_db(outcome.target, reference, interference),
+        "residual_leakage_db": residual_leakage_db(outcome.residual, fixture),
         "reconstruction_error": reconstruction_error(stems, mixture),
         "has_residual": outcome.residual is not None,
         "latency_seconds": latency,
@@ -275,15 +289,15 @@ def render_markdown(report: dict[str, Any]) -> str:
     if backend.get("is_mock"):
         lines += [f"> **MOCK RUN -- NOT A QUALITY RESULT.** {MOCK_DISCLAIMER}", ""]
     lines += [
-        "| Fixture | Prompt | Target | Dur (s) | SI-SDR (dB) | input SI-SDR (dB) | SI-SDRi (dB) | SDR (dB) | Leakage (dB) | Recon err | Latency (s) | RTF (proc/audio) |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Fixture | Prompt | Target | Dur (s) | SI-SDR (dB) | input SI-SDR (dB) | SI-SDRi (dB) | SDR (dB) | Leakage (dB) | Resid leak (dB) | Recon err | Latency (s) | RTF (proc/audio) |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in report["fixtures"]:
         metrics = row["metrics"]
         lines.append(
             f"| `{row['fixture']}` | `{row['prompt']}` | `{row['target_source']}` | {row['duration']:.2f} "
             f"| {_fmt(metrics['si_sdr_db'])} | {_fmt(metrics['si_sdr_input_db'])} | {_fmt(metrics['si_sdri_db'])} "
-            f"| {_fmt(metrics['sdr_db'])} | {_fmt(metrics['leakage_db'])} | {_fmt(metrics['reconstruction_error'])} "
+            f"| {_fmt(metrics['sdr_db'])} | {_fmt(metrics['leakage_db'])} | {_fmt(metrics.get('residual_leakage_db'))} | {_fmt(metrics['reconstruction_error'])} "
             f"| {_fmt(metrics['latency_seconds'], 3)} | {_fmt(metrics['real_time_factor'], 3)} |"
         )
     latency_row = next((row for row in report["fixtures"] if row["fixture"].startswith("long_mixture")), None)
@@ -305,6 +319,7 @@ def render_markdown(report: dict[str, Any]) -> str:
               "- **SI-SDRi** -- improvement over that baseline. **This is the headline number.** <= 0 dB means the stem is no better than the mixture.",
               "- **SDR** -- scale-dependent variant; punishes level errors, which matter when the stem is dropped into the editor's mix.",
               "- **Leakage** -- energy of non-target sound in the target stem relative to the wanted sound, in dB. Lower is better; 0 dB means half the stem is the wrong sound.",
+              "- **Resid leak** -- the other direction: energy of the *target* sound still inside the residual stem (what the user hears after \"Mute target\" / \"Lower target\") relative to the wanted non-target content, in dB. Lower is better; n/a when there is no residual stem.",
               "- **Recon err** -- max absolute sample error of `target + residual - mixture`. ~1e-7 is float round-off, ~1e-4 is 16-bit WAV quantisation over HTTP; larger means a pipeline bug.",
               "- **RTF** -- seconds of processing per second of audio (lower is faster; < 1 is faster than real time).",
               ""]
@@ -345,6 +360,8 @@ def build_parser() -> argparse.ArgumentParser:
     knobs.add_argument("--refine-floor", type=float, default=None, help="options.refine_floor: minimum mask value")
     knobs.add_argument("--refine-blend", type=float, default=None, help="options.refine_blend: 1 = fully refined, 0 = raw model output")
     knobs.add_argument("--refine-threshold", type=float, default=None, help="options.refine_threshold (0..1): mask values below this are zeroed")
+    knobs.add_argument("--refine-residual-threshold", type=float, default=None,
+                       help="options.refine_residual_threshold (0..1): mask values above 1 - t become 1, clearing the target from the residual")
     knobs.add_argument("--refine-gate-db", type=float, default=None, help="options.refine_gate_db (0..80): gate bins this far below the stem peak")
     knobs.add_argument("--chunk-seconds", type=float, default=None, help="options.chunk_seconds: chunk window length, 0 = whole file")
 
@@ -499,7 +516,7 @@ def run_config(runner: Runner, fixtures: list[Fixture], cfg: dict[str, Any]) -> 
             "warnings": list(outcome.warnings),
         })
         print(f"   SI-SDR {_fmt(metrics['si_sdr_db'])} dB, SI-SDRi {_fmt(metrics['si_sdri_db'])} dB, "
-              f"leakage {_fmt(metrics['leakage_db'])} dB, RTF {_fmt(metrics['real_time_factor'], 3)}", flush=True)
+              f"leakage {_fmt(metrics['leakage_db'])} dB, resid-leak {_fmt(metrics['residual_leakage_db'])} dB, RTF {_fmt(metrics['real_time_factor'], 3)}", flush=True)
     return rows
 
 
@@ -583,24 +600,28 @@ def summarise_config(name: str, directory: str, report: dict[str, Any]) -> dict[
         "settings": {key: report["settings"].get(key) for key in CONFIG_KEYS if report["settings"].get(key) is not None},
         "request_options": report["settings"]["request_options"],
         "fixtures": {row["fixture"]: {"si_sdri_db": row["metrics"]["si_sdri_db"], "si_sdr_db": row["metrics"]["si_sdr_db"],
-                                      "leakage_db": row["metrics"]["leakage_db"]} for row in quality},
+                                      "leakage_db": row["metrics"]["leakage_db"],
+                                      "residual_leakage_db": row["metrics"].get("residual_leakage_db")} for row in quality},
         "mean_si_sdri_db": _mean([row["metrics"]["si_sdri_db"] for row in quality]),
         "mean_leakage_db": _mean([row["metrics"]["leakage_db"] for row in quality]),
+        "mean_residual_leakage_db": _mean([row["metrics"].get("residual_leakage_db") for row in quality]),
         "rtf": latency["metrics"]["real_time_factor"] if latency else None,
         "peak_rss_bytes": report["settings"]["peak_rss_bytes"],
     }
 
 
 def add_deltas(configs: list[dict[str, Any]]) -> None:
-    """Δ vs the first config (the baseline): SI-SDRi up is better, leakage down is better."""
+    """Δ vs the first config (the baseline): SI-SDRi up is better, both leakages down are better."""
     base = configs[0]
     for entry in configs:
         delta: dict[str, Any] = {"mean_si_sdri_db": _delta(entry["mean_si_sdri_db"], base["mean_si_sdri_db"]),
-                                 "mean_leakage_db": _delta(entry["mean_leakage_db"], base["mean_leakage_db"])}
+                                 "mean_leakage_db": _delta(entry["mean_leakage_db"], base["mean_leakage_db"]),
+                                 "mean_residual_leakage_db": _delta(entry.get("mean_residual_leakage_db"), base.get("mean_residual_leakage_db"))}
         for fixture, metrics in entry["fixtures"].items():
             reference = base["fixtures"].get(fixture, {})
             delta[fixture] = {"si_sdri_db": _delta(metrics["si_sdri_db"], reference.get("si_sdri_db")),
-                              "leakage_db": _delta(metrics["leakage_db"], reference.get("leakage_db"))}
+                              "leakage_db": _delta(metrics["leakage_db"], reference.get("leakage_db")),
+                              "residual_leakage_db": _delta(metrics.get("residual_leakage_db"), reference.get("residual_leakage_db"))}
         entry["delta"] = delta
 
 
@@ -618,15 +639,17 @@ def render_sweep_markdown(sweep: dict[str, Any]) -> str:
     lines.append(f"- **Backend**: `{backend.get('name')}` ({backend.get('mode')} mode), model `{backend.get('model_id')}` on `{backend.get('device')}`")
     lines.append(f"- **Generated**: {sweep['generated_at']}; baseline (Δ reference) is the first row, `{configs[0]['name']}`")
     lines.append("- Cells read `value (Δ vs baseline)`. **SI-SDRi: higher is better. Leakage: lower is better** "
-                 "(dB of non-target sound inside the stem; the 'faint background still audible' complaint).")
+                 "(dB of non-target sound inside the stem; the 'faint background still audible' complaint). "
+                 "**Resid-leak: lower is better** (dB of the target sound still inside the residual stem; "
+                 "the 'muted sound still faintly there' complaint).")
     lines.append("- Peak RSS is the process high-water mark up to that config (it never goes down).")
     lines.append("")
     if sweep.get("is_mock"):
         lines += [f"> **MOCK RUN -- NOT A QUALITY RESULT.** {MOCK_DISCLAIMER}", ""]
     header = ["Config"]
     for name in fixtures:
-        header += [f"`{name}` SI-SDRi", f"`{name}` leak"]
-    header += ["Mean SI-SDRi", "Δ mean SI-SDRi", "Mean leak", "Δ mean leak", "RTF", "Peak RSS"]
+        header += [f"`{name}` SI-SDRi", f"`{name}` leak", f"`{name}` resid-leak"]
+    header += ["Mean SI-SDRi", "Δ mean SI-SDRi", "Mean leak", "Δ mean leak", "Mean resid-leak", "Δ", "RTF", "Peak RSS"]
     lines += ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for index, entry in enumerate(configs):
         baseline = index == 0
@@ -635,10 +658,13 @@ def render_sweep_markdown(sweep: dict[str, Any]) -> str:
             metrics = entry["fixtures"].get(name, {})
             delta = entry["delta"].get(name, {})
             cells += [_with_delta(metrics.get("si_sdri_db"), delta.get("si_sdri_db"), baseline),
-                      _with_delta(metrics.get("leakage_db"), delta.get("leakage_db"), baseline)]
+                      _with_delta(metrics.get("leakage_db"), delta.get("leakage_db"), baseline),
+                      _with_delta(metrics.get("residual_leakage_db"), delta.get("residual_leakage_db"), baseline)]
         dmean, dleak = entry["delta"]["mean_si_sdri_db"], entry["delta"]["mean_leakage_db"]
+        dresid = entry["delta"].get("mean_residual_leakage_db")
         cells += [_fmt(entry["mean_si_sdri_db"]), "--" if baseline or dmean is None else f"{dmean:+.2f}",
                   _fmt(entry["mean_leakage_db"]), "--" if baseline or dleak is None else f"{dleak:+.2f}",
+                  _fmt(entry.get("mean_residual_leakage_db")), "--" if baseline or dresid is None else f"{dresid:+.2f}",
                   _fmt(entry["rtf"], 3), _fmt_bytes(entry["peak_rss_bytes"])]
         lines.append("| " + " | ".join(cells) + " |")
     lines += ["", "## Configs", ""]
@@ -713,7 +739,8 @@ def run_sweep(args: argparse.Namespace, argv: list[str] | None, fixtures: list[F
     print(f"\nsweep {sweep_name}: {len(summaries)} configs")
     for entry in summaries:
         print(f"  {entry['name']:<28} mean SI-SDRi {_fmt(entry['mean_si_sdri_db'])} dB ({_fmt(entry['delta']['mean_si_sdri_db'])}), "
-              f"mean leakage {_fmt(entry['mean_leakage_db'])} dB ({_fmt(entry['delta']['mean_leakage_db'])})")
+              f"mean leakage {_fmt(entry['mean_leakage_db'])} dB ({_fmt(entry['delta']['mean_leakage_db'])}), "
+              f"mean resid-leak {_fmt(entry['mean_residual_leakage_db'])} dB ({_fmt(entry['delta']['mean_residual_leakage_db'])})")
     print(f"wrote {out_dir / 'sweep.json'}\nwrote {out_dir / 'SWEEP.md'}")
     if sweep["is_mock"]:
         print(f"\nNOTE: {MOCK_DISCLAIMER}")

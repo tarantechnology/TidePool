@@ -103,6 +103,16 @@ def apply_threshold(mask: np.ndarray, threshold: float) -> np.ndarray:
     return np.where(mask < threshold, 0.0, (mask - threshold) / (1.0 - threshold))
 
 
+def apply_residual_threshold(mask: np.ndarray, residual_threshold: float) -> np.ndarray:
+    """Mirrored soft knee: 1 above ``1 - residual_threshold``, [0, 1 - t] rescaled to [0, 1].
+
+    Where the target dominates a bin, the whole bin goes to the target, so the residual
+    (``mixture - target``) holds no faint copy of the removed sound there.
+    """
+    top = 1.0 - residual_threshold
+    return np.where(mask > top, 1.0, mask / top)
+
+
 def apply_gate(mask: np.ndarray, mix_spec: np.ndarray, gate_db: float, eps: float = 1e-20) -> np.ndarray:
     """Zero every bin of frames where the masked target is > ``gate_db`` below the mixture.
 
@@ -130,15 +140,19 @@ def mask_refine(
     floor: float = 0.0,
     blend: float = 1.0,
     threshold: float = 0.0,
+    residual_threshold: float = 0.0,
     gate_db: float = 0.0,
     eps: float = 1e-8,
 ) -> np.ndarray:
     """Rebuild ``target`` (C, T) from ``mixture`` (C, T) through a soft ratio mask. See module doc.
 
-    Order: ratio mask -> ``threshold`` (soft knee) -> ``gate_db`` (frame gate) -> ``floor`` -> clip.
+    Order: ratio mask -> ``threshold`` (soft knee) -> ``residual_threshold`` (mirrored knee)
+    -> ``gate_db`` (frame gate) -> ``floor`` -> clip.
     """
     if not 0.0 <= threshold < 1.0:
         raise ValueError("threshold must be in [0, 1)")
+    if not 0.0 <= residual_threshold < 1.0:
+        raise ValueError("residual_threshold must be in [0, 1)")
     if gate_db < 0:
         raise ValueError("gate_db must not be negative")
     mixture = np.asarray(mixture, dtype=np.float32)
@@ -161,6 +175,8 @@ def mask_refine(
     del t_pow, r_pow
     if threshold > 0:
         mask = apply_threshold(mask, threshold)
+    if residual_threshold > 0:
+        mask = apply_residual_threshold(mask, residual_threshold)
     if gate_db > 0:
         mask = apply_gate(mask, stft(mono_mix, n_fft, hop), gate_db)
     mask = np.clip(np.maximum(mask, floor), 0.0, 1.0)
@@ -172,4 +188,4 @@ def mask_refine(
     return (blend * refined + (1.0 - blend) * target).astype(np.float32)
 
 
-__all__ = ["stft", "istft", "mask_refine", "apply_threshold", "apply_gate"]
+__all__ = ["stft", "istft", "mask_refine", "apply_threshold", "apply_residual_threshold", "apply_gate"]

@@ -264,6 +264,71 @@ def test_named_sweeps_are_valid():
         for config in configs:
             rb.validate_config(dict(config), url=None, label=name)
     assert len(SWEEPS["leakage"]) == 7
+    v2 = {config["name"]: config for config in SWEEPS["leakage-v2"]}
+    assert list(v2) == ["mask", "thr0.5", "rthr0.5", "both0.5", "both0.7", "p4-both0.5", "passes2", "passes2-both0.5",
+                        "k3auto-both0.5", "k3auto-passes2-both0.5"]
+    assert all(config["refine"] == "mask" and config["refine_nfft"] == 2048 for config in v2.values())
+    assert v2["rthr0.5"]["refine_residual_threshold"] == 0.5 and "refine_threshold" not in v2["rthr0.5"]
+    assert v2["p4-both0.5"]["refine_p"] == 4 and v2["k3auto-passes2-both0.5"]["passes"] == 2
+    assert v2["k3auto-both0.5"]["window_candidates"] == 3 and v2["k3auto-both0.5"]["select"] == "auto"
+
+
+def test_residual_leakage_metric_on_mock(tmp_path, monkeypatch):
+    """Mock residual = mixture - band-pass target. Where the band-pass actually separates
+    (siren, guitar) the residual is dominated by non-target content; the overlapping-speech
+    fixture is not band-separable, so there it only has to be finite and near 0 dB."""
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    out = tmp_path / "resid"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "0", "--long-seconds", "0", "--speech-mode", "synthetic", "--out", str(out)]) == 0
+    report = _report(out)
+    for row in report["fixtures"]:
+        value = row["metrics"]["residual_leakage_db"]
+        assert value is not None and math.isfinite(value)
+        assert value < 3, f"{row['fixture']}: {value}"
+        if row["fixture"] in ("speech_plus_siren", "music_mix"):
+            assert value < -5, f"{row['fixture']}: residual should be mostly non-target content, got {value}"
+    markdown = (out / "REPORT.md").read_text()
+    assert "Resid leak (dB)" in markdown and "**Resid leak**" in markdown
+
+
+def test_residual_leakage_is_none_without_a_residual():
+    fixture = fx.music_mix(SHORT, speech_mode="synthetic")
+    assert rb.residual_leakage_db(None, fixture) is None
+    outcome = rb.Outcome(target=fixture.target_signal, residual=None, model={}, latencies=[0.1])
+    metrics = rb.measure(fixture, outcome)
+    assert metrics["residual_leakage_db"] is None and metrics["has_residual"] is False
+
+
+def test_refine_residual_threshold_flag_only_sent_when_given():
+    assert "refine_residual_threshold" not in rb.request_options(rb.config_from_args(rb.build_parser().parse_args([])))
+    args = rb.build_parser().parse_args(["--refine", "mask", "--refine-residual-threshold", "0.4"])
+    assert rb.request_options(rb.config_from_args(args)) == {"refine": "mask", "refine_residual_threshold": 0.4}
+
+
+def test_sweep_honours_passes_per_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    seen: list[int] = []
+    real_run_engine = rb.run_engine
+
+    def spy(engine, fixture, *, repeat, passes=1, options=None):  # noqa: ANN001
+        seen.append(passes)
+        return real_run_engine(engine, fixture, repeat=repeat, passes=passes, options=options)
+
+    monkeypatch.setattr(rb, "run_engine", spy)
+    spec = tmp_path / "passes.json"
+    spec.write_text(json.dumps([{"name": "one"}, {"name": "two", "passes": 2, "refine": "mask", "refine_residual_threshold": 0.5},
+                                {"name": "one-again"}]))
+    out = tmp_path / "sweep"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "0", "--long-seconds", "0", "--fixtures", "music_mix",
+                    "--speech-mode", "synthetic", "--sweep", str(spec), "--out", str(out)]) == 0
+    one, two, again = (_report(out / name) for name in ("one", "two", "one-again"))
+    assert one["settings"]["passes"] == 1 and two["settings"]["passes"] == 2 and again["settings"]["passes"] == 1
+    assert seen == [1, 2, 1], "each config's passes must reach the engine and reset for the next config"
+    refinement = lambda report: report["fixtures"][0]["model"]  # noqa: E731
+    assert refinement(two)["refine"]["residual_threshold"] == 0.5
+    assert refinement(again)["refine"] is None, "a config's request options must not leak into the next"
+    sweep = json.loads((out / "sweep.json").read_text())
+    assert [entry["settings"]["passes"] for entry in sweep["configs"]] == [1, 2, 1]
 
 
 def test_sweep_writes_one_table_with_deltas(tmp_path, monkeypatch):
@@ -277,6 +342,9 @@ def test_sweep_writes_one_table_with_deltas(tmp_path, monkeypatch):
     assert [entry["name"] for entry in sweep["configs"]] == ["base", "finer-ode", "base-again"]
     assert sweep["configs"][1]["delta"]["music_mix"]["si_sdri_db"] is not None
     assert "leakage_db" in sweep["configs"][1]["delta"]["music_mix"]
+    assert "residual_leakage_db" in sweep["configs"][1]["delta"]["music_mix"]
+    assert sweep["configs"][0]["mean_residual_leakage_db"] is not None
+    assert "mean_residual_leakage_db" in sweep["configs"][1]["delta"]
     assert sweep["configs"][1]["settings"]["ode_step"] == 0.03125
     assert sweep["configs"][1]["request_options"] == {"chunk_seconds": 0}
     assert sweep["configs"][0]["rtf"] is not None and sweep["configs"][0]["peak_rss_bytes"] > 0
@@ -287,3 +355,4 @@ def test_sweep_writes_one_table_with_deltas(tmp_path, monkeypatch):
     markdown = (out / "SWEEP.md").read_text()
     assert "Δ" in markdown and "leak" in markdown and "MOCK RUN" in markdown
     assert "`base`" in markdown and "`finer-ode`" in markdown
+    assert "`music_mix` resid-leak" in markdown and "Mean resid-leak" in markdown

@@ -60,6 +60,7 @@ plain run posts exactly what Person 4's backend posts. Defaults are the service'
 | `--refine-floor F` | `refine_floor` |
 | `--refine-blend B` | `refine_blend` (1 = fully refined) |
 | `--refine-threshold T` | `refine_threshold` (0..1) |
+| `--refine-residual-threshold T` | `refine_residual_threshold` (0..1): mask values above `1 - T` become 1, so the target is cleared from the residual |
 | `--refine-gate-db D` | `refine_gate_db` (0..80) |
 | `--chunk-seconds S` | `chunk_seconds` (0 = whole file) |
 
@@ -87,9 +88,11 @@ normalised to bytes: macOS reports bytes, Linux kilobytes).
 (ODE step, chunk overlap; a different `model_id` forces one reload) and request options,
 runs every fixture and writes `<out>/<config>/report.json` + `REPORT.md`. It also writes
 `<out>/sweep.json` and `<out>/SWEEP.md`: one table, one row per config, with per-fixture
-SI-SDRi **and leakage** plus mean SI-SDRi, mean leakage, RTF (latency fixture) and peak
-RSS. Every cell shows the Δ against the **first config (the baseline)**: SI-SDRi up is
-better, leakage down is better. Peak RSS is the process high-water mark so far, so it only
+SI-SDRi, **leakage and resid-leak** plus mean SI-SDRi, mean leakage, mean resid-leak,
+RTF (latency fixture) and peak RSS. Every cell shows the Δ against the **first config (the
+baseline)**: SI-SDRi up is better, both leakages down are better. A config's `passes`
+(like every other key) applies to that config only; the next config falls back to the
+command-line value. Peak RSS is the process high-water mark so far, so it only
 grows across rows.
 
 Named sweeps live in `benchmarks/sweeps.py`:
@@ -100,6 +103,7 @@ Named sweeps live in `benchmarks/sweeps.py`:
 | `refine` | refine off; mask with p ∈ {1, 2} × n_fft ∈ {1024, 2048, 4096} |
 | `refine-floor` | mask p=2 n_fft=2048 with floor ∈ {0, 0.02} × blend ∈ {1.0, 0.5} |
 | `leakage` | mask p=2 n_fft=2048 with threshold ∈ {0, 0.3, 0.5} × gate_db ∈ {0, 30}; plus p=4 threshold 0.3 |
+| `leakage-v2` | leakage in both directions, all mask p=2 n_fft=2048: `mask` (baseline), `thr0.5`, `rthr0.5` (residual_threshold 0.5), `both0.5`, `both0.7`, `p4-both0.5`, `passes2`, `passes2-both0.5`, `k3auto-both0.5` (window candidates 3, select auto), `k3auto-passes2-both0.5` |
 | `candidates` | baseline K=1 at chunk 10; K ∈ {2, 3} × select ∈ {overlap, mean} at chunk 10; K=2 overlap at chunk 15 and whole file |
 | `chunks` | chunk 10 / 15 / 20 / 0 (whole file), K=1 |
 | `quality-v1` | baseline; refine mask p=2 n_fft=2048; K=2 overlap; both combined |
@@ -107,7 +111,7 @@ Named sweeps live in `benchmarks/sweeps.py`:
 A JSON sweep file is a list of configs (or `{"name": ..., "configs": [...]}`); each config
 is a dict keyed by the flag dest names (`ode_step`, `window_candidates`, `select`,
 `refine`, `refine_p`, `refine_nfft`, `refine_floor`, `refine_blend`, `refine_threshold`,
-`refine_gate_db`, `chunk_seconds`, `chunk_overlap`, `candidates`, `seed`, `passes`,
+`refine_residual_threshold`, `refine_gate_db`, `chunk_seconds`, `chunk_overlap`, `candidates`, `seed`, `passes`,
 `model_id`) plus `"name"`. Keys a config omits keep the command-line value:
 
 ```json
@@ -155,6 +159,7 @@ mounted anywhere.
 | **SI-SDRi** (dB) | higher | **The headline number**: SI-SDR minus input SI-SDR. `0` means the stem is no better than the mixture; negative means separation made things worse. |
 | **SDR** (dB) | higher | Scale-*dependent* variant. It punishes level errors, which matters because the editor drops the stem straight back into a mix. A large SI-SDR with a poor SDR means the right sound at the wrong gain. |
 | **Leakage** (dB) | lower | Energy of non-target sound inside the target stem, relative to the wanted sound, split per time-frequency bin using the ground truth. `-20 dB` is clean; `0 dB` means half the stem is the wrong sound. This is what decides the demo: if the siren stem carries the dialogue, automating the siren's volume ducks the argument too. |
+| **Resid leak** (dB) | lower | The other direction: energy of the *target* sound still inside the residual stem, relative to the wanted non-target content (`spectral_leakage_db(residual, interference, target)`). The residual is what the user hears after "Mute target" / "Lower target", so this is the "removed sound is still faintly there" complaint. `n/a` when the service returns no residual stem. Pushed down by `refine_residual_threshold`. |
 | **Recon err** | lower | Max absolute sample error of `target + residual - mixture`. `~1e-7` is float32 round-off (in-process), `~1e-4` is 16-bit PCM quantisation from the WAV round-trip over HTTP. Anything larger is a pipeline bug: lost samples, a length drift in chunking, or a double gain. |
 | **Latency** (s) | lower | Wall clock for one separation, median over `--repeat`. In-process it is the `Engine.separate` call; over HTTP it includes transfer, decode and WAV encode -- the number the application actually sees. |
 | **RTF** | lower | Real-time factor: seconds of processing per second of audio. `< 1` is faster than real time. This is the "latency per second of audio" figure; the `long_mixture` row is the one to quote. |

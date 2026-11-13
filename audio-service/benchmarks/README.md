@@ -7,7 +7,8 @@ measures the same signals.
 ```
 benchmarks/
   fixtures.py        synthetic mixtures + ground-truth sources (deterministic)
-  run_benchmark.py   runs the fixtures, measures, writes the report
+  run_benchmark.py   runs the fixtures, measures, writes the report (or a settings sweep)
+  sweeps.py          named settings sweeps for --sweep
   out/               report.json + REPORT.md         (gitignored)
 ../fixtures/generated/  WAVs + manifest.json for other teams (gitignored)
 ```
@@ -33,11 +34,85 @@ The default run takes well under a minute with the mock backend and writes
 | `--seconds N` | length of each quality fixture (default 6) |
 | `--latency-seconds N` | length of the latency fixture, `0` to skip (default 30) |
 | `--repeat N` | separations per fixture; reported latency is the median (default 1) |
-| `--fixtures a,b` | subset of `speech_plus_siren,two_speakers,music_mix` |
+| `--long-seconds N` | length of the long fixtures (`competing_voices`), `0` to skip (default 24) |
+| `--fixtures a,b` | subset of `speech_plus_siren,two_speakers,music_mix,competing_voices` |
 | `--speech-mode auto\|say\|synthetic` | speech source (see below) |
+| `--passes N` | `options.passes` (multi-pass; default 1) |
 | `--write-fixtures [DIR]` | also write the WAVs + `manifest.json` for Person 3 / Person 4 |
 | `--out DIR` | report directory (default `benchmarks/out`) |
 | `--timeout N` | HTTP timeout in seconds (default 600) |
+| `--sweep NAME\|FILE.json` | run every config of a sweep in one process (see "Settings sweeps") |
+
+### Separation settings
+
+Each of these is sent as a `metadata.options` field **only when the flag is given**, so a
+plain run posts exactly what Person 4's backend posts. Defaults are the service's own.
+
+| Flag | `metadata.options` field |
+|---|---|
+| `--seed N` | `seed` (defaults to 1234 for in-process `--backend sam`; unset otherwise) |
+| `--candidates K` | `reranking_candidates` (model-level re-ranking) |
+| `--window-candidates K` | `candidates` (candidate separations per chunk window) |
+| `--select first\|overlap\|mean` | `candidate_select` |
+| `--refine off\|mask` | `refine` |
+| `--refine-p P` | `refine_p` (mask exponent) |
+| `--refine-nfft N` | `refine_n_fft` |
+| `--refine-floor F` | `refine_floor` |
+| `--refine-blend B` | `refine_blend` (1 = fully refined) |
+| `--refine-threshold T` | `refine_threshold` (0..1) |
+| `--refine-gate-db D` | `refine_gate_db` (0..80) |
+| `--chunk-seconds S` | `chunk_seconds` (0 = whole file) |
+
+In-process only (a warning is printed and they are ignored with `--url`):
+
+| Flag | Effect |
+|---|---|
+| `--chunk-overlap S` | `settings.chunk_overlap_seconds` |
+| `--ode-step S` | ODE step: the backend's `ode_opt["options"]["step_size"]` when it has one (real model), else `settings.ode_step_size` |
+| `--model-id ID` | `settings.model_id` before the engine is built |
+
+`report.json` → `settings` records every knob, the `request_options` actually sent, the
+effective engine values (`effective_model_id`, `effective_ode_step`,
+`effective_chunk_overlap`) and `peak_rss_bytes` (`getrusage(RUSAGE_SELF).ru_maxrss`,
+normalised to bytes: macOS reports bytes, Linux kilobytes).
+
+### Settings sweeps
+
+```sh
+.venv/bin/python -m benchmarks.run_benchmark --backend sam --sweep quality-v1 --out benchmarks/out/quality-v1
+.venv/bin/python -m benchmarks.run_benchmark --backend sam --sweep my_configs.json
+```
+
+`--sweep` loads the engine **once**, then for each config applies its in-process knobs
+(ODE step, chunk overlap; a different `model_id` forces one reload) and request options,
+runs every fixture and writes `<out>/<config>/report.json` + `REPORT.md`. It also writes
+`<out>/sweep.json` and `<out>/SWEEP.md`: one table, one row per config, with per-fixture
+SI-SDRi **and leakage** plus mean SI-SDRi, mean leakage, RTF (latency fixture) and peak
+RSS. Every cell shows the Δ against the **first config (the baseline)**: SI-SDRi up is
+better, leakage down is better. Peak RSS is the process high-water mark so far, so it only
+grows across rows.
+
+Named sweeps live in `benchmarks/sweeps.py`:
+
+| Sweep | Configs |
+|---|---|
+| `ode` | ODE step 0.0625 (baseline), 0.03125, 0.015625 |
+| `refine` | refine off; mask with p ∈ {1, 2} × n_fft ∈ {1024, 2048, 4096} |
+| `refine-floor` | mask p=2 n_fft=2048 with floor ∈ {0, 0.02} × blend ∈ {1.0, 0.5} |
+| `leakage` | mask p=2 n_fft=2048 with threshold ∈ {0, 0.3, 0.5} × gate_db ∈ {0, 30}; plus p=4 threshold 0.3 |
+| `candidates` | baseline K=1 at chunk 10; K ∈ {2, 3} × select ∈ {overlap, mean} at chunk 10; K=2 overlap at chunk 15 and whole file |
+| `chunks` | chunk 10 / 15 / 20 / 0 (whole file), K=1 |
+| `quality-v1` | baseline; refine mask p=2 n_fft=2048; K=2 overlap; both combined |
+
+A JSON sweep file is a list of configs (or `{"name": ..., "configs": [...]}`); each config
+is a dict keyed by the flag dest names (`ode_step`, `window_candidates`, `select`,
+`refine`, `refine_p`, `refine_nfft`, `refine_floor`, `refine_blend`, `refine_threshold`,
+`refine_gate_db`, `chunk_seconds`, `chunk_overlap`, `candidates`, `seed`, `passes`,
+`model_id`) plus `"name"`. Keys a config omits keep the command-line value:
+
+```json
+[{"name": "baseline"}, {"name": "mask", "refine": "mask", "refine_p": 2, "refine_nfft": 2048}]
+```
 
 ## Fixtures
 
@@ -50,6 +125,7 @@ its ground-truth sources, which is what makes the reconstruction check meaningfu
 | `speech_plus_siren` | `siren` | `siren` | The cinematic demo: argument over a background siren, siren 6 dB down and panned right. If this one is bad, the demo is bad. |
 | `two_speakers` | `man speaking` | `speaker_low` | Speaker-separation experiment: two talkers at the same level, ~100 Hz vs ~205 Hz f0, different speaking rhythms, panned apart. Deliberately hard -- a text prompt cannot name a person. |
 | `music_mix` | `guitar` | `guitar` | Music-separation experiment: percussive kit (kick + bright bursts) against a sustained plucked harmonic tone. Their low bands overlap, so band-based cheating does not score here. |
+| `competing_voices` | `man speaking` | `speaker_low` | *Long* fixture (`--long-seconds`, default 24 s). Two voices (low pool vs high pool), panned apart, taking turns and talking over each other. At 24 s, A (low, target) speaks 0-5, 8-13, 16-24 s and B (high) 3-9, 12-15, 18-24 s; the schedule scales with the length. Turns straddle 10 s chunk boundaries, so a separator that follows a different talker per window loses SI-SDR here even when each window looks fine. `extra.other_prompt` is `woman speaking`. Not part of `QUALITY_FIXTURES` (it is in `LONG_FIXTURES`). |
 | `long_mixture_<n>s` | `siren` | `siren` | Latency / real-time factor only. Mono so the number is per inference pass. |
 
 **Speech source.** With `--speech-mode auto` (the default) real speech is rendered with

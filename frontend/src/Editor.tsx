@@ -16,6 +16,7 @@ import { EditLog } from './components/EditLog'
 import { ProjectPanel } from './components/ProjectPanel'
 import type { ProjectPanelHandle } from './components/ProjectPanel'
 import { Logo } from './components/Logo'
+import { Splitter } from './components/Splitter'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
 import { Transport } from './components/Transport'
@@ -69,6 +70,11 @@ export default function Editor() {
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null)
   const [working, setWorking] = useState<string | null>(null)
+  const [layout, setLayout] = useState(readLayout)
+  const mainRef = useRef<HTMLElement>(null)
+  useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* layout just won't persist */ } }, [layout])
+  const setTop = (px: number) => { const h = mainRef.current?.clientHeight ?? 800; setLayout((l) => ({ ...l, top: clamp(px / h, 0.18, 0.78) })) }
+  const setPanel = (px: number) => setLayout((l) => ({ ...l, panel: clamp(px, 260, 560) }))
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
   const projectPanel = useRef<ProjectPanelHandle>(null)
@@ -361,8 +367,8 @@ export default function Editor() {
       {status === 'error' ? (
         <div className="relative z-10 flex flex-1 items-center justify-center p-8 text-sm text-red-600">{error}</div>
       ) : (
-        <main className="relative z-10 flex min-h-0 flex-1 flex-col">
-          <div className="flex h-[40%] min-h-[200px] shrink-0 gap-3 p-3 pb-2">
+        <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-[140px] shrink-0 px-3 pt-3" style={{ height: `${layout.top * 100}%` }}>
             <VideoPanel
               engine={engine}
               src={videoSrc}
@@ -375,10 +381,14 @@ export default function Editor() {
               seekTo={seekTo}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
-            <div className="flex min-h-0 w-[21rem] shrink-0 flex-col">
+            <Splitter direction="column" label="Resize the video and the steps panel"
+              onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
+            <div className="flex min-h-0 shrink-0 flex-col" style={{ width: layout.panel }}>
               <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
             </div>
           </div>
+          <Splitter direction="row" label="Resize the video and the timeline"
+            onDrag={(y) => setTop(y - (mainRef.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop(layout.top * (mainRef.current?.clientHeight ?? 800) + d)} onReset={() => setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top }))} />
           <div className="shadow-card relative mx-3 mb-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
               <Timeline
@@ -419,6 +429,17 @@ export default function Editor() {
       <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} onRun={runPrompt} />
     </div>
   )
+}
+
+const LAYOUT_KEY = 'tidepool.layout'
+const DEFAULT_LAYOUT = { top: 0.4, panel: 336 }
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+function readLayout(): typeof DEFAULT_LAYOUT {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? 'null') as { top?: unknown; panel?: unknown } | null
+    if (v && typeof v.top === 'number' && typeof v.panel === 'number') return { top: clamp(v.top, 0.18, 0.78), panel: clamp(v.panel, 260, 560) }
+  } catch { /* fall back to the default */ }
+  return DEFAULT_LAYOUT
 }
 
 const MENU_ITEM = 'block w-full rounded-lg px-2 py-1.5 text-left text-fg transition-colors hover:bg-surface-2 disabled:opacity-40'

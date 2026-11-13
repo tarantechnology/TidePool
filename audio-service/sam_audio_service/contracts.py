@@ -102,7 +102,7 @@ class InferenceOptions(BaseModel):
     # Independent noise draws returned per chunk window and the rule that picks one
     # (distinct from reranking_candidates, which the model ranks internally). See candidates.py.
     candidates: int | None = Field(default=None, ge=1, le=8)
-    candidate_select: Literal["first", "overlap", "mean"] | None = None
+    candidate_select: Literal["first", "overlap", "mean", "auto"] | None = None
     output_format: Literal["pcm_f32le", "pcm_s16le"] = "pcm_f32le"
     # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.

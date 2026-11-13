@@ -8,6 +8,7 @@ chooses, window by window, in timeline order:
 
 * ``"first"``: draw 0 (what K = 1 would have produced, modulo batch-size noise);
 * ``"mean"``: the average of the K draws (an ensemble; smoother, may sound "averaged");
+* ``"auto"``: ``"mean"`` when the signal is a single window, ``"overlap"`` when it is chunked;
 * ``"overlap"``: the draw whose head best matches what the previous window put into the
   shared overlap (normalised cross-correlation). With no usable previous window (first
   window, or an overlap quieter than -60 dBFS) it takes the medoid draw (highest mean
@@ -22,7 +23,7 @@ import numpy as np
 
 SILENCE_DBFS = -60.0
 _EPS = 1e-12
-MODES = ("first", "overlap", "mean")
+MODES = ("first", "overlap", "mean", "auto")
 
 
 def _ncc(a: np.ndarray, b: np.ndarray) -> float:
@@ -53,6 +54,11 @@ def choose(candidates: list[np.ndarray], previous: np.ndarray | None, overlap: i
         raise ValueError("choose() needs at least one candidate")
     if mode not in MODES:
         raise ValueError(f"unknown candidate selection mode {mode!r}; expected one of {MODES}")
+    if mode == "auto":
+        # Measured 2026-11-13 (sam-audio-small): averaging K draws gains 1-2 dB SI-SDRi and 1.5-2 dB
+        # less leakage when the whole signal is one window, but blurs chunked signals whose windows
+        # disagree; there, picking the draw that agrees with the previous window is what helps.
+        mode = "overlap" if overlap > 0 else "mean"
     if mode == "first" or len(candidates) == 1:
         return 0, candidates[0]
     if mode == "mean":

@@ -79,16 +79,18 @@ def profile_extras(profile):
     """Per-profile separation options tuned on the audio service's benchmark sweep (see
     audio-service/docs/quality_tuning.md). ``quality`` asks the service for K noise draws per
     chunk window chosen for agreement across windows (no re-ranker needed) and rebuilds the
-    stem through a time-frequency mask; ``preview`` keeps the model output unless
-    PREVIEW_REFINE is set. All values can be overridden with environment variables."""
+    stem through a time-frequency mask with a leakage threshold (cleaner, slightly less
+    accurate); ``preview`` applies the plain mask (accurate, no threshold). Measured
+    2026-11-13 on sam-audio-small: the mask alone is +3.3 dB SI-SDRi / -3.6 dB leakage; the
+    threshold trades -2.3 dB SI-SDRi for a further -1.9 dB leakage. Override with env vars."""
     if profile == 'quality':
         extras = {'candidates': _env_number('QUALITY_CANDIDATES', 2, int),
-                  'candidate_select': os.getenv('QUALITY_CANDIDATE_SELECT', 'overlap'),
+                  'candidate_select': os.getenv('QUALITY_CANDIDATE_SELECT', 'auto'),
                   'refine': os.getenv('QUALITY_REFINE', 'mask')}
-        p, threshold, gate = (_env_number('QUALITY_REFINE_P', 2.0), _env_number('QUALITY_REFINE_THRESHOLD', 0.0),
+        p, threshold, gate = (_env_number('QUALITY_REFINE_P', 2.0), _env_number('QUALITY_REFINE_THRESHOLD', 0.5),
                               _env_number('QUALITY_REFINE_GATE_DB', 0.0))
     else:
-        extras = {'refine': os.getenv('PREVIEW_REFINE', 'off')}
+        extras = {'refine': os.getenv('PREVIEW_REFINE', 'mask')}
         p, threshold, gate = (_env_number('PREVIEW_REFINE_P', 2.0), _env_number('PREVIEW_REFINE_THRESHOLD', 0.0),
                               _env_number('PREVIEW_REFINE_GATE_DB', 0.0))
     if extras['refine'] == 'mask':

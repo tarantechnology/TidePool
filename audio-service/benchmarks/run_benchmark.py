@@ -82,7 +82,7 @@ REQUEST_OPTIONS = {
 # Config keys that change the in-process engine rather than the request.
 IN_PROCESS_ONLY = ("chunk_overlap", "ode_step", "model_id")
 CONFIG_KEYS = ("passes", *REQUEST_OPTIONS, *IN_PROCESS_ONLY)
-CHOICES = {"select": ("first", "overlap", "mean"), "refine": ("off", "mask")}
+CHOICES = {"select": ("first", "overlap", "mean", "auto"), "refine": ("off", "mask")}
 MOCK_DISCLAIMER = (
     "These numbers come from the MOCK backend, which is a prompt-selected band-pass filter, "
     "not source separation. They verify that the pipeline, contract, stem roles, residual and "

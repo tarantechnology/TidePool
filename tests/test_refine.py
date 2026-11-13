@@ -307,7 +307,7 @@ def test_quality_profile_works_without_a_text_ranker(client, tmp_path, monkeypat
     monkeypatch.setattr(media.httpx,'get',lambda url, **kwargs: httpx.Response(200,request=httpx.Request('GET',url),json=service))
     caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
     assert caps['quality'] is True and caps['quality_mode']=='consistency' and caps['reason']==''
-    assert caps['profiles']['quality']['candidate_select']=='overlap'
+    assert caps['profiles']['quality']['candidate_select']=='auto'
     service['defaults']={'passes':1}
     caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
     assert caps['quality'] is False and 'candidate selection' in caps['reason']
@@ -315,9 +315,10 @@ def test_quality_profile_works_without_a_text_ranker(client, tmp_path, monkeypat
     caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
     assert caps['quality'] is True and caps['quality_mode']=='ranker'
     quality=options('quality')
-    assert quality['reranking_candidates']==1 and quality['candidates']==2 and quality['candidate_select']=='overlap' and quality['refine']=='mask'
+    assert quality['reranking_candidates']==1 and quality['candidates']==2 and quality['candidate_select']=='auto' and quality['refine']=='mask' and quality['refine_threshold']==0.5
     monkeypatch.setenv('QUALITY_RERANKING','true'); assert options('quality')['reranking_candidates']==2
     preview=options('preview')
-    assert preview['reranking_candidates']==1 and 'candidates' not in preview and 'refine' not in preview
+    assert preview['reranking_candidates']==1 and 'candidates' not in preview and preview['refine']=='mask' and preview['refine_threshold']==0.0
+    monkeypatch.setenv('PREVIEW_REFINE','off'); assert 'refine' not in options('preview')
     monkeypatch.setenv('PREVIEW_REFINE','mask'); monkeypatch.setenv('PREVIEW_REFINE_THRESHOLD','0.3')
-    assert options('preview')['refine']=='mask' and options('preview')['refine_threshold']==0.3
+    assert options('preview')['refine_threshold']==0.3

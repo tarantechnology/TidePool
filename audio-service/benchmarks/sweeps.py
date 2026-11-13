@@ -61,6 +61,11 @@ SWEEPS: dict[str, list[dict[str, Any]]] = {
         {"name": "k3-overlap-chunk20", "chunk_seconds": 20.0, "window_candidates": 3, "select": "overlap"},
         {"name": "k2-overlap-whole", "chunk_seconds": 0.0, "window_candidates": 2, "select": "overlap"},
     ],
+    # Temporal gate strength on top of the leakage threshold (30 dB never triggered in the leakage sweep).
+    "gate": [
+        {"name": "thr0.5-gate0", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "refine_gate_db": 0},
+        *[{"name": f"thr0.5-gate{g}", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "refine_gate_db": g} for g in (10, 15, 20)],
+    ],
     # Chunk window length (0 = whole file in one window).
     "chunks": [
         {"name": f"chunk{chunk:g}" if chunk else "whole-file", "chunk_seconds": chunk, "window_candidates": 1}
@@ -68,9 +73,10 @@ SWEEPS: dict[str, list[dict[str, Any]]] = {
     ],
     # The first quality bundle: each improvement alone, then together.
     "quality-v1": [
-        {"name": "baseline"},
-        {"name": "refine-mask", **_MASK},
-        {"name": "k2-overlap", "window_candidates": 2, "select": "overlap"},
-        {"name": "refine-mask+k2-overlap", **_MASK, "window_candidates": 2, "select": "overlap"},
+        {"name": "off", "refine": "off", "window_candidates": 1},
+        {"name": "mask", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 1},
+        {"name": "mask-k2-auto", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 2, "select": "auto"},
+        {"name": "mask-k3-auto", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 3, "select": "auto"},
+        {"name": "quality-profile", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "window_candidates": 2, "select": "auto"},
     ],
 }

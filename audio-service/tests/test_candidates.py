@@ -246,3 +246,15 @@ def test_separate_endpoint_accepts_candidates(client, wav_path):
         data={"metadata": json.dumps({"prompts": ["dog"], "options": {"candidates": 9}})},
     )
     assert r.status_code == 400
+
+
+def test_auto_mode_means_single_windows_and_matches_chunked_neighbours():
+    import numpy as np
+    from sam_audio_service.candidates import choose
+    a = np.ones(8, dtype=np.float32); b = -np.ones(8, dtype=np.float32)
+    idx, picked = choose([a, b], None, 0, "auto")          # one window: ensemble mean
+    assert idx is None and np.allclose(picked, 0)
+    idx, picked = choose([b, a], a, 4, "auto")             # chunked: agree with the previous window
+    assert idx == 1 and np.array_equal(picked, a)
+    idx, _ = choose([a, b], None, 4, "auto")               # chunked, no previous: first (K < 3)
+    assert idx == 0

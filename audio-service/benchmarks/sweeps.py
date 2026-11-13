@@ -56,6 +56,9 @@ SWEEPS: dict[str, list[dict[str, Any]]] = {
             for select in ("overlap", "mean")
         ],
         {"name": "k2-overlap-chunk15", "chunk_seconds": 15.0, "window_candidates": 2, "select": "overlap"},
+        {"name": "k1-chunk20", "chunk_seconds": 20.0, "window_candidates": 1},
+        {"name": "k2-overlap-chunk20", "chunk_seconds": 20.0, "window_candidates": 2, "select": "overlap"},
+        {"name": "k3-overlap-chunk20", "chunk_seconds": 20.0, "window_candidates": 3, "select": "overlap"},
         {"name": "k2-overlap-whole", "chunk_seconds": 0.0, "window_candidates": 2, "select": "overlap"},
     ],
     # Chunk window length (0 = whole file in one window).

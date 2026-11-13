@@ -19,6 +19,20 @@ def test_health_and_capabilities(client):
     caps = client.get("/capabilities").json()
     assert caps["prompting_modes"]["text"] is True
     assert "INVALID_MEDIA" in caps["error_codes"]
+    defaults = caps["defaults"]
+    assert defaults["refine"] == {"mode": "off", "p": 2.0, "n_fft": 2048, "floor": 0.0, "blend": 1.0, "threshold": 0.0, "gate_db": 0.0}
+    assert defaults["candidates"] == 1 and defaults["candidate_select"] == "overlap"
+
+
+def test_separate_reports_refine_and_candidates(client, wav_path):
+    r = _post(client, wav_path.read_bytes(), {"prompts": ["dog"]})
+    assert r.status_code == 200, r.text
+    model = r.json()["model"]
+    assert "refine" not in model or model["refine"] is None  # off by default (None is dropped)
+    assert model["candidates"] == 1 and model["candidate_select"] == "first"
+    r = _post(client, wav_path.read_bytes(), {"prompts": ["dog"], "options": {"refine": "mask", "refine_threshold": 0.3}})
+    assert r.status_code == 200, r.text
+    assert r.json()["model"]["refine"]["mode"] == "mask" and r.json()["model"]["refine"]["threshold"] == 0.3
 
 
 def test_person4_contract_shape(client, wav_path):

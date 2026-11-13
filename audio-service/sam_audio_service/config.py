@@ -72,6 +72,18 @@ class Settings:
     # "duplicate": run mono separation and duplicate to source channel count (1 pass).
     # "per_channel": separate each channel independently (N passes; independent estimates may alter stereo image).
     stereo_mode: str = field(default_factory=lambda: os.getenv("AUDIO_STEREO_MODE", "duplicate"))
+    # Time-frequency mask refinement of each target stem (refine.py). Off by default.
+    refine: str = field(default_factory=lambda: os.getenv("AUDIO_REFINE", "off"))
+    refine_p: float = field(default_factory=lambda: _float("AUDIO_REFINE_P", 2.0))
+    refine_n_fft: int = field(default_factory=lambda: _int("AUDIO_REFINE_NFFT", 2048))
+    refine_floor: float = field(default_factory=lambda: _float("AUDIO_REFINE_FLOOR", 0.0))
+    refine_blend: float = field(default_factory=lambda: _float("AUDIO_REFINE_BLEND", 1.0))
+    refine_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_THRESHOLD", 0.0))
+    refine_gate_db: float = field(default_factory=lambda: _float("AUDIO_REFINE_GATE_DB", 0.0))
+    # Noise draws returned per chunk window and how one is picked (candidates.py). Each
+    # extra draw costs one more batch item (K x compute and activation memory).
+    candidates: int = field(default_factory=lambda: _int("AUDIO_CANDIDATES", 1))
+    candidate_select: str = field(default_factory=lambda: os.getenv("AUDIO_CANDIDATE_SELECT", "overlap"))
 
     # Limits.
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
@@ -156,6 +168,24 @@ class Settings:
             raise ValueError("AUDIO_FRAME_SIZE must be positive")
         if not 0 < self.ode_step_size <= 1:
             raise ValueError("AUDIO_ODE_STEP_SIZE must be in (0, 1]")
+        if self.refine not in {"off", "mask"}:
+            raise ValueError("AUDIO_REFINE must be 'off' or 'mask'")
+        if not 0 < self.refine_p <= 8:
+            raise ValueError("AUDIO_REFINE_P must be in (0, 8]")
+        if self.refine_n_fft not in {512, 1024, 2048, 4096}:
+            raise ValueError("AUDIO_REFINE_NFFT must be 512, 1024, 2048 or 4096")
+        if not 0 <= self.refine_floor <= 0.5:
+            raise ValueError("AUDIO_REFINE_FLOOR must be in [0, 0.5]")
+        if not 0 <= self.refine_blend <= 1:
+            raise ValueError("AUDIO_REFINE_BLEND must be in [0, 1]")
+        if not 0 <= self.refine_threshold < 1:
+            raise ValueError("AUDIO_REFINE_THRESHOLD must be in [0, 1)")
+        if not 0 <= self.refine_gate_db <= 80:
+            raise ValueError("AUDIO_REFINE_GATE_DB must be in [0, 80]")
+        if not 1 <= self.candidates <= 8:
+            raise ValueError("AUDIO_CANDIDATES must be between 1 and 8")
+        if self.candidate_select not in {"first", "overlap", "mean"}:
+            raise ValueError("AUDIO_CANDIDATE_SELECT must be 'first', 'overlap' or 'mean'")
 
 
 def load_settings() -> Settings:

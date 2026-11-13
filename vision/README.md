@@ -21,7 +21,7 @@ python -m playwright install chromium
 cd vision
 ```
 
-The backend and vision dependencies are separate; root `requirements.txt` and the backend Docker image do not install YOLO. On Windows use `.venv\Scripts\activate`, and install FFmpeg on PATH. CPU is the validated device. `--device mps` is available but was not benchmarked.
+The backend and vision dependencies are separate; root `requirements.txt` and the backend Docker image do not install YOLO. On Windows use `.venv\Scripts\activate`, and install FFmpeg on PATH. CPU and Runpod CUDA inference are validated; see the measured GPU results above. `--device mps` is available but was not benchmarked.
 
 ## Reproduce real inference
 
@@ -84,9 +84,9 @@ GitHub runs deterministic vision tests separately from backend CI. Manually disp
 - [x] Persistent tracking with per-analysis scope; controlled loss/reappearance experiments.
 - [x] Optional real YOLO instance masks and aligned CV tensors for SAM Audio preparation.
 - [x] Official SAM 3 / SAM Audio feasibility review; explicit mock integration.
-- [ ] SAM 3 inference and quantitative comparison: CUDA/access/checkpoint blockers.
-- [ ] Full SAM Audio processor/model run and visual-guided audio isolation: no model/service locally; requires Person 1.
-- [ ] Shared original-video resolver for the existing WAV+JSON audio HTTP boundary; cross-team approval of schema/model revision remains pending.
+- [x] Official SAM 3.1 CUDA inference and YOLO/SAM 2.1 comparisons; pixel-ground-truth accuracy remains unmeasured.
+- [x] Real SAM Audio Small TV text/visual/temporal inference and backend MP4 export on Runpod; isolation quality remains unverified.
+- [x] Trusted original-video resolver and native-mask handoff through the existing WAV+JSON boundary; cross-team quality review remains pending.
 - [ ] Natural occlusion identity accuracy benchmark, automatic sound association and similar-speaker separation.
 
 Only visible objects are detected. Track IDs can change, predicted classes can be wrong, and a detection does not establish a sound source. CFR timing is supported; normalize variable frame rate, edit lists, nonzero audio/video offsets and rotation before processing/upload so all workstreams share the same timeline. OpenCV's decoded orientation/dimensions are authoritative; no explicit VFR/PTS reconciliation is implemented. Masks are model estimates, not ground truth. License terms for Ultralytics and any future SAM deployment require the team's own review.

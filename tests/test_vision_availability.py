@@ -38,6 +38,7 @@ def api(tmp_path, monkeypatch):
     from app.main import app
     monkeypatch.setattr(core, 'ROOT', tmp_path)
     monkeypatch.setattr(core, 'DB', tmp_path/'db.sqlite')
+    monkeypatch.delenv('VISION_ADAPTER', raising=False)
     monkeypatch.delenv('VISION_MODEL', raising=False)
     monkeypatch.delenv('VISION_DEVICE', raising=False)
     monkeypatch.delenv('YOLO_CONFIG_DIR', raising=False)

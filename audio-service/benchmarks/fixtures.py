@@ -30,7 +30,9 @@ The fixture records which was used in ``speech_source``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -316,15 +318,42 @@ def _plucked_tone(seconds: float, rng: np.random.Generator, *, f0: float = 330.0
 
 
 # ------------------------------------------------------------------------ real speech
+def say_cache_dir() -> Path | None:
+    """Directory of pre-rendered ``say`` lines (``SOUNDCANVAS_SAY_CACHE``), or ``None``.
+
+    macOS renders a line once into ``<voice>-<sha1(text)[:12]>.aiff`` there; a Linux GPU host
+    with a copy of the directory then builds the very same real-speech fixtures without
+    ``say``. Set the variable on both machines and rsync the directory.
+    """
+    value = os.getenv("SOUNDCANVAS_SAY_CACHE", "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def _say_cache_path(text: str, voice: str) -> Path | None:
+    directory = say_cache_dir()
+    if directory is None:
+        return None
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    return directory / f"{voice}-{digest}.aiff"
+
+
 def say_available() -> bool:
-    """True when macOS ``say`` can be used (never true on Linux CI)."""
-    return shutil.which("say") is not None
+    """True when macOS ``say`` can be used, or a pre-rendered cache is present (Linux hosts)."""
+    directory = say_cache_dir()
+    return shutil.which("say") is not None or bool(directory and directory.is_dir() and any(directory.glob("*.aiff")))
 
 
 def _say_voices(pool: tuple[str, ...]) -> list[str]:
-    """Installed voices from ``pool``, in preference order (empty when ``say`` is absent)."""
-    if not say_available():
-        return []
+    """Usable voices from ``pool``, in preference order (empty when ``say`` is absent).
+
+    Without the ``say`` binary, a voice counts as usable when the cache holds at least one
+    line rendered with it.
+    """
+    if shutil.which("say") is None:
+        directory = say_cache_dir()
+        if not directory or not directory.is_dir():
+            return []
+        return [voice for voice in pool if any(directory.glob(f"{voice}-*.aiff"))]
     try:
         listing = subprocess.run(["say", "-v", "?"], capture_output=True, timeout=20, check=False).stdout.decode("utf-8", "replace")
     except (OSError, subprocess.SubprocessError):
@@ -340,12 +369,21 @@ def _say_speech(text: str, voice: str, seconds: float, rng: np.random.Generator)
     synthetic voice. Decoding reuses :func:`sam_audio_service.audio_io.decode`.
     """
     n = _frames(seconds)
+    cached = _say_cache_path(text, voice)
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "speech.aiff"
         try:
-            proc = subprocess.run(["say", "-v", voice, "-r", "180", "-o", str(path), text], capture_output=True, timeout=60, check=False)
-            if proc.returncode != 0 or not path.exists():
+            if cached is not None and cached.is_file():
+                path = cached
+            elif shutil.which("say") is None:
                 return None
+            else:
+                if cached is not None:
+                    cached.parent.mkdir(parents=True, exist_ok=True)
+                    path = cached
+                proc = subprocess.run(["say", "-v", voice, "-r", "180", "-o", str(path), text], capture_output=True, timeout=60, check=False)
+                if proc.returncode != 0 or not path.exists():
+                    return None
             audio = decode(path=path, target_rate=SAMPLE_RATE, max_channels=1)
         except Exception:  # noqa: BLE001 - any failure falls back to the synthetic voice
             return None

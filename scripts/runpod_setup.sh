@@ -32,8 +32,11 @@ case "$cmd" in
   status) curl -s http://127.0.0.1:8001/health || echo "not running"; echo; nvidia-smi --query-gpu=memory.used,memory.total --format=csv ;;
   bench)  # full quality sweeps on the GPU (results in /workspace/bench)
     shift; cd $REPO/audio-service
+    # Real speech on Linux: rsync the Mac's rendered `say` lines to $WS/say-cache
+    #   rsync -a -e "ssh -p PORT -i ~/.ssh/id_ed25519" audio-service/benchmarks/say-cache/ root@HOST:$WS/say-cache/
+    SPEECH=synthetic; if ls $WS/say-cache/*.aiff >/dev/null 2>&1; then export SOUNDCANVAS_SAY_CACHE=$WS/say-cache; SPEECH=say; fi
     AUDIO_BACKEND=sam AUDIO_MODEL_ID=$(model_for_gpu) AUDIO_DEVICE=cuda AUDIO_LOAD_SPAN_PREDICTOR=false AUDIO_LOAD_RANKERS=false \
-      $PY -m benchmarks.run_benchmark --backend sam --seconds 6 --latency-seconds 15 --long-seconds 24 --speech-mode synthetic --seed 1234 "$@"
+      $PY -m benchmarks.run_benchmark --backend sam --seconds 6 --latency-seconds 15 --long-seconds 24 --speech-mode $SPEECH --seed 1234 "$@"
     ;;
   setup|*)
     [ "${HF_TOKEN:-}" ] || { echo "HF_TOKEN is not set (needed for the gated facebook/sam-audio-* weights)"; exit 1; }

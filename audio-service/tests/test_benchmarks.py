@@ -356,3 +356,21 @@ def test_sweep_writes_one_table_with_deltas(tmp_path, monkeypatch):
     assert "Δ" in markdown and "leak" in markdown and "MOCK RUN" in markdown
     assert "`base`" in markdown and "`finer-ode`" in markdown
     assert "`music_mix` resid-leak" in markdown and "Mean resid-leak" in markdown
+
+
+def test_say_cache_serves_real_speech_without_the_say_binary(tmp_path, monkeypatch):
+    import shutil
+    import numpy as np
+    from benchmarks import fixtures as fx
+    from sam_audio_service.audio_io import encode_wav_pcm16
+    monkeypatch.setenv("SOUNDCANVAS_SAY_CACHE", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # Linux host: no `say`
+    assert fx.say_available() is False and fx._say_voices(fx.SAY_VOICES_LOW) == []
+    voice = fx.SAY_VOICES_LOW[0]
+    path = fx._say_cache_path("hello there", voice)
+    tone = (0.3 * np.sin(2 * np.pi * 220 * np.arange(48000) / 48000)).astype(np.float32)[None, :]
+    path.write_bytes(encode_wav_pcm16(tone, 48000))  # ffmpeg sniffs the content, not the suffix
+    assert fx.say_available() is True and fx._say_voices(fx.SAY_VOICES_LOW) == [voice]
+    rendered = fx._say_speech("hello there", voice, 0.5, np.random.default_rng(0))
+    assert rendered is not None and rendered.shape == (24000,) and float(np.abs(rendered).max()) > 0.1
+    assert fx._say_speech("another line", voice, 0.5, np.random.default_rng(0)) is None

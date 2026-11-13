@@ -1,12 +1,15 @@
 import type { ReactNode } from 'react'
 import { HeroPreview } from '../components/HeroPreview'
 import { Logo } from '../components/Logo'
+import { rememberEntry } from '../entry'
+import { RippleField } from '../components/RippleField'
 
 function OpenButton({ children, large = false }: { children: ReactNode; large?: boolean }) {
   return (
     <a
       href="#/app"
-      className={`glow-accent inline-flex items-center gap-2 rounded-full bg-accent font-medium text-white transition-all hover:brightness-110 ${
+      onClick={(e) => rememberEntry(e.clientX, e.clientY)}
+      className={`glow-accent inline-flex items-center gap-2 rounded-full bg-accent font-medium text-white transition-all hover:bg-[#1b62b3] active:scale-[0.98] ${
         large ? 'h-12 px-7 text-[15px]' : 'h-9 px-4 text-sm'
       }`}
     >
@@ -112,15 +115,15 @@ export default function Landing() {
 
       {/* Hero */}
       <header className="relative">
-        <div className="bg-grid fade-edges pointer-events-none absolute inset-x-0 top-0 h-[44rem]" />
-        <div className="pointer-events-none absolute -top-32 left-1/2 h-[26rem] w-[50rem] -translate-x-1/2 rounded-full bg-accent/15 blur-[140px]" />
+        <RippleField className="[mask-image:linear-gradient(to_bottom,#000_55%,transparent)]" />
+        <div className="pointer-events-none absolute -top-32 left-1/2 h-[26rem] w-[50rem] -translate-x-1/2 rounded-full bg-sky/25 blur-[140px]" />
 
         <div className="relative mx-auto max-w-6xl px-5 pt-20 pb-16 text-center sm:pt-28">
           <div className="mx-auto mb-7 inline-flex items-center gap-2 rounded-full border border-line-strong bg-tint/[0.03] px-3 py-1.5 font-mono text-[11px] text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_rgb(43_123_214/0.9)]" />
             Prompt-driven audio editing, early prototype
           </div>
-          <h1 className="text-gradient mx-auto max-w-3xl text-5xl leading-[1.04] font-semibold tracking-tight sm:text-7xl">
+          <h1 className="mx-auto max-w-3xl text-balance text-fg text-5xl leading-[1.04] font-semibold tracking-tight sm:text-7xl">
             Edit sound with a sentence.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
@@ -203,7 +206,7 @@ export default function Landing() {
         <div className="relative overflow-hidden rounded-3xl border border-line-strong bg-surface px-6 py-16 text-center">
           <div className="bg-grid fade-edges pointer-events-none absolute inset-0 opacity-60" />
           <div className="pointer-events-none absolute -bottom-24 left-1/2 h-56 w-[34rem] -translate-x-1/2 rounded-full bg-accent/20 blur-[100px]" />
-          <h2 className="text-gradient relative text-3xl font-semibold tracking-tight sm:text-5xl">
+          <h2 className="relative text-balance text-3xl text-fg font-semibold tracking-tight sm:text-5xl">
             Hear it before you read about it.
           </h2>
           <p className="relative mx-auto mt-4 max-w-md text-muted">

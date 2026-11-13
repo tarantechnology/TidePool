@@ -348,7 +348,7 @@ export default function Editor() {
             </summary>
             <div className="shadow-card absolute right-0 top-10 z-30 w-64 rounded-xl border border-line bg-surface p-1.5 text-xs">
               <button className={MENU_ITEM} disabled={status !== 'ready'} onClick={() => picker.current?.click()}>Import audio files</button>
-              <button className={MENU_ITEM} disabled={status !== 'ready'} onClick={() => downloadText(serializeEditList(tracks), 'soundcanvas-edit-list.json')}>Download edit list (JSON)</button>
+              <button className={MENU_ITEM} disabled={status !== 'ready'} onClick={() => downloadText(serializeEditList(tracks), 'tidepool-edit-list.json')}>Download edit list (JSON)</button>
               <div className="mt-1 border-t border-line px-2 pt-2 pb-1">
                 <p className="mb-1 font-medium text-fg">Edit history</p>
                 <div className="max-h-40 overflow-y-auto"><EditLog log={log} /></div>

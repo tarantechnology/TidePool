@@ -295,7 +295,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (info.status === 'failed') throw new Error(info.error || 'Export failed')
       if (info.status === 'completed') {
         if (!info.download_url) throw new Error('Export has no download URL')
-        await downloadExport(config,info.download_url,`soundcanvas.${extension}`); setMessage('Export downloaded.'); return
+        await downloadExport(config,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
       }
       setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }

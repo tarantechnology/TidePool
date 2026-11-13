@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import httpx
+from . import guidance
 from .core import max_passes, run, probe, uid
 
 
@@ -180,10 +181,14 @@ def capabilities():
     try:
         response=httpx.get(urlunsplit((url.scheme,url.netloc,'/capabilities','','')),timeout=5)
         response.raise_for_status(); data=response.json(); model=data.get('model',{})
-        quality=bool(model.get('loaded') and model.get('text_ranker_loaded') and not data.get('is_mock'))
+        defaults=data.get('defaults') or {}
+        ranked=bool(model.get('text_ranker_loaded')); consistent='candidate_select' in defaults
+        quality=bool(model.get('loaded') and not data.get('is_mock') and (ranked or consistent))
+        reason='' if quality else ('Quality retry needs a real model (the mock backend cannot rank or refine).' if data.get('is_mock') or not model.get('loaded')
+                                   else 'Quality retry requires the pretrained text ranker or a service with per-window candidate selection.')
         return {'preview':True,'quality':quality,'visual':bool(data.get('prompting_modes',{}).get('visual')),
-                'experimental_visual':True,'reason':'' if quality else 'Quality retry requires the pretrained text ranker to be loaded.',
-                'profiles':{'preview':{'candidates':1,'chunk_seconds':10,'chunk_batch':2},'quality':{'candidates':2,'chunk_seconds':10,'chunk_batch':2}},
+                'experimental_visual':True,'reason':reason,'quality_mode':('ranker' if ranked else 'consistency') if quality else None,
+                'profiles':{'preview':{'candidates':1,'chunk_seconds':10,'chunk_batch':2},'quality':{'candidates':2,'chunk_seconds':10,'chunk_batch':2,**guidance.profile_extras('quality')}},
                 'long_window_promoted':False,'automatic_spans':False,**passes_capability(data)}
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.',

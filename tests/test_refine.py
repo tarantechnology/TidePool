@@ -295,3 +295,29 @@ def test_unusable_visual_guidance_is_skipped_with_warning():
     assert body['options']=={'reranking_candidates':2,'passes':2}
     assert [a['token'] for a in body['anchors']]==['+','-']
     assert len(warnings)==1 and 'Visual guidance' in warnings[0]
+
+
+def test_quality_profile_works_without_a_text_ranker(client, tmp_path, monkeypatch):
+    import httpx
+    import app.media as media
+    from app.guidance import options
+    pid,h=uploaded(client,tmp_path,.2)
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://mock.invalid/separate')
+    service={'model':{'loaded':True,'text_ranker_loaded':False},'prompting_modes':{},'defaults':{'passes':1,'candidates':1,'candidate_select':'overlap'},'limits':{'passes':3}}
+    monkeypatch.setattr(media.httpx,'get',lambda url, **kwargs: httpx.Response(200,request=httpx.Request('GET',url),json=service))
+    caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
+    assert caps['quality'] is True and caps['quality_mode']=='consistency' and caps['reason']==''
+    assert caps['profiles']['quality']['candidate_select']=='overlap'
+    service['defaults']={'passes':1}
+    caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
+    assert caps['quality'] is False and 'candidate selection' in caps['reason']
+    service['model']['text_ranker_loaded']=True
+    caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
+    assert caps['quality'] is True and caps['quality_mode']=='ranker'
+    quality=options('quality')
+    assert quality['reranking_candidates']==1 and quality['candidates']==2 and quality['candidate_select']=='overlap' and quality['refine']=='mask'
+    monkeypatch.setenv('QUALITY_RERANKING','true'); assert options('quality')['reranking_candidates']==2
+    preview=options('preview')
+    assert preview['reranking_candidates']==1 and 'candidates' not in preview and 'refine' not in preview
+    monkeypatch.setenv('PREVIEW_REFINE','mask'); monkeypatch.setenv('PREVIEW_REFINE_THRESHOLD','0.3')
+    assert options('preview')['refine']=='mask' and options('preview')['refine_threshold']==0.3

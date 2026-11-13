@@ -54,6 +54,12 @@ class BackendOptions:
     predict_spans: bool = False
     reranking_candidates: int = 1
     seed: int | None = None
+    # Independent noise draws to RETURN per window (``BackendResult.candidates``); the engine
+    # picks one per window. Distinct from ``reranking_candidates``, which the model ranks
+    # internally. Backends that ignore it simply return ``candidates=None``.
+    candidates: int = 1
+    # Engine-side selection rule ("first" | "overlap" | "mean"); backends do not use it.
+    candidate_select: str = "overlap"
 
 
 @dataclass
@@ -62,6 +68,10 @@ class BackendResult:
     residual: np.ndarray | None = None  # model residual if the backend produces one
     spans: list[tuple[float, float]] | None = None  # seconds relative to the input, if known
     extra: dict[str, Any] = field(default_factory=dict)
+    # K mono targets when options.candidates > 1 (``candidates[0]`` is ``target``) and the
+    # matching residuals; None when the backend produced a single draw.
+    candidates: list[np.ndarray] | None = None
+    candidate_residuals: list[np.ndarray | None] | None = None
 
 
 class Backend(ABC):

@@ -30,8 +30,10 @@ import numpy as np
 from .audio_io import DecodedAudio, sanitise, to_mono
 from .backends import Backend, create_backend
 from .backends.base import Anchor, BackendOptions, BackendPrompt, BackendResult, VisualInput
+from .candidates import choose, choose_residual
 from .config import Settings
 from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
+from .refine import mask_refine
 from .errors import (
     AudioServiceError,
     InferenceFailure,
@@ -141,7 +143,35 @@ class Engine:
         chunk = self.settings.chunk_seconds if options.chunk_seconds is None else options.chunk_seconds
         if chunk and chunk <= 2 * self.settings.chunk_overlap_seconds:
             raise InvalidRequest(f"options.chunk_seconds must exceed {2 * self.settings.chunk_overlap_seconds:g}s (twice the crossfade overlap) or be 0", details={"chunk_overlap_seconds": self.settings.chunk_overlap_seconds})
-        return BackendOptions(predict_spans=predict, reranking_candidates=rerank, seed=options.seed), stereo, chunk
+        k = options.candidates or self.settings.candidates
+        if not 1 <= k <= 8:
+            raise InvalidRequest("options.candidates must be between 1 and 8")
+        select = options.candidate_select or self.settings.candidate_select
+        return BackendOptions(predict_spans=predict, reranking_candidates=rerank, seed=options.seed, candidates=k, candidate_select=select), stereo, chunk
+
+    def _resolve_refine(self, options: InferenceOptions) -> dict[str, Any] | None:
+        """Effective mask-refinement parameters, or None when refinement is off."""
+        s = self.settings
+        mode = options.refine or s.refine
+        if mode != "mask":
+            return None
+        pick = lambda value, default: default if value is None else value  # noqa: E731
+        return {
+            "mode": "mask",
+            "p": float(pick(options.refine_p, s.refine_p)),
+            "n_fft": int(pick(options.refine_n_fft, s.refine_n_fft)),
+            "floor": float(pick(options.refine_floor, s.refine_floor)),
+            "blend": float(pick(options.refine_blend, s.refine_blend)),
+            "threshold": float(pick(options.refine_threshold, s.refine_threshold)),
+            "gate_db": float(pick(options.refine_gate_db, s.refine_gate_db)),
+        }
+
+    @staticmethod
+    def _refine_target(mixture: np.ndarray, target: np.ndarray, cfg: dict[str, Any], stereo_mode: str) -> np.ndarray:
+        kwargs = {k: cfg[k] for k in ("p", "n_fft", "floor", "blend", "threshold", "gate_db")}
+        if stereo_mode == "per_channel":
+            return np.concatenate([mask_refine(mixture[c : c + 1], target[c : c + 1], **kwargs) for c in range(mixture.shape[0])])
+        return mask_refine(mixture, target, **kwargs)
 
     # ------------------------------------------------------------------ main entry
     def separate(self, audio: DecodedAudio, metadata: SeparationMetadata, workdir: Path | None = None) -> EngineResult:
@@ -159,10 +189,12 @@ class Engine:
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
         batch = metadata.options.chunk_batch or self.settings.chunk_batch
         passes = metadata.options.passes or 1
-        if batch > 1 and backend_options.seed is not None:
+        refine_cfg = self._resolve_refine(metadata.options)
+        k_cands = backend_options.candidates
+        if (batch > 1 or k_cands > 1) and backend_options.seed is not None:
             warnings.append(
-                f"seeded inference is reproducible for AUDIO_CHUNK_BATCH={batch}; "
-                "a different chunk batch size draws different noise"
+                f"seeded inference is reproducible for AUDIO_CHUNK_BATCH={batch} and candidates={k_cands}; "
+                "a different chunk batch size or candidate count draws different noise"
             )
         if self.backend.is_mock:
             warnings.append("MOCK backend: stems are band-pass filtered copies of the mixture, not real separation")
@@ -175,6 +207,7 @@ class Engine:
         oom_retry = False
         effective_batch = batch
         max_passes_run = 1
+        candidates_ignored_warned = False
         with self._lock:
             self.ensure_loaded()  # under the lock so concurrent first requests load the model once
             torch = sys.modules.get('torch')
@@ -217,6 +250,9 @@ class Engine:
                     pass_started = time.perf_counter()
                     target, outs, was_chunked, retried = self._separate_pass(source, prompt, backend_options, stereo_mode, visual, chunk_seconds, audio, batch)
                     chunked = chunked or was_chunked
+                    if k_cands > 1 and any(o.extra.get("candidates_ignored") for o in outs) and not candidates_ignored_warned:
+                        warnings.append(f"backend ignored options.candidates={k_cands}; one draw per window was used")
+                        candidates_ignored_warned = True
                     if retried:
                         effective_batch = 1
                         oom_retry = True
@@ -251,6 +287,17 @@ class Engine:
                         stopped_early = True
                         break
                 target = cumulative
+                if refine_cfg is not None:
+                    # Post-processing on the summed target only: passes above ran on the
+                    # raw model residual chain, and the residual stem is still derived as
+                    # mixture - sum(targets) below, so stems keep summing to the mixture.
+                    target = self._refine_target(mixture, target, refine_cfg, stereo_mode)
+                    if visual is not None:
+                        sr = self.backend.sample_rate
+                        s0 = min(audio.frames, max(0, int(round(visual.interval[0] * sr))))
+                        s1 = min(audio.frames, max(s0, int(round(visual.interval[1] * sr))))
+                        target[:, :s0] = 0.0
+                        target[:, s1:] = 0.0
                 passes_run = len(per_pass_db)
                 max_passes_run = max(max_passes_run, passes_run)
                 if visual is not None:
@@ -307,6 +354,9 @@ class Engine:
             "requested_chunk_batch": batch,
             "effective_chunk_batch": effective_batch if chunked else 1,
             "passes": max_passes_run,
+            "refine": refine_cfg,
+            "candidates": k_cands,
+            "candidate_select": backend_options.candidate_select if k_cands > 1 else "first",
             "elapsed_seconds": round(elapsed, 3),
             "is_mock": self.backend.is_mock,
         }
@@ -337,7 +387,21 @@ class Engine:
 
     # ------------------------------------------------------------------ chunking
     def _call_backend(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions) -> BackendResult:
-        return self._call_backend_many([signal], [prompt], options)[0]
+        """One unchunked window: with candidates there is no neighbour, so pick without one."""
+        result = self._call_backend_many([signal], [prompt], options)[0]
+        if result.candidates is not None:
+            idx, target = choose(result.candidates, None, 0, options.candidate_select)
+            result.residual = choose_residual(result.candidate_residuals, idx)
+            result.target = target
+            result.extra = {**result.extra, "candidate_choices": [idx]}
+        return result
+
+    @staticmethod
+    def _flag_ignored_candidates(results: list[BackendResult], options: BackendOptions) -> None:
+        if options.candidates > 1:
+            for r in results:
+                if r.candidates is None:
+                    r.extra = {**r.extra, "candidates_ignored": True}
 
     def _call_backend_many(self, signals: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions) -> list[BackendResult]:
         """One backend call for ``k`` windows, with error classification and length repair."""
@@ -347,12 +411,13 @@ class Engine:
             raise
         except Exception as exc:  # noqa: BLE001
             if is_out_of_memory(exc):
-                raise InsufficientGpuMemory("GPU ran out of memory during inference; try a shorter input, AUDIO_CHUNK_SECONDS, a smaller AUDIO_CHUNK_BATCH or fewer reranking candidates", details={"frames": int(max(len(s) for s in signals)), "batch": len(signals)}) from exc
+                raise InsufficientGpuMemory("GPU ran out of memory during inference; try a shorter input, AUDIO_CHUNK_SECONDS, a smaller AUDIO_CHUNK_BATCH, fewer reranking candidates or fewer options.candidates", details={"frames": int(max(len(s) for s in signals)), "batch": len(signals), "candidates": options.candidates}) from exc
             raise InferenceFailure(f"{type(exc).__name__}: {exc}") from exc
         if len(results) != len(signals):
             raise InferenceFailure(f"backend returned {len(results)} results for {len(signals)} windows")
         for signal, result in zip(signals, results, strict=True):
             self._fit_length(result, len(signal))
+        self._flag_ignored_candidates(results, options)
         return results
 
     @staticmethod
@@ -364,14 +429,20 @@ class Engine:
         residual left at the padded length would raise a broadcast error rather than be
         silently wrong.
         """
-        for attr in ("target", "residual"):
-            arr = getattr(result, attr)
+        def fit(arr: np.ndarray | None) -> np.ndarray | None:
             if arr is None or arr.shape[-1] == n:
-                continue
+                return arr
             m = min(n, arr.shape[-1])
             fixed = np.zeros(n, dtype=np.float32)
             fixed[:m] = arr[:m]
-            setattr(result, attr, fixed)
+            return fixed
+
+        for attr in ("target", "residual"):
+            setattr(result, attr, fit(getattr(result, attr)))
+        for attr in ("candidates", "candidate_residuals"):
+            arrs = getattr(result, attr)
+            if arrs is not None:
+                setattr(result, attr, [fit(a) for a in arrs])
 
     def _separate_interval(self, signal: np.ndarray, prompt: BackendPrompt, options: BackendOptions, interval: tuple[float, float]) -> BackendResult:
         """Visual prompting: separate only the interval the masks cover, then place the
@@ -414,6 +485,8 @@ class Engine:
         residual = np.zeros(n, dtype=np.float64)
         weight = np.zeros(n, dtype=np.float64)
         spans: list[tuple[float, float]] = []
+        choices: list[int | None] = []
+        ignored = False
         has_residual = True
         def windows():
             start = 0
@@ -436,17 +509,28 @@ class Engine:
                 start += step
 
         def merge(start, end, out):
-            nonlocal has_residual
+            nonlocal has_residual, ignored
             ramp = np.ones(end - start)
             if start > 0:
                 ramp[:overlap] = np.linspace(0.0, 1.0, overlap, endpoint=False)
             if end < n:
                 ramp[-overlap:] = np.minimum(ramp[-overlap:], np.linspace(1.0, 0.0, overlap, endpoint=False))
-            target[start:end] += out.target * ramp
-            if out.residual is None:
+            out_target, out_residual = out.target, out.residual
+            if out.candidates is not None:
+                # Windows merge in timeline order, so [start, start + overlap) already holds
+                # the previous window's (ramped) contribution; dividing by the weight so far
+                # recovers that window's own output for the consistency check.
+                prev = target[start : start + overlap] / np.maximum(weight[start : start + overlap], 1e-6) if start > 0 else None
+                idx, out_target = choose(out.candidates, prev, overlap, options.candidate_select)
+                out_residual = choose_residual(out.candidate_residuals, idx)
+                choices.append(idx)
+            elif out.extra.get("candidates_ignored"):
+                ignored = True
+            target[start:end] += out_target * ramp
+            if out_residual is None:
                 has_residual = False
             else:
-                residual[start:end] += out.residual * ramp
+                residual[start:end] += out_residual * ramp
             weight[start:end] += ramp
             if out.spans:
                 spans.extend((s + start / sr, e + start / sr) for s, e in out.spans)
@@ -470,7 +554,9 @@ class Engine:
                     flush()
             flush()
 
-        batch_size = max(1, chunk_batch or self.settings.chunk_batch)
+        # Each window becomes ``options.candidates`` batch items in the backend, so a model
+        # call never holds more than ``chunk_batch`` items.
+        batch_size = max(1, (chunk_batch or self.settings.chunk_batch) // max(1, options.candidates))
         retried_sequentially = False
         try:
             run_windows(batch_size)
@@ -479,14 +565,19 @@ class Engine:
                 raise
             retried_sequentially = True
             log.warning("batched chunks exceeded GPU memory; retrying this request sequentially")
-            target.fill(0); residual.fill(0); weight.fill(0); spans.clear(); has_residual = True
+            target.fill(0); residual.fill(0); weight.fill(0); spans.clear(); choices.clear(); has_residual = True
             run_windows(1)
         weight = np.maximum(weight, 1e-6)
+        extra: dict[str, Any] = {"parallel_oom_retry": retried_sequentially}
+        if choices:
+            extra["candidate_choices"] = list(choices)
+        if ignored:
+            extra["candidates_ignored"] = True
         merged = BackendResult(
             target=(target / weight).astype(np.float32),
             residual=(residual / weight).astype(np.float32) if has_residual else None,
             spans=_merge_spans(spans) if spans else None,
-            extra={"parallel_oom_retry": retried_sequentially},
+            extra=extra,
         )
         return merged, True
 

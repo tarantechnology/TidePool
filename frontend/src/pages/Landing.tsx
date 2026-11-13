@@ -1,14 +1,12 @@
 import type { ReactNode } from 'react'
 import { HeroPreview } from '../components/HeroPreview'
 import { Logo } from '../components/Logo'
-import { rememberEntry } from '../entry'
 import { RippleField } from '../components/RippleField'
 
 function OpenButton({ children, large = false }: { children: ReactNode; large?: boolean }) {
   return (
     <a
       href="#/app"
-      onClick={(e) => rememberEntry(e.clientX, e.clientY)}
       className={`glow-accent inline-flex items-center gap-2 rounded-full bg-accent font-medium text-white transition-all hover:bg-[#1b62b3] active:scale-[0.98] ${
         large ? 'h-12 px-7 text-[15px]' : 'h-9 px-4 text-sm'
       }`}

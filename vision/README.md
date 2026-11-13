@@ -1,8 +1,10 @@
 # SoundCanvas Part 2 — Vision
 
+**Runpod update (2026-11-13):** official SAM 3.1 and SAM 2.1 video inference now run on the L4, preserving schema 1.0 and YOLO fallback. Real SAM Audio Small TV text/visual/temporal comparisons also ran. [GPU results, adapters and reproduction](docs/RUNPOD.md) distinguish execution from unverified isolation quality.
+
 Independent, working CV pipeline: MP4/image decoding, real YOLO detection, ByteTrack tracking, optional YOLO instance masks, click selection and versioned JSON. This package does not separate audio. See [validation evidence](docs/VALIDATION.md), [integration contract](docs/CONTRACT.md) and [SAM feasibility](docs/SAM.md).
 
-[Issue #4 integration](docs/ISSUE4.md) adds project-owned video resolution, stored-mask/selection pairing, job diagnostics and an upload → edit → MP4 example. Real YOLO/browser and mock-audio integration tests pass; genuine visual-guided SAM Audio isolation is still blocked. The report includes the exact local runtime/dependency diagnosis and reproduction commands.
+[Issue #4 integration](docs/ISSUE4.md) adds project-owned video resolution, stored-mask/selection pairing, job diagnostics and an upload → edit → MP4 example. The historical report includes real YOLO/browser and mock-audio integration tests and the earlier local dependency blockers. The Runpod results linked above now establish real visual-guided model execution; isolation quality remains unverified.
 
 ## Setup
 

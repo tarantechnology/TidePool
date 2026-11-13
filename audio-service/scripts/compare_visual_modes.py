@@ -7,6 +7,7 @@ and explicit model choice are mandatory. Checkpoint access is checked before loa
 """
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -81,6 +82,7 @@ def main():
                   analysis_id=metadata['analysis_id'], object_id=selection['object_id'], seed=args.seed,
                   interval=[start, end], mask_mode=args.mask_mode, is_mock=False, results=[],
                   temporal_anchor_provenance=args.anchor_provenance,
+                  inference_verified=False,
                   listening_evaluation='not performed', objective_separation_metrics='unavailable without reference stems')
     backend = SamAudioBackend(model_id=args.model_id, device='cuda', dtype=args.dtype,
                               load_span_predictor=False, load_rankers=False, mask_mode=args.mask_mode,
@@ -125,12 +127,29 @@ def main():
             facts['export_probe'] = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_streams', '-show_format',
                                                                        '-of', 'json', str(args.output/f'{mode}-edited.mp4')]))
             report['results'].append(facts)
+            report['inference_verified'] = True
             write_json(args.output/'report.json', report)
     except Exception as exc:
-        # Do not persist arbitrary exception text, which may contain URLs or credentials.
-        report['failure'] = dict(type=type(exc).__name__, stage='inference' if backend.loaded else 'model_access_or_load')
+        # Retain a useful cause while redacting credentials and resource URLs.
+        summary = str(exc)
+        try:
+            from huggingface_hub import get_token
+            token = get_token()
+        except ImportError:
+            token = None
+        if token:
+            summary = summary.replace(token, '[redacted]')
+        summary = re.sub(r'https?://\S+', '<model resource URL>', summary)
+        summary = re.sub(r'hf_[A-Za-z0-9]+', '[redacted]', summary)[:1200]
+        report['failure'] = dict(type=type(exc).__name__, summary=summary,
+                                 stage='inference' if backend.loaded else 'model_access_or_load')
+        if 'torch' in sys.modules:
+            torch = sys.modules['torch']
+            if torch.cuda.is_available():
+                report['failure']['cuda_peak_allocated_bytes'] = torch.cuda.max_memory_allocated()
+                report['failure']['cuda_peak_reserved_bytes'] = torch.cuda.max_memory_reserved()
         write_json(args.output/'report.json', report)
-        raise SystemExit(f"Experiment failed: {type(exc).__name__}; see report.json") from None
+        raise SystemExit(f"Experiment failed: {type(exc).__name__}: {summary}; see report.json") from None
     finally:
         backend.unload()
     print(args.output/'report.json')

@@ -282,7 +282,6 @@ export default function Editor() {
   }, [])
 
   const duration = engine?.duration ?? 0
-  const suggestions = useMemo(() => promptSuggestions(visual), [visual])
   const hasLayers = stems.length > 0
   const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel)
 
@@ -417,7 +416,7 @@ export default function Editor() {
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} agentLabel="SoundCanvas AI" suggestions={suggestions} onRun={runPrompt} />
+      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} onRun={runPrompt} />
     </div>
   )
 }
@@ -443,10 +442,3 @@ function WaveIcon() {
   )
 }
 
-/** Prompt ideas from what the detector found in the video, so the first command works on this clip. */
-function promptSuggestions(visual: VisualMetadata | null): string[] {
-  const labels = new Set<string>()
-  for (const frame of visual?.frames ?? []) for (const o of frame.objects ?? []) if (o.label) labels.add(o.label)
-  const found = [...labels].slice(0, 3).flatMap((label) => [`Isolate the ${label}`, `Mute the ${label}`])
-  return [...found, 'Remove the background music', 'Make the voices clearer', 'Lower the crowd noise']
-}

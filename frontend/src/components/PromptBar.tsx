@@ -11,13 +11,10 @@ interface Props {
   disabled: boolean
   /** Why the bar is disabled, shown as helper text and as the tooltip. */
   disabledReason?: string
-  agentLabel: string
-  /** One-click prompts, ideally built from what is in the video. */
-  suggestions: string[]
   onRun: (text: string) => Promise<{ message: string; ok: boolean }>
 }
 
-export function PromptBar({ disabled, disabledReason = '', agentLabel, suggestions, onRun }: Props) {
+export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
   const [text, setText] = useState('')
   const [history, setHistory] = useState<Entry[]>([])
   const [pending, setPending] = useState(false)
@@ -95,27 +92,7 @@ export function PromptBar({ disabled, disabledReason = '', agentLabel, suggestio
             )}
           </button>
         </form>
-        <div className="mt-2.5 flex items-center gap-3 px-1">
-          {/* One row, so the timeline keeps its height. The rest scrolls sideways. */}
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [scrollbar-width:none]">
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                type="button"
-                title={reason}
-                disabled={disabled || pending}
-                onClick={() => {
-                  setText(s)
-                  input.current?.focus()
-                }}
-                className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent disabled:opacity-40"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <span className="shrink-0 text-[10px] text-faint">{reason || agentLabel}</span>
-        </div>
+        {reason && <p className="mt-2 px-1 text-[11px] text-faint">{reason}</p>}
       </div>
     </div>
   )

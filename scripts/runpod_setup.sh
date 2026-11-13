@@ -40,7 +40,15 @@ case "$cmd" in
     export DEBIAN_FRONTEND=noninteractive
     command -v ffmpeg >/dev/null || { apt-get update -qq && apt-get install -y -qq ffmpeg git > /dev/null; }
     command -v uv >/dev/null || pip install -q uv
-    if [ -d $REPO/.git ]; then git -C $REPO fetch -q && git -C $REPO checkout -q "$BRANCH" && git -C $REPO pull -q; else git clone -q https://github.com/AkhilNam/SoundCanvas.git $REPO && git -C $REPO checkout -q "$BRANCH"; fi
+    # The repo is private: either push it here from a machine with access
+    #   git push ssh://root@HOST:PORT/workspace/soundcanvas BRANCH   (after: git init + receive.denyCurrentBranch=updateInstead)
+    # or clone it with credentials of your own before running this script.
+    if [ -d $REPO/.git ]; then
+      git -C $REPO fetch -q origin "$BRANCH" 2>/dev/null && git -C $REPO checkout -q "$BRANCH" 2>/dev/null && git -C $REPO merge -q --ff-only FETCH_HEAD 2>/dev/null || git -C $REPO checkout -q "$BRANCH"
+    else
+      git clone -q https://github.com/AkhilNam/SoundCanvas.git $REPO && git -C $REPO checkout -q "$BRANCH"
+    fi
+    echo "repo at $(git -C $REPO rev-parse --short HEAD) ($(git -C $REPO branch --show-current))"
     [ -x $PY ] || uv venv --python 3.12 $VENV
     uv pip install --python $PY -e "$REPO/audio-service[sam,dev]"
     $PY -c "import torch, sam_audio; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0))"

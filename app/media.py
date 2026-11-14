@@ -207,6 +207,9 @@ def export(stems, original, destination, fmt, include_video):
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
     # A silent source maintains duration for an all-muted mix.
     duration = probe(original)['duration']
+    if not include_video:
+        from .fx import export_duration  # A whole-song speed chip changes the mix length.
+        duration = export_duration(stems, duration)
     args = ['ffmpeg','-v','error','-y']
     if include_video: args += ['-i',str(original)]
     for s in active: args += ['-i',s['path']]

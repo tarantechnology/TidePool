@@ -1,5 +1,6 @@
 import { MAX_GAIN } from '../edits'
-import type { Keyframe, MuteRange, Refinement, Stem, TrackState } from '../types'
+import type { FxChip, Keyframe, MuteRange, Refinement, Stem, TrackState } from '../types'
+export type { FxChip } from '../types'
 
 // Client for the upstream FastAPI backend. Paths and shapes come from
 // INTEGRATION.md and app/main.py at AkhilNam/SoundCanvas commit 9fc2216. They
@@ -39,6 +40,61 @@ export interface BackendStem {
   refinement?: BackendRefinement | null
   /** Instruments heard in a music stem, highest score first. Absent or null otherwise. */
   tags?: Array<{ label: string; score: number }> | null
+  /** Effects rendered into this layer, oldest first. Absent or null when it has none. */
+  fx?: { items?: unknown[] } | null
+}
+
+export interface FxEffect { type: string; params: Record<string, number | null> }
+/** The planner's effect plan (app/fx_schema.py FX_SCHEMA); null fields are irrelevant to the kind. */
+export interface FxPlan {
+  targets: string[]
+  preset: string | null
+  chain: FxEffect[] | null
+  interval: { start: number; end: number } | null
+  adjust: 'more' | 'less' | 'remove' | null
+  speed: number | null
+  duck_source: string | null
+  duck_depth_db: number | null
+  loudness_lufs: number | null
+}
+export interface FxPreviewRequest {
+  op: 'chain' | 'adjust' | 'remove' | 'duck' | 'loudness'
+  targets: string[]
+  preset?: string | null
+  chain?: FxEffect[] | null
+  interval?: { start: number; end: number } | null
+  speed?: number | null
+  direction?: 'more' | 'less'
+  item_id?: string
+  base_candidate_id?: string
+  duck?: { source: string; depth_db: number | null }
+  loudness_lufs?: number | null
+}
+
+export function toFxChips(raw: unknown): FxChip[] {
+  const items = raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown }).items) ? (raw as { items: unknown[] }).items : []
+  return items.flatMap((item): FxChip[] => {
+    if (!item || typeof item !== 'object') return []
+    const c = item as Record<string, unknown>
+    if (typeof c.id !== 'string' || typeof c.label !== 'string') return []
+    return [{ id: c.id, label: c.label, preset: typeof c.preset === 'string' ? c.preset : null, scope: c.scope === 'mix' ? 'mix' : 'layer',
+      speed: typeof c.speed === 'number' ? c.speed : null, kind: typeof c.kind === 'string' ? c.kind : null }]
+  })
+}
+
+/** The fx-preview request for a planned effect. `base` is an unapplied effect preview that "more"/"less" refines. */
+export function fxRequest(kind: 'fx' | 'duck' | 'loudness', fx: FxPlan, base?: string): FxPreviewRequest {
+  const targets = fx.targets.length ? fx.targets : ['mix']
+  if (kind === 'duck') return { op: 'duck', targets, duck: { source: fx.duck_source ?? '', depth_db: fx.duck_depth_db } }
+  if (kind === 'loudness') return { op: 'loudness', targets, loudness_lufs: fx.loudness_lufs }
+  if (fx.adjust === 'remove') return { op: 'remove', targets, preset: fx.preset }
+  if (fx.adjust) return { op: 'adjust', targets, direction: fx.adjust, preset: fx.preset, ...(base ? { base_candidate_id: base } : {}) }
+  return { op: 'chain', targets, preset: fx.preset, chain: fx.chain, interval: fx.interval, speed: fx.speed }
+}
+
+export async function createFxPreview(config: BackendConfig, projectId: string, body: FxPreviewRequest): Promise<string> {
+  const response = await request(config, `/api/projects/${encodeURIComponent(projectId)}/fx-preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  return ((await response.json()) as { candidate_id: string }).candidate_id
 }
 
 export interface BackendRefinement {
@@ -234,6 +290,7 @@ export function toStem(stem: BackendStem, url: string): Stem {
   const refinement = toRefinement(stem.refinement)
   // The backend has no kind field, and kinds are not guessed from names.
   const label = stem.label?.trim()
+  const fx = toFxChips(stem.fx)
   const tags = Array.isArray(stem.tags) ? stem.tags.map((t) => (typeof t?.label === 'string' ? t.label.trim() : '')).filter(Boolean) : []
   return {
     id: stem.id,
@@ -246,6 +303,7 @@ export function toStem(stem: BackendStem, url: string): Stem {
     muteRanges: stem.mute_ranges ?? [],
     ...(refinement ? { refinement } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(fx.length ? { fx } : {}),
   }
 }
 
@@ -430,7 +488,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'fx'|'duck'|'loudness'|'clarify'; fx?:FxPlan|null; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -507,7 +565,7 @@ export async function adjustReplacementPreview(config:BackendConfig,candidateId:
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/replacement-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adjustment)})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{op?:string;label?:string;item?:{id:string;label:string}|null;targets?:Array<{id:string;name:string}>;speed?:number;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})

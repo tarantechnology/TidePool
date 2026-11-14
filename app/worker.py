@@ -173,6 +173,8 @@ def work_once():
                 from .replacement import auto_build as build
             elif payload.get('_replacement'):
                 from .replacement import build
+            elif payload.get('_fx'):
+                from .fx import build
             elif payload.get('_effects'):
                 from .effects import build
             elif payload.get('_director_adjust'):
@@ -187,7 +189,7 @@ def work_once():
             duration=probe(snapshot.get('source') or p['audio'])['duration']
             # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
             if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
-            creative=any(payload.get(k) for k in ('_effects','_director_adjust','_director','_cinematic'))
+            creative=any(payload.get(k) for k in ('_fx','_effects','_director_adjust','_director','_cinematic'))
             with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
                 output=build(p,payload,job['id'])
             with connect() as db:

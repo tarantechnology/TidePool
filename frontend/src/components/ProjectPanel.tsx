@@ -160,7 +160,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   // A split replaces every layer, so it is offered only before the first separation.
   const canSplit = Boolean(project?.metadata) && !jobId && !candidateId && capabilities?.musicStems?.available !== false
   const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
-  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null,splitTracks:capabilities?.musicSubstems?.available !== false})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,capabilities,onProjectState])
+  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null,splitTracks:capabilities?.musicSubstems?.available === true})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,capabilities,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)

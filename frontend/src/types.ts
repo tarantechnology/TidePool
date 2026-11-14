@@ -8,7 +8,7 @@
 export type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience' | 'residual'
 
 /** One effect rendered into a layer (a chip), as app/fx.py reports it. */
-export interface FxChip { id: string; label: string; preset: string | null; scope: 'layer' | 'mix'; speed: number | null; kind?: string | null }
+export interface FxChip { id: string; label: string; preset: string | null; scope: 'layer' | 'mix'; speed: number | null; kind?: string | null; /** Rendered into audio a later edit replaced; shown, but no longer removable. */ baked?: boolean }
 
 /** One isolated audio layer, as produced by the audio pipeline. */
 export interface Stem {

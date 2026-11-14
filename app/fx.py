@@ -65,13 +65,14 @@ def ffmpeg_filters():
     return frozenset(m.group(1) for m in re.finditer(r'^\s*\S+\s+(\w+)\s+\S+->\S+', text, re.M))
 
 
-def ffmpeg_pass(x, sr, filters):
+def ffmpeg_pass(x, sr, filters, length=None, what='Effect rendering'):
+    """x through an ffmpeg filter graph; fitted to `length` samples (default: the input's)."""
     ch = x.shape[1]
     out = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'f32le', '-ar', str(sr), '-ac', str(ch), '-i', 'pipe:0', '-af', ','.join(filters),
                           '-f', 'f32le', '-ar', str(sr), '-ac', str(ch), 'pipe:1'], input=x.tobytes(), capture_output=True, timeout=TIMEOUT)
-    if out.returncode: raise RuntimeError('Effect rendering failed: ' + out.stderr.decode(errors='replace')[-500:])
+    if out.returncode: raise RuntimeError(f'{what} failed: ' + out.stderr.decode(errors='replace')[-500:])
     y = np.frombuffer(out.stdout, np.float32).reshape(-1, ch)
-    return fit(y, len(x))
+    return fit(y, len(x) if length is None else length)
 
 
 def fit(y, n):
@@ -127,6 +128,7 @@ def limit(x, sr, ceiling_db=TRUE_PEAK_CEILING_DB):
     the minimum of neighbouring blocks, then attack/release ramps that only lower them, so the
     interpolated gain never exceeds what any sample needs. A no-op below the ceiling."""
     ceiling = 10 ** ((ceiling_db - .05) / 20)
+    if not len(x): return x
     env = peak_envelope(x)
     if env.max() <= ceiling: return x
     need = np.minimum(1.0, ceiling / np.maximum(env, 1e-12))
@@ -365,16 +367,14 @@ def blend(dry, wet, sr, interval):
 
 def change_speed(x, sr, rate):
     """Turntable-style speed change (tempo and pitch together); the only length-changing op."""
-    y = ffmpeg_pass_free(x, sr, [f'asetrate={sr * rate:.4f}', f'aresample={sr}'])
-    return fit(y, int(round(len(x) / rate)))
+    return ffmpeg_pass(x, sr, [f'asetrate={sr * rate:.4f}', f'aresample={sr}'], int(round(len(x) / rate)), 'Speed change')
 
 
-def ffmpeg_pass_free(x, sr, filters):
-    ch = x.shape[1]
-    out = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'f32le', '-ar', str(sr), '-ac', str(ch), '-i', 'pipe:0', '-af', ','.join(filters),
-                          '-f', 'f32le', '-ar', str(sr), '-ac', str(ch), 'pipe:1'], input=x.tobytes(), capture_output=True, timeout=TIMEOUT)
-    if out.returncode: raise RuntimeError('Speed change failed: ' + out.stderr.decode(errors='replace')[-500:])
-    return np.frombuffer(out.stdout, np.float32).reshape(-1, ch)
+def rendered_length(n, items):
+    """Samples after every speed chip, rounded per chip exactly as change_speed rounds."""
+    for it in items:
+        if it.get('speed'): n = int(round(n / it['speed']))
+    return n
 
 
 def net_speed(items):
@@ -415,10 +415,18 @@ def record(row):
 
 
 def public(row):
-    rec = record(row)
-    if not rec or not rec['items']: return None
+    """Chips for the editor. When another edit (a re-split, a replacement) rewrote the layer, its chips are
+    baked into that audio: still listed, marked baked, but no longer adjustable or removable."""
+    rec = record(row); baked = False
+    if not rec:
+        try: rec = json.loads(row.get('fx') or 'null')
+        except (TypeError, ValueError): rec = None
+        if not isinstance(rec, dict) or not isinstance(rec.get('items'), list): return None
+        baked = True
+    if not rec['items']: return None
     keys = ('id', 'label', 'preset', 'scope', 'interval', 'speed', 'kind')
-    return {'items': [{k: it.get(k) for k in keys} for it in rec['items']]}
+    return {'items': [{**{k: it.get(k) for k in keys}, **({'baked': True} if baked else {})} for it in rec['items'] if isinstance(it, dict)],
+            **({'baked': True} if baked else {})}
 
 
 def dry_path(row):
@@ -433,6 +441,8 @@ def _scale_times(row, ratio):
     row['automation'] = json.dumps([{**p, 'time': p['time'] * ratio} for p in points])
     ranges = json.loads(row.get('mute_ranges') or '[]')
     row['mute_ranges'] = json.dumps([[a * ratio, b * ratio] for a, b in ranges])
+    spans = json.loads(row.get('spans') or 'null')
+    if isinstance(spans, list): row['spans'] = json.dumps([[a * ratio, b * ratio] for a, b in spans])
 
 
 # ---------------------------------------------------------------- ducking
@@ -648,7 +658,7 @@ def _render_rows(rows, by_id, spec, provenance, original, new_file, notes):
         dry = rec['dry_path']
         dst = new_file()
         x, sr = decode(dry)
-        expected = len(x) if abs(new_rate - 1) < 1e-9 else int(round(len(x) / new_rate))
+        expected = rendered_length(len(x), items)
         y = render(x, sr, items, local)
         if len(y) != expected or y.shape[1] != x.shape[1]: raise ValueError('Effects changed the audio timeline.')
         write_wav(dst, y, sr)

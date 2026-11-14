@@ -78,7 +78,7 @@ export function toFxChips(raw: unknown): FxChip[] {
     const c = item as Record<string, unknown>
     if (typeof c.id !== 'string' || typeof c.label !== 'string') return []
     return [{ id: c.id, label: c.label, preset: typeof c.preset === 'string' ? c.preset : null, scope: c.scope === 'mix' ? 'mix' : 'layer',
-      speed: typeof c.speed === 'number' ? c.speed : null, kind: typeof c.kind === 'string' ? c.kind : null }]
+      speed: typeof c.speed === 'number' ? c.speed : null, kind: typeof c.kind === 'string' ? c.kind : null, ...(c.baked === true ? { baked: true } : {}) }]
   })
 }
 

@@ -204,7 +204,7 @@ export function fxCommand(raw: string, stems: FxStem[] = []): FxCommand | null {
     const chosen = targets(text, stems, namedWords)
     const ids = chosen && 'ids' in chosen ? chosen.ids : ['mix']
     const pool = stems.filter(s => ids[0] === 'mix' || ids.includes(s.id))
-    const chips = pool.flatMap(s => s.fx ?? [])
+    const chips = pool.flatMap(s => s.fx ?? []).filter(c => !c.baked)
     const match = chips.filter(c => (named ? c.preset === named : /\b(?:effects?|fx|filters?)\b/.test(text)))
     if (!match.length) return null
     return { kind: 'fx', fx: plan({ targets: ids, adjust: 'remove', preset: named }), message: `Remove ${named ? match[match.length - 1].label : 'the last effect'}.` }

@@ -317,6 +317,7 @@ def validate_plan(kind, plan, stems, duration, prompt):
     out['speed'] = clamp_speed(plan.get('speed'))
     interval = plan.get('interval')
     if interval is not None:
+        if not isinstance(interval, dict): raise FxError('Invalid interval.')
         if any(interval.get(k) not in supplied for k in ('start', 'end')): raise FxError('Unsupplied timestamp.')
         out['interval'] = clamp_interval(interval, duration)
     probe = item(preset, out['chain'], out['interval'], out['speed'], duration)  # Rejects empty or conflicting plans.

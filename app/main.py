@@ -322,9 +322,11 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     # A music split's canonical label and instrument tags let "remove the piano" find the "other" track.
     from .fx import public as fx_chips
     body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration'],'canonical_label':r['label'],'tags':[t['label'] for t in json.loads(r['tags'])] if r['tags'] else None,
-                 'fx':[c['label'] for c in (fx_chips(dict(r)) or {}).get('items',[])] or None} for r in rows]
+                 'fx':[c['label'] for c in (fx_chips(dict(r)) or {}).get('items',[]) if not c.get('baked')] or None} for r in rows]
     body.tracks=[{'stemId':r['id'],'gain':r['volume'],'muted':bool(r['muted']),'solo':bool(r['solo']),'automation':[{'t':k['time'],'value':k['value']} for k in json.loads(r['automation'])]} for r in rows]
-    if p['metadata']: body.duration=json.loads(p['metadata'])['duration']
+    if p['metadata']:
+        from .fx import export_duration  # After a whole-song speed chip the timeline is no longer the upload's length.
+        body.duration=export_duration(rows,json.loads(p['metadata'])['duration'])
     # Never let a replacement instruction fall through to a separation-only planner.
     import re
     # "Make the drums sound like a phone" names an effect preset; that is a layer effect, not a replacement.
@@ -581,7 +583,8 @@ def fx_spec(pid, p, body, rows):
     """The validated, clamped render spec for an fx preview; FxError becomes a 422."""
     from . import fx_schema as S
     meta=json.loads(p['metadata']) if p['metadata'] else {}
-    duration=float(meta.get('duration') or 0)
+    from .fx import export_duration
+    duration=float(export_duration(rows,meta.get('duration') or 0)) if rows else float(meta.get('duration') or 0)
     ids={r['id'] for r in rows}
     targets=list(dict.fromkeys(body.targets))
     if 'mix' in targets: targets=['mix']

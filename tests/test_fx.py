@@ -367,6 +367,10 @@ def test_speed_is_whole_song_and_audio_only(client, tmp_path):
     out = tmp_path / 'slowed.wav'; out.write_bytes(client.get(done['download_url'], headers=h).content)
     from app.core import probe
     assert probe(out)['duration'] == pytest.approx(2 / .85, abs=.01)
+    # The timeline is now longer than the upload: an effect past the old end is inside it.
+    late = client.post(f'/api/projects/{pid}/fx-preview', headers=h, json={'targets': ['mix'], 'preset': 'echo', 'interval': {'start': 2.0, 'end': 2.3}})
+    assert late.status_code == 202, late.text
+    wait(client, '/api/candidates/' + late.json()['candidate_id'], h)
     vid, vh = upload(client, tmp_path, video=True)
     r = client.post(f'/api/projects/{vid}/fx-preview', headers=vh, json={'targets': ['mix'], 'preset': 'nightcore'})
     assert r.status_code == 422 and 'video' in r.json()['detail']
@@ -438,3 +442,43 @@ def test_legacy_database_gains_fx_column(tmp_path, monkeypatch):
     with core.connect() as db:
         row = dict(db.execute('SELECT * FROM stems').fetchone())
     assert row['fx'] is None and core.stem(row)['fx'] is None
+
+
+# ---------------------------------------------------------------- review regressions
+
+def test_stacked_speed_chips_keep_the_expected_length():
+    items = [S.item('slowed'), S.item('nightcore')]
+    for i, it in enumerate(items): it['id'] = f'c{i}'
+    sr = 8000
+    for n in [1, 7, 100, 1001, 4093, 8000, 12345, 16001, 22051, 33333]:
+        x = np.zeros((n, 1), np.float32)
+        y = fx.render(x, sr, items, [])
+        assert len(y) == fx.rendered_length(n, items), n
+    # Per-chip rounding differs from rounding the combined rate for some lengths; the check must follow the renderer.
+    assert any(fx.rendered_length(n, items) != round(n / (.85 * 1.25)) for n in range(1, 2000))
+
+
+def test_limit_and_render_accept_empty_audio():
+    empty = np.zeros((0, 2), np.float32)
+    assert fx.limit(empty, 48000).shape == (0, 2)
+
+
+def test_validate_plan_rejects_a_non_dict_interval():
+    for bad in ('10-12', [10, 12], 5):
+        with pytest.raises(S.FxError):
+            S.validate_plan('fx', {'targets': ['mix'], 'preset': 'echo', 'interval': bad}, [], 30, 'echo from 10 to 12')
+
+
+def test_chips_on_a_rewritten_layer_are_kept_as_baked():
+    rec = {'version': 1, 'dry_path': '/dry.wav', 'path': '/old.wav', 'items': [{'id': 'a', 'label': 'Church', 'preset': 'church', 'scope': 'layer'}]}
+    live = fx.public({'fx': json.dumps(rec), 'path': '/old.wav'})
+    assert live['items'][0]['label'] == 'Church' and 'baked' not in live
+    baked = fx.public({'fx': json.dumps(rec), 'path': '/new.wav'})
+    assert baked['baked'] and baked['items'][0]['baked'] and baked['items'][0]['label'] == 'Church'
+    assert fx.record({'fx': json.dumps(rec), 'path': '/new.wav'}) is None  # Not adjustable any more.
+
+
+def test_speed_change_rescales_spans():
+    row = {'start_offset': 1.0, 'automation': '[]', 'mute_ranges': '[[1, 2]]', 'spans': '[[0.5, 1.5]]'}
+    fx._scale_times(row, 2.0)
+    assert json.loads(row['spans']) == [[1.0, 3.0]] and json.loads(row['mute_ranges']) == [[2.0, 4.0]] and row['start_offset'] == 2.0

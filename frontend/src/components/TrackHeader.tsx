@@ -38,15 +38,15 @@ function FxChips({ chips, label, onRemove }: { chips: FxChip[]; label: string; o
         <span key={chip.id} className="inline-flex items-center gap-0.5">
           <button
             type="button"
-            title={chip.scope === 'mix' ? `${chip.label} (whole mix)` : chip.label}
+            title={chip.baked ? `${chip.label} (baked in by a later edit; can no longer be removed)` : chip.scope === 'mix' ? `${chip.label} (whole mix)` : chip.label}
             aria-expanded={open === chip.id}
-            disabled={!onRemove}
+            disabled={!onRemove || chip.baked}
             onClick={() => setOpen(open === chip.id ? null : chip.id)}
             className="max-w-[7.5rem] truncate rounded-full border border-line bg-tint/[0.03] px-1.5 py-px text-[10px] text-muted transition-colors hover:border-line-strong hover:text-fg disabled:hover:border-line"
           >
-            {chip.label}
+            {chip.label}{chip.baked ? ' · baked' : ''}
           </button>
-          {open === chip.id && onRemove && (
+          {open === chip.id && onRemove && !chip.baked && (
             <button
               type="button"
               aria-label={`Remove ${chip.label} from ${label}`}

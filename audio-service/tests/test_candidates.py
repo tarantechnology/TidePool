@@ -258,3 +258,17 @@ def test_auto_mode_means_single_windows_and_matches_chunked_neighbours():
     assert idx == 1 and np.array_equal(picked, a)
     idx, _ = choose([a, b], None, 4, "auto")               # chunked, no previous: first (K < 3)
     assert idx == 0
+
+
+def test_auto_single_window_keeps_the_consensus_draw_when_draws_agree():
+    import numpy as np
+    from sam_audio_service.candidates import choose
+    rng = np.random.default_rng(3)
+    base = rng.standard_normal(4000).astype(np.float32)
+    agree = [base + 0.05 * rng.standard_normal(4000).astype(np.float32) for _ in range(3)]
+    idx, picked = choose(agree, None, 0, "auto")
+    assert idx in (0, 1, 2) and np.array_equal(picked, agree[idx])      # medoid, no averaging
+    other = rng.standard_normal(4000).astype(np.float32)
+    disagree = [base, other, base + 0.05 * rng.standard_normal(4000).astype(np.float32)]
+    idx, picked = choose(disagree, None, 0, "auto")
+    assert idx is None and np.allclose(picked, np.mean(np.stack(disagree), axis=0), atol=1e-6)  # hedge

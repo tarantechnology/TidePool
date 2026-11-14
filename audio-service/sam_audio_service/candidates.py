@@ -8,7 +8,8 @@ chooses, window by window, in timeline order:
 
 * ``"first"``: draw 0 (what K = 1 would have produced, modulo batch-size noise);
 * ``"mean"``: the average of the K draws (an ensemble; smoother, may sound "averaged");
-* ``"auto"``: ``"mean"`` when the signal is a single window, ``"overlap"`` when it is chunked;
+* ``"auto"``: ``"overlap"`` when chunked; for a single window the medoid when all draws agree
+  (min pairwise NCC >= 0.8, K >= 3) and ``"mean"`` when they disagree;
 * ``"overlap"``: the draw whose head best matches what the previous window put into the
   shared overlap (normalised cross-correlation). With no usable previous window (first
   window, or an overlap quieter than -60 dBFS) it takes the medoid draw (highest mean
@@ -22,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 
 SILENCE_DBFS = -60.0
+AGREEMENT_NCC = 0.8  # single-window draws with min pairwise NCC above this are "the same sound"
 _EPS = 1e-12
 MODES = ("first", "overlap", "mean", "auto")
 
@@ -42,6 +44,12 @@ def _rms_dbfs(x: np.ndarray) -> float:
     return 20 * np.log10(rms) if rms > 0 else -np.inf
 
 
+def _agreement(candidates: list[np.ndarray]) -> float:
+    """Minimum pairwise normalised cross-correlation among the draws (1 = identical)."""
+    k = len(candidates)
+    return min(_ncc(candidates[i], candidates[j]) for i in range(k) for j in range(i + 1, k))
+
+
 def _medoid(candidates: list[np.ndarray]) -> int:
     k = len(candidates)
     scores = [np.mean([_ncc(candidates[i], candidates[j]) for j in range(k) if j != i]) for i in range(k)]
@@ -55,10 +63,17 @@ def choose(candidates: list[np.ndarray], previous: np.ndarray | None, overlap: i
     if mode not in MODES:
         raise ValueError(f"unknown candidate selection mode {mode!r}; expected one of {MODES}")
     if mode == "auto":
-        # Measured 2026-11-13 (sam-audio-small): averaging K draws gains 1-2 dB SI-SDRi and 1.5-2 dB
-        # less leakage when the whole signal is one window, but blurs chunked signals whose windows
-        # disagree; there, picking the draw that agrees with the previous window is what helps.
-        mode = "overlap" if overlap > 0 else "mean"
+        # Chunked: pick the draw that agrees with the previous window (seams do not flip).
+        # Single window: when the draws agree (same sound, small differences) take the medoid so
+        # nothing is smeared (averaging cost the music fixture 4 dB); when they disagree (the
+        # model picked different sources, e.g. the wrong speaker) average them: measured
+        # 2026-11-13 with sam-audio-large this turned a -57 dB wrong-speaker stem into ~0 dB.
+        if overlap > 0:
+            mode = "overlap"
+        elif len(candidates) >= 3 and _agreement(candidates) >= AGREEMENT_NCC:
+            return _medoid(candidates), candidates[_medoid(candidates)]
+        else:
+            mode = "mean"
     if mode == "first" or len(candidates) == 1:
         return 0, candidates[0]
     if mode == "mean":

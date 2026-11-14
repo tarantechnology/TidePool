@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from .core import connect, event, project_dir, probe, run, stem, uid
+from .core import connect, discard, event, project_dir, probe, run, stem, uid
 from .media import InferenceError, separate, export
 from .messaging import provider
 from .visual import project_source, file_sha256, validate_timeline
@@ -135,9 +135,11 @@ def work_once():
                 if append:
                     current=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,append['id'])).fetchone()
                     if not current or current['revision'] != append['revision']: raise ValueError('Residual stem changed during separation; existing stems were preserved. Reload and retry.')
+                    replaced=[current['path']]
                     db.execute('DELETE FROM stems WHERE project_id=? AND id=?',(pid,append['id']))
                     db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,tags,start_offset,volume,muted,solo,automation,mute_ranges) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [(*item,current['start_offset'],current['volume'],current['muted'],current['solo'],current['automation'],current['mute_ranges']) for item in items])
                 else:
+                    replaced=[r['path'] for r in db.execute('SELECT path FROM stems WHERE project_id=?',(pid,))]
                     db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
                     db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,tags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',items)
                 if payload.get('edit_scope',{}).get('action','keep') != 'keep':
@@ -150,6 +152,7 @@ def work_once():
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
                 db.execute("UPDATE jobs SET status='completed',progress=100,stage=NULL,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
+            discard(pid,replaced)  # Committed: the replaced stems' files can go.
         elif job['kind']=='discovery':
             from .discovery import discover
             if file_sha256(p['audio']) != payload['audio_sha256']: raise ValueError('Project audio changed; run discovery again.')

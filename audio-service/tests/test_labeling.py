@@ -108,7 +108,6 @@ def test_instruments_use_per_family_thresholds_and_specific_names():
     # AUDIO_STEM_LABEL_MIN_SCORE is a floor on top of the calibrated values.
     assert L.presence_threshold("panns", "brass") == 0.03 and L.presence_threshold("panns", "brass", 0.2) == 0.2
     assert L.presence_threshold("panns", "guitar", 0.0) == 0.15 and L.presence_threshold("clap", "harp") == L.DEFAULT_PRESENCE["clap"]
-    assert L.present_families(L.instruments_from_scores(scores_for(vocab, probs(Piano=0.5, Organ=0.3, Trumpet=0.1)), vocab, "panns"), limit=2) == ["piano", "organ"]
 
 
 @pytest.mark.parametrize(("row", "expected"), [
@@ -198,16 +197,6 @@ def test_near_silent_stem_is_not_tagged():
     assert other.name is None and other.tags == [] and other.windows == 0 and other.energy_db < L.SILENT_DB and other.instruments == []
 
 
-def test_detect_instruments_on_one_stem():
-    other = bands()["other"]
-    found = L.detect_instruments(FakeTagger(), other, SR)
-    assert [(i.family, i.name, i.present) for i in found[:2]] == [("synth", "Synth", True), ("strings", "Strings", True)]
-    assert not any(i.present for i in found[2:])
-    assert [i.family for i in L.detect_instruments(FakeTagger(), other, SR, min_score=0.4) if i.present] == ["synth"]
-    assert L.detect_instruments(FakeTagger(), np.zeros((2, SR), np.float32), SR) == []
-    assert found[0].as_dict() == {"family": "synth", "name": "Synth", "score": 0.5, "present": True, "coverage": 1.0}
-
-
 def test_stem_tagger_selection(monkeypatch):
     router = FakeTagger()
     monkeypatch.setenv("AUDIO_STEM_LABEL_MODEL", "router")
@@ -265,6 +254,17 @@ def test_labeling_failure_never_fails_the_split(tagged_settings):
     assert [s["name"] for s in body["stems"]][-1] == "Other"
     assert all(s["tags"] is None for s in body["stems"])
     assert any("stem labeling failed" in w for w in body["warnings"])
+
+
+def test_a_separate_tagger_that_fails_is_disabled_with_its_own_error(tagged_settings):
+    engine = Engine(tagged_settings)  # mock router classifier (cannot tag)
+    engine.stem_tagger = FakeTagger(fail=True)  # e.g. AUDIO_STEM_LABEL_MODEL=clap whose weights fail
+    with TestClient(create_app(tagged_settings, engine)) as c:
+        first, second = post(c, {"prompts": []}).json(), post(c, {"prompts": []}).json()
+    assert engine.stem_tagger.calls == 1  # not retried on the next request
+    assert any("stem labeling failed" in w for w in first["warnings"])
+    assert any("stem tagger failed earlier (RuntimeError: tagger exploded)" in w for w in second["warnings"])
+    assert engine._classifier_error is None  # routing is unaffected
 
 
 def test_labels_off_or_no_tagger_gives_null_tags(tagged_settings, settings, monkeypatch):

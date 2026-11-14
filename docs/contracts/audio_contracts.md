@@ -182,10 +182,9 @@ Full request:
 | `options.passes` | int 1–`AUDIO_MAX_PASSES` (3, at most 5) | `1` | Multi-pass separation for when the model only attenuates the sound. Pass 1 separates the mixture → t₁; pass k ≥ 2 runs the **same** prompt (text, anchors, visual prompt) on that prompt's residual `mixture − (t₁+…+tₖ₋₁)` → tₖ; the stem is `t₁+…+tₖ`. Several prompts each run their own chain from the mixture; the residual stem is still `mixture − all targets` (`residual: "model"` uses the last pass's model residual). Chunking, `stereo_mode`, anchors and visual intervals apply unchanged to every pass. **Early stop:** if pass k extracts < −30 dB of pass 1's energy it is discarded and the chain stops with the warning `"pass {k} extracted negligible energy; stopped after {k-1} pass(es)"`; a silent pass 1 (`"pass 1 extracted negligible energy; stopped after 1 pass(es)"`) or a silent residual also stops it. Must be a JSON integer; out of range → `INVALID_REQUEST`. Cost: up to n× per prompt; `elapsed_seconds` covers all passes. |
 | `options.seed` | int ≥ 0 | `null` | Forwarded to the backend for reproducibility. |
 | `options.return_mode` | `base64` \| `file` | `base64` | `base64` inlines the WAV in `stems[].audio_base64` (Person 4's contract today). `file` writes WAVs under `AUDIO_OUTPUT_ROOT` and returns `stems[].audio_ref` instead — proposed for large payloads. |
-| `options.mode` | `auto` \| `prompted` \| `music_stems` \| `music_substems` | `AUDIO_ROUTING_DEFAULT` (`auto`) | Which separator runs; see [Model routing](#model-routing-music-stems). `prompted` is everything above. `music_stems` splits a song into instrument stems with a dedicated model and needs `AUDIO_STEM_SPLITTER` (else `UNSUPPORTED_OPERATION`). `music_substems` splits one stem of an earlier split (the residual `other`) into the instruments inside it ([Nested split](#nested-split-music_substems)); needs `AUDIO_SUBSTEM_MODEL` and is never chosen by `auto`. In `auto`, non-music prompts route exactly as before. |
+| `options.mode` | `auto` \| `prompted` \| `music_stems` | `AUDIO_ROUTING_DEFAULT` (`auto`) | Which separator runs; see [Model routing](#model-routing-music-stems). `prompted` is everything above. `music_stems` splits a song into instrument stems with a dedicated model and needs `AUDIO_STEM_SPLITTER` (else `UNSUPPORTED_OPERATION`). In `auto`, non-music prompts route exactly as before. |
 | `options.stems` | array of string (1–8) \| `null` | `null` | `music_stems` only: which stems to return — `vocals`, `drums`, `bass`, `guitar`/`piano` (6-stem model only), `other`, `instrumental` (every non-vocal stem summed) or an alias (`lead vocal`, `beat`, `karaoke`, …; the list is under `GET /capabilities` → `music_stems.aliases`). `null` → the prompts are the stem request; no prompts → every stem. Unknown names → `INVALID_REQUEST` with `details.valid_stems`; overlapping names (`instrumental` + `drums`) → `INVALID_REQUEST`. Ignored with a warning when the request routes to `prompted`. |
 | `options.stem_model` | string \| `null` | `AUDIO_STEM_MODEL` | `music_stems` only. A different model than the loaded one → `UNSUPPORTED_OPERATION`. |
-| `options.parent_label` | string \| `null` | `"other"` | `music_substems` only: canonical label of the stem being split. Must be in `GET /capabilities` → `music_substems.parents` (default `["other"]`), else `UNSUPPORTED_OPERATION` with `details.parents`. With `music_substems`, `options.stems` lists instruments (`guitar`, `piano`, `keys`, … or an alias such as `rhodes`); `null` → detected. |
 | `hints.source_kind` | `audio` \| `video` \| `null` | `null` | What the upload was. Tie-breaker only: in `auto` without a content classifier, stem prompts go to the splitter only for `"audio"`. Top-level (not under `options`) because it describes the media, not the inference. |
 | `asset_id` | string | `null` | Echoed as `source.asset_id` / `stems[].source_asset_id`. Superseded by `source.asset_id`; both are accepted. |
 | `request_id` | string ≤ 128 | generated | Echoed in the response; the correlation id for logs across services. Person 4's `job_id` is the natural value. |
@@ -361,33 +360,6 @@ their energy), so:
 - a subset returns exactly one `residual` (the sum of the other stems; `options.residual:
   "none"` drops it; `residual_name` names it).
 
-### Nested split (`music_substems`)
-
-"Separate the rest": `POST /separate` with the **parent stem's audio** and
-`options: {"mode": "music_substems", "parent_label": "other", "stems": null | [...]}`.
-
-- **Instruments.** `options.stems` (each must be in `music_substems.instruments`, else
-  `INVALID_REQUEST` with `details.valid_stems`; more than `AUDIO_SUBSTEM_MAX` → `INVALID_REQUEST`),
-  or, when null, the ones the router's AudioSet tagger hears in the input (tag score ≥
-  `AUDIO_SUBSTEM_MIN_SCORE`), strongest first, up to `AUDIO_SUBSTEM_MAX` (4), restricted to
-  what the nested model can separate. `piano` and `keys` come from the same model source and
-  are returned once.
-- **Response.** One `role: "target"` stem per instrument: `label` = canonical instrument
-  (`guitar`, `piano`, `keys`), `name` = what the editor shows (the tagger's most specific name
-  when detected, e.g. `"Electric piano"`, `"Acoustic guitar"`; else `"Piano"`, `"Guitar"`,
-  `"Keys"`), `tags`. Plus **exactly one** `role: "residual"`, `name: "Rest"`, `label: "rest"`.
-  Targets + Rest sum to the input (float32 rounding). `routing = {mode: "music_substems",
-  engine, model_id, reason, scores: null, stems: [returned target labels]}`.
-- **Near-silent instruments** (quieter than `AUDIO_SUBSTEM_SILENT_DB` relative to the input)
-  are folded into `Rest` with a warning.
-- **Nothing to separate** (nothing detected, or everything came back near-silent) →
-  `400 INVALID_REQUEST`, `retryable: false`, message `"No separable instruments found in this
-  track"`, `details.reason: "no_separable_instruments"` — never a Rest-only result.
-- `GET /capabilities` → `music_substems: {available, backend, is_mock, model_id, license,
-  instruments, parents, residual: {name, label}, max_instruments, detection, min_score,
-  silent_db, aliases, max_duration_seconds}` (`{available: false, model_id: null, instruments:
-  [], parents: [], max_instruments}` when off). `GET /health` → `substems` (null when off).
-
 `model.backend` reports what actually ran (`mock`, `demucs`, `chain`, `roformer` for music stems;
 `mock`, `sam`, `audiosep` for prompted), with `stereo_mode: "native"`. `output_format`,
 `return_mode` and `AUDIO_MAX_DURATION_SECONDS` apply unchanged. `GET /capabilities` adds
@@ -556,7 +528,7 @@ served at `GET /capabilities` under `error_codes`.
 | --- | --- | --- | --- |
 | `INVALID_REQUEST` | 400 | no | Bad/absent prompts, unknown or overlapping music stem names (`details.valid_stems`), unparseable `metadata` JSON, failed validation, a reference outside `AUDIO_MEDIA_ROOT`, a visual interval under 100 ms. |
 | `INVALID_MEDIA` | 422 | no | Audio cannot be decoded, has no audio stream, is empty, exceeds `AUDIO_MAX_INPUT_BYTES`, or decoding timed out. |
-| `UNSUPPORTED_OPERATION` | 400 | no | A different `options.model_id` or `options.stem_model`, `predict_spans` on a backend without a span predictor, audio longer than `AUDIO_MAX_DURATION_SECONDS`, `options.mode: "music_stems"` with no stem splitter configured, `options.mode: "music_substems"` with no nested splitter or a `parent_label` outside `music_substems.parents`. |
+| `UNSUPPORTED_OPERATION` | 400 | no | A different `options.model_id` or `options.stem_model`, `predict_spans` on a backend without a span predictor, audio longer than `AUDIO_MAX_DURATION_SECONDS`, `options.mode: "music_stems"` with no stem splitter configured. |
 | `MISSING_ASSET` | 404 | no | A `file://`/`http(s)` reference resolves to nothing (deleted upload, wrong volume mount, 404 from the host). |
 | `MISSING_MODEL` | 503 | **yes** | Checkpoint not downloaded, Hugging Face access not granted, `sam_audio` not installed, load failed. `/health` reports `degraded` with `model.load_error`. |
 | `INSUFFICIENT_GPU_MEMORY` | 503 | **yes** | CUDA OOM on load or during inference. `details` carries the window length; retry with a shorter input, `chunk_seconds`, or fewer reranking candidates. |

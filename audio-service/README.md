@@ -1,7 +1,7 @@
 # SoundCanvas audio inference service (Person 1)
 
-Text-, span- and visually-prompted sound separation with Meta's SAM Audio, exposed as a
-small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
+AudioSep text separation by default, with optional Meta SAM Audio text/span/visual
+separation, exposed as a small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
 at the repository root for the cross-team contract and open questions.
 
 ## Run locally (mock backend, no GPU)
@@ -9,7 +9,7 @@ at the repository root for the cross-team contract and open questions.
 ```bash
 cd audio-service
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m sam_audio_service        # http://localhost:8001/docs
+AUDIO_BACKEND=mock .venv/bin/python -m sam_audio_service  # http://localhost:8001/docs
 .venv/bin/python -m pytest -q
 ```
 
@@ -184,15 +184,15 @@ provenance, fixed splits/seeds, metrics, regression gate and staged rollback pro
 Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
 invalid visual guidance fails instead of silently changing to text-only inference.
 
-## AudioSep backend
+## Default AudioSep backend
 
-AudioSep is the default **text-only** separator when `AUDIO_BACKEND` is unset. It uses the AudioSep base checkpoint and
+AudioSep is the default **text-only** separator. It uses the AudioSep base checkpoint and
 CLAP text encoder; it is not SAM Audio and has no visual conditioning, time-anchor
 conditioning, independent candidates or judge-ranked retries. The editor reports those
 limitations. A timed mute is still an edit applied after separation. AudioSep may also
 extract speech, music or other sounds; review the target and edited mix before applying.
 
-The runtime must be installed separately and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
+Install its pinned inference dependencies with `pip install -e ".[audiosep]". The runtime is separate from the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
 prepared [upstream AudioSep checkout](https://github.com/Audio-AGI/AudioSep), its Python
 and PyTorch/torchaudio dependencies, and the official AudioSep and CLAP checkpoints. The
 upstream repository is MIT licensed; check the terms for model weights and dependencies
@@ -238,6 +238,25 @@ residual retains the original channels. The service default mask refinement is o
 latency and memory vary by recording; sample-accurate reconstruction does not guarantee
 correct isolation. Do not mistake the optional experimental spectral repairs for the
 standard AudioSep backend.
+
+### TidePool voice preservation
+
+AudioSep defaults to `AUDIO_SUPPRESSION=conservative` and
+`AUDIO_SUPPRESSION_STRENGTH=0.9`. The engine rebuilds the target from the original
+mixture phase through a selective ratio mask and limits processing when the target
+estimate is weak. This runs once after chunk reconstruction, preserving the full
+stereo timeline. The returned target is what is removed; target + residual still
+reconstruct the original. An additional legacy refinement mask is skipped in this mode.
+
+Request `options.suppression=off` for raw comparisons. `suppression_strength=1`
+uses stronger cleanup; `.9` retains some target to ease damage to other sounds.
+`model.suppression` and `/capabilities.defaults.suppression` report the effective
+settings. No source-separation method guarantees unchanged voices during overlap.
+
+The official AudioSep/CLAP checkpoints are reused from the checkout when present.
+Otherwise the adapter uses the Hugging Face cache and verified Space revision
+`0807a713283035d8b0d0628f1b8e3d6580459f7b`. Explicit missing checkpoint paths fail
+clearly. No SAM model or mock fallback is loaded by the AudioSep path.
 
 ## Music stems and model routing
 
@@ -287,7 +306,7 @@ split returns no residual; a subset returns one `residual` (the sum of the other
 | `AUDIO_ROUTER_CLASSIFIER` | `panns` with `demucs`/`chain`/`roformer`, else `off` | `off`, `mock` (everything is music; tests), `panns` (PANNs Cnn14 via `panns-inference`, 32 kHz; checkpoint `AUDIO_ROUTER_PANNS_CHECKPOINT`, default `~/panns_data/Cnn14_mAP=0.431.pth`), `ast` (`MIT/ast-finetuned-audioset-10-10-0.4593`, 16 kHz). Both score up to eight 10 s windows across the file and load on first use. A classifier that cannot load is disabled for the process and `/health` reports why; routing then uses the prompt rules alone (`scores: null`). |
 | `AUDIO_ROUTER_MUSIC_THRESHOLD` | per classifier: `panns` 0.4, `ast` 0.2 | Minimum "song" score (median over up to 8 10 s windows of AudioSet Music minus Speech) for stem-name prompts to go to the splitter. Speech over music (vlogs, soundtracks) scores ~0 and stays on the prompted model; full songs score ~0.8 (PANNs). |
 | `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever a tagger can run. Each stem is described only with its own vocabulary (vocals: Male/Female singing, Rapping, Choir, Synth vocals, Spoken word, else "Singing"; drums: Drum kit/Drum machine + details; bass: Bass guitar/Synth bass/Double bass; other: melodic instruments). `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
-| `AUDIO_STEM_LABEL_MODEL` | `router` | Tagger for stem labels and "separate the rest" detection: `router` reuses the router's AudioSet classifier (PANNs; no second model, ~0.8 s warm for 4 stems of a 4-min song on a busy A40), `panns`/`ast` load their own copy when the router uses another, `clap` loads LAION-CLAP zero-shot (`AUDIO_STEM_LABEL_CLAP_MODEL`, default `laion/larger_clap_music_and_speech`, Apache-2.0). PANNs is the default: AST is ~3x slower and weaker on vocals; CLAP is strong on clean strings but mislabels separated vocals ("Synth vocals") and bass (2026-11-14 evaluation, docs/plans/music-stems.md). |
+| `AUDIO_STEM_LABEL_MODEL` | `router` | Tagger for stem labels: `router` reuses the router's AudioSet classifier (PANNs; no second model, ~0.8 s warm for 4 stems of a 4-min song on a busy A40), `panns`/`ast` load their own copy when the router uses another, `clap` loads LAION-CLAP zero-shot (`AUDIO_STEM_LABEL_CLAP_MODEL`, default `laion/larger_clap_music_and_speech`, Apache-2.0). PANNs is the default: AST is ~3x slower and weaker on vocals; CLAP is strong on clean strings but mislabels separated vocals ("Synth vocals") and bass (2026-11-14 evaluation, docs/plans/music-stems.md). |
 | `AUDIO_STEM_LABEL_MIN_SCORE` | `0` | Floor on the per-family presence thresholds (`labeling.PRESENCE`, calibrated per tagger on synthetic BabySlakh stems) and on drum detail tags; `0` = calibrated thresholds only. |
 | `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). |
 
@@ -302,35 +321,3 @@ yet). The chain splitter disables audio-separator's peak normalisation
 (`normalization_threshold=1.0`), feeds it at most 0.5 peak and undoes that gain on the vocals.
 Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
 the splitter, duplicates mono to stereo and folds the stems back to mono.
-
-### Nested split: "Separate the rest" (`options.mode = "music_substems"`)
-
-The editor can split one track of a song split further: the parent stem's audio goes to
-`/separate` with `options: {"mode": "music_substems", "parent_label": "other", "stems": null}`
-and comes back as one track per instrument found plus exactly one residual, `Rest`
-(`label: "rest"`), that makes them sum to the input. Instruments are `options.stems` or, when
-null, what the router's tagger hears (`labeling.label_stems`, the same tags as `stems[].tags`);
-quiet results are folded into `Rest`; nothing separable is a `400 INVALID_REQUEST`
-("No separable instruments found in this track"). Contract:
-`docs/contracts/audio_contracts.md` → *Nested split*. Code: `sam_audio_service/stems/nested.py`.
-Benchmark and model choice: `benchmarks/nested_stems.py`, results in
-`benchmarks/results/2026-11-14-nested-stems/`.
-
-```bash
-AUDIO_STEM_SPLITTER=mock .venv/bin/python -m sam_audio_service      # mock nested splitter too
-curl -F audio=@other.wav -F 'metadata={"options":{"mode":"music_substems","stems":["piano"]}}' localhost:8001/separate
-```
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `AUDIO_SUBSTEM_MODEL` | follows `AUDIO_STEM_SPLITTER`: `off` → `off`, `mock` → `mock`, real → `htdemucs_6s` | `off`, `mock` (frequency bands; CI), `htdemucs_6s` (Demucs 6-source on the parent stem: offers `guitar`, `piano`, `keys`; MIT; shifts 0, `AUDIO_STEM_OVERLAP`, `AUDIO_STEM_DEMUCS_BATCH`; its own model instance, ~0.1 GB of weights). The only licence-clean model that beat the input clearly in the Phase 4 benchmark; families no shippable model separates (organ, synth, strings, brass, woodwinds) are not offered. |
-| `AUDIO_SUBSTEM_MAX` | `4` | Most instruments per split (1-8). |
-| `AUDIO_SUBSTEM_MIN_SCORE` | `0.1` | Minimum tag score for a detected instrument (PANNs/AST mean probability over active windows). |
-| `AUDIO_SUBSTEM_SILENT_DB` | `-15` | A separated instrument quieter than this (dB of the input) is folded into `Rest` with a warning. With `MIN_SCORE` 0.1 this returned a piano that is not in the mix for 5% of BabySlakh clips (10% at -20 dB) and a phantom guitar for 1 of 80. |
-| `AUDIO_SUBSTEM_PARENTS` | `other` | Comma-separated parent labels that may be split; anything else is `400 UNSUPPORTED_OPERATION`. |
-
-The nested model loads on first use, runs under the same inference lock as the splitter
-and the prompted model, and is reported under `substems` in `/health` and `music_substems`
-in `/capabilities` (`instruments`, `parents`, `license`, …), which is how the editor knows
-where to offer the action. With no tagger (`AUDIO_ROUTER_CLASSIFIER=off`) every offered
-instrument is tried once and the silence check decides.

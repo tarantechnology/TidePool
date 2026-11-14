@@ -1,12 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendStem } from './backend'
-import { canSplitFurther, createCandidate, describeRouting, splitResultJob, splitStem, tagLine, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
+import { createCandidate, describeRouting, tagLine, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
 import { buildVisualPrompt, NO_VISUAL_PROMPT } from './separation'
 
 const config = { baseUrl: 'http://api.test:8000', token: 'tok' }
 const fetchMock = vi.fn<typeof fetch>()
 
 const bodyOf = (call = 0) => JSON.parse(String(fetchMock.mock.calls[call][1]?.body)) as Record<string, unknown>
+
+describe('separator identity', () => {
+  it('uses the serving model and voice-preservation status from capabilities', () => {
+    expect(toCapabilities({backend:'audiosep',model_id:'audiosep-base-4M',loaded:true,quality:false,visual:false,suppression:{mode:'conservative',strength:.9}})).toMatchObject({
+      backend:'audiosep',modelId:'audiosep-base-4M',loaded:true,preserveVoices:true,quality:false,visual:false,
+    })
+  })
+  it('does not invent a model or processing mode for an older server', () => {
+    const caps=toCapabilities({quality:false,visual:false})
+    expect(caps).not.toHaveProperty('backend')
+    expect(caps).not.toHaveProperty('preserveVoices')
+  })
+})
 
 describe('processProject', () => {
   beforeEach(() => {
@@ -91,6 +104,12 @@ describe('toStem', () => {
 
   it('leaves a target with the default kind, which is not guessed from the name', () => {
     expect(toStem(row({ role: 'target', name: 'dialogue' }), 'blob:x').kind).toBe('sfx')
+  })
+
+  it('keeps grouped separated sounds distinct from editable effect clips', () => {
+    const target=toStem(row({role:'target',sound_group_id:'g',sound_group_label:'chopping',sound_start:1,sound_end:2}), 'blob:x')
+    expect(target.effectGroupId).toBe('g');expect(target.effectLabel).toBe('chopping');expect(target.soundInterval).toEqual({start:1,end:2});expect(target.isEffectClip).toBeUndefined()
+    expect(toStem(row({role:'effect',effect_group_id:'e',effect_label:'gong'}),'blob:x').isEffectClip).toBe(true)
   })
 
   it('prefers the backend label for display, and falls back to the name', () => {
@@ -200,48 +219,5 @@ describe('responseBlob', () => {
     const blob = await responseBlob(res)
     expect(blob.type).toBe('audio/wav')
     expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
-  })
-})
-
-describe('separate the rest', () => {
-  beforeEach(() => {
-    fetchMock.mockReset()
-    vi.stubGlobal('fetch', fetchMock)
-  })
-  afterEach(() => vi.unstubAllGlobals())
-
-  const row = (over: Partial<BackendStem>): BackendStem => ({ id: 's1', name: 'Piano', duration: 4, audio_url: '/a', role: 'target', label: 'other', ...over })
-
-  it('posts the split for one track, with instruments only when asked', async () => {
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ job_id: 'j9' })))
-    expect(await splitStem(config, 'p1', 's1')).toBe('j9')
-    expect(String(fetchMock.mock.calls[0][0])).toBe('http://api.test:8000/api/projects/p1/stems/s1/split')
-    expect(bodyOf(0)).toEqual({})
-    await splitStem(config, 'p1', 's1', ['piano'])
-    expect(bodyOf(1)).toEqual({ stems: ['piano'] })
-  })
-
-  it('offers it on the other track only, once, and only when the service can', () => {
-    const other = toStem(row({}), 'blob:x')
-    expect(other.canonicalLabel).toBe('other')
-    expect(canSplitFurther(other)).toBe(true)
-    expect(canSplitFurther(other, false)).toBe(false)
-    expect(canSplitFurther(toStem(row({ name: 'Vocals', label: 'vocals' }), 'blob:x'))).toBe(false)
-    expect(canSplitFurther(toStem(row({ role: 'residual' }), 'blob:x'))).toBe(false)
-    expect(canSplitFurther(toStem(row({ parent_name: 'Piano' }), 'blob:x'))).toBe(false)
-  })
-
-  it('groups children under the track they came from, by display name', () => {
-    const child = toStem(row({ name: 'Synth', label: 'synth', parent_name: 'Piano', source_stem_id: 'old' }), 'blob:x')
-    expect(child).toMatchObject({ label: 'Synth', group: 'Piano' })
-    expect(toStem(row({ name: 'Rest', label: 'rest', role: 'residual', parent_name: 'Piano' }), 'blob:x')).toMatchObject({ label: 'Rest', kind: 'residual', group: 'Piano' })
-    expect(toStem(row({}), 'blob:x')).not.toHaveProperty('group')
-  })
-
-  it('reads the reload job and the capability', () => {
-    expect(splitResultJob({ status: 'completed', result: { stems_job_id: 'sj' } })).toBe('sj')
-    expect(splitResultJob({ status: 'completed', result: null })).toBeNull()
-    expect(toCapabilities({ music_substems: { available: true, instruments: ['piano', 2] } }).musicSubstems).toEqual({ available: true, stems: ['piano'] })
-    expect(toCapabilities({ music_substems: { available: false } }).musicSubstems?.available).toBe(false)
   })
 })

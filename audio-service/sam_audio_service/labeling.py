@@ -21,7 +21,7 @@ MUSDB stems separated by our chain; numbers in ``docs/plans/music-stems.md``):
 * **Stems always get their family tag** (Drum kit / Drum machine, Bass guitar / Synth bass /
   Double bass, Singing) when they are not near-silent; before, a drums stem whose only
   confident class was the trivial "Drum" came back with no tags at all (38 of 140 MUSDB clips).
-* **Presence** (``detect_instruments``, used by "separate the rest"): a family is present when
+* **Presence**: an instrument family is tagged when
   its mean window score clears a per-family, per-model threshold fitted on a synthetic
   presence set (``PRESENCE``), instead of one global 0.1 that suits "Guitar" (scores 0.3-0.9)
   but not "Brass" or "Mallets" (0.02-0.2 even when clearly audible).
@@ -163,15 +163,8 @@ STEM_VOCAB: dict[str, tuple[str, ...]] = {
     "instrumental": DRUM_IDS[:2] + ("percussion",) + BASS_IDS + INSTRUMENT_IDS,
     "residual": VOCAL_IDS[:-1] + DRUM_IDS[:2] + ("percussion",) + BASS_IDS + INSTRUMENT_IDS,  # whatever was not asked for, voice included
 }
-# Families "separate the rest" can be asked to find (and the order ties are broken in).
+# Instrument families, in the order ties are broken in.
 INSTRUMENT_FAMILIES: tuple[str, ...] = tuple(dict.fromkeys(LABEL[i].family for i in INSTRUMENT_IDS))
-# Old display names (and AudioSet names) that callers may still send, mapped to families.
-FAMILY_ALIASES: dict[str, str] = {
-    "keyboard": "keys", "keyboards": "keys", "electric piano": "keys", "rhodes": "keys", "synthesizer": "synth", "synths": "synth",
-    "string": "strings", "violin": "strings", "cello": "strings", "horns": "brass", "trumpet": "brass", "saxophone": "woodwinds",
-    "sax": "woodwinds", "flute": "woodwinds", "woodwind": "woodwinds", "guitars": "guitar", "electric guitar": "guitar",
-    "acoustic guitar": "guitar", "marimba": "mallets", "vibraphone": "mallets", "glockenspiel": "mallets",
-}
 
 # Presence thresholds on a family's mean window score, per tagger. Fitted 2026-11-14 on 240
 # synthetic "other" stems (1-4 BabySlakh instruments + drums/bass, 30 s, through the chain
@@ -179,8 +172,6 @@ FAMILY_ALIASES: dict[str, str] = {
 # rounded. Nothing reached 60% for "synth" (AudioSet "Synthesizer" barely separates Slakh's
 # synth patches from the rest), so it gets a conservative 0.3. On the 20 real BabySlakh songs
 # this is ~0.85 precision; recall is lower there because dense arrangements hide quiet parts.
-# Recall is preferred over precision: "separate the rest" folds an instrument that comes back
-# near-silent into "Rest", so a false positive costs less than a missed instrument.
 PRESENCE: dict[str, dict[str, float]] = {
     "panns": {"piano": 0.18, "keys": 0.19, "organ": 0.15, "guitar": 0.15, "synth": 0.3, "strings": 0.07, "brass": 0.03, "woodwinds": 0.02, "mallets": 0.01},
     "ast": {"piano": 0.08, "keys": 0.05, "organ": 0.045, "guitar": 0.045, "synth": 0.3, "strings": 0.04, "brass": 0.02, "woodwinds": 0.02, "mallets": 0.01},
@@ -208,16 +199,13 @@ class Tagger(Protocol):
 
 @dataclass
 class Instrument:
-    """One instrument family found in a stem (``detect_instruments``)."""
+    """One instrument family heard in a stem."""
 
     family: str  # canonical family id (piano, keys, organ, guitar, synth, strings, brass, woodwinds, ...)
     name: str  # display name, the most specific label that is confident ("Electric guitar")
     score: float  # mean window score of the family
     present: bool  # score >= the family's presence threshold
     coverage: float = 0.0  # fraction of analysed windows where the family clears its threshold
-
-    def as_dict(self) -> dict[str, float | str | bool]:
-        return {"family": self.family, "name": self.name, "score": round(self.score, 3), "present": self.present, "coverage": round(self.coverage, 3)}
 
 
 @dataclass
@@ -521,33 +509,3 @@ def label_stems(
                 dedup.append((t, s))
         out.append(StemLabel([{"label": t, "score": round(s, 3)} for t, s in dedup[:MAX_TAGS]], name, cands, round(energy_db, 2), len(clips), instruments))
     return out
-
-
-def detect_instruments(
-    tagger: Tagger,
-    samples: np.ndarray,
-    sample_rate: int,
-    *,
-    parent: str = "other",
-    mixture: np.ndarray | None = None,
-    min_score: float | None = None,
-    max_windows: int = 12,
-) -> list[Instrument]:
-    """Instrument families in one stem (for "separate the rest"), best first, each with
-    ``present``. ``parent`` picks the vocabulary (``other`` -> melodic instruments); ``mixture``
-    (optional) excludes windows where the stem is only bleed. A near-silent stem gives []."""
-    mix_energy = _energy(mixture) if mixture is not None else None
-    mix_windows = window_energies(_mono(mixture), int(WINDOW_SECONDS * sample_rate))[1] if mixture is not None else None
-    _, clips = _plan(samples, mix_windows, mix_energy, sample_rate, max_windows)
-    if not clips:
-        return []
-    kind = tagger_kind(tagger)
-    vocab = vocabulary(parent)
-    scores = label_scores(tagger.tag(clips, sample_rate), tagger.class_names(), vocab, zero_shot=kind == "clap")
-    return instruments_from_scores(scores, vocab, kind, min_score)
-
-
-def present_families(instruments: Sequence[Instrument], limit: int | None = None) -> list[str]:
-    """Family ids marked present, best first, at most ``limit``."""
-    fams = [i.family for i in instruments if i.present]
-    return fams[:limit] if limit is not None else fams

@@ -46,7 +46,7 @@ class Settings:
     # "mock" is a deterministic DSP stand-in for local development and CI. It is NOT
     # source separation. "sam" loads the real SAM Audio checkpoints.
     backend: str = field(default_factory=lambda: os.getenv("AUDIO_BACKEND", "audiosep"))
-    model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID", "facebook/sam-audio-large"))
+    model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID") or 'facebook/sam-audio-large')
     # "auto" picks cuda > mps > cpu.
     device: str = field(default_factory=lambda: os.getenv("AUDIO_DEVICE", "auto"))
     dtype: str = field(default_factory=lambda: os.getenv("AUDIO_DTYPE", "float32"))
@@ -81,6 +81,8 @@ class Settings:
     refine_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_THRESHOLD", 0.0))
     refine_residual_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_RESIDUAL_THRESHOLD", 0.0))
     refine_gate_db: float = field(default_factory=lambda: _float("AUDIO_REFINE_GATE_DB", 0.0))
+    suppression: str = field(default_factory=lambda: os.getenv("AUDIO_SUPPRESSION", ""))
+    suppression_strength: float = field(default_factory=lambda: _float("AUDIO_SUPPRESSION_STRENGTH", .9))
     # Noise draws returned per chunk window and how one is picked (candidates.py). Each
     # extra draw costs one more batch item (K x compute and activation memory).
     candidates: int = field(default_factory=lambda: _int("AUDIO_CANDIDATES", 1))
@@ -146,22 +148,6 @@ class Settings:
     # 10 s windows analysed per stem (active regions only, spread across the song).
     stem_label_max_windows: int = field(default_factory=lambda: _int("AUDIO_STEM_LABEL_MAX_WINDOWS", 12))
 
-    # Nested split ("Separate the rest", options.mode = music_substems; stems/nested.py): one stem
-    # of an earlier split in, the instruments inside it out. off | mock | htdemucs_6s. Unset ->
-    # follows AUDIO_STEM_SPLITTER (off -> off, mock -> mock, a real splitter -> htdemucs_6s, the
-    # Phase 4 benchmark's pick: the only licence-clean model that beat the input on any family).
-    substem_model: str = field(default_factory=lambda: os.getenv("AUDIO_SUBSTEM_MODEL", ""))
-    # Most instruments a detected split returns (options.stems may ask for up to this many too).
-    substem_max: int = field(default_factory=lambda: _int("AUDIO_SUBSTEM_MAX", 4))
-    # Detection: labeling.detect_instruments' per-family presence thresholds; a value here raises
-    # them all to at least this tag score. Unset -> the calibrated thresholds only.
-    substem_min_score: float | None = field(default_factory=lambda: _opt_float("AUDIO_SUBSTEM_MIN_SCORE"))
-    # Level (dB of the input) below which a separated instrument is folded into Rest; see the
-    # Phase 4 report (benchmarks/nested_stems.py policy table) for how it trades phantom tracks.
-    substem_silent_db: float = field(default_factory=lambda: _float("AUDIO_SUBSTEM_SILENT_DB", -15.0))
-    # Canonical parent labels that may be split (comma-separated).
-    substem_parents: tuple[str, ...] = field(default_factory=lambda: tuple(p.strip().lower() for p in os.getenv("AUDIO_SUBSTEM_PARENTS", "other").split(",") if p.strip()))
-
     # Limits.
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
     max_input_bytes: int = field(default_factory=lambda: _int("AUDIO_MAX_INPUT_BYTES", 500 * 1024 * 1024))
@@ -214,7 +200,9 @@ class Settings:
     ffmpeg_timeout: int = field(default_factory=lambda: _int("AUDIO_FFMPEG_TIMEOUT", 600))
 
     def __post_init__(self) -> None:
-        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and 'AUDIO_MODEL_ID' not in os.environ:
+        if not self.suppression:
+            self.suppression = 'conservative' if self.backend == 'audiosep' else 'off'
+        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and not os.getenv('AUDIO_MODEL_ID'):
             self.model_id = 'audiosep-base-4M'
         if self.backend == 'audiosep' and self.chunk_batch_env is None and self.chunk_workers is None:
             self.chunk_batch = 1
@@ -246,11 +234,8 @@ class Settings:
             self.pass_min_similarity = self.pass_min_similarity_env
         elif self.pass_min_similarity is None:
             self.pass_min_similarity = 0.6 if self.backend == "sam" else 0.0
-        if not self.substem_model:
-            self.substem_model = {"off": "off", "mock": "mock"}.get(self.stem_splitter, "htdemucs_6s")
         if not self.router_classifier:
-            real = self.stem_splitter in {"demucs", "chain", "roformer"} or self.substem_model not in {"off", "mock"}
-            self.router_classifier = "panns" if real else "off"
+            self.router_classifier = "panns" if self.stem_splitter in {"demucs", "chain", "roformer"} else "off"
         if self.router_music_threshold is None:
             self.router_music_threshold = {"panns": 0.4, "ast": 0.2}.get(self.router_classifier, 0.4)
         if self.stem_label_min_score is None:
@@ -262,6 +247,14 @@ class Settings:
             self.refine = "mask" if self.backend == "sam" else "off"
 
     def validate(self) -> None:
+        if self.backend == 'audiosep' and self.model_id.startswith('facebook/sam-'):
+            raise ValueError('AudioSep selected with an old SAM AUDIO_MODEL_ID; unset AUDIO_MODEL_ID or use audiosep-base-4M')
+        if self.suppression not in {'off', 'conservative'}:
+            raise ValueError('AUDIO_SUPPRESSION must be off or conservative')
+        if not 0 <= self.suppression_strength <= 1:
+            raise ValueError('AUDIO_SUPPRESSION_STRENGTH must be within [0, 1]')
+        if self.suppression != 'off' and self.backend != 'audiosep':
+            raise ValueError('Conservative suppression is available with AudioSep only')
         if self.visual_batch_size is not None and self.visual_batch_size <= 0:
             raise ValueError('AUDIO_VISUAL_BATCH_SIZE must be positive')
         if self.backend not in {"mock", "sam", "audiosep"}:
@@ -341,16 +334,6 @@ class Settings:
             raise ValueError("AUDIO_ROUTING_DEFAULT must be 'auto', 'prompted' or 'music_stems'")
         if self.routing_default == "music_stems" and self.stem_splitter == "off":
             raise ValueError("AUDIO_ROUTING_DEFAULT=music_stems needs AUDIO_STEM_SPLITTER")
-        if self.substem_model not in {"off", "mock", "htdemucs_6s"}:
-            raise ValueError("AUDIO_SUBSTEM_MODEL must be 'off', 'mock' or 'htdemucs_6s'")
-        if not 1 <= self.substem_max <= 8:
-            raise ValueError("AUDIO_SUBSTEM_MAX must be between 1 and 8")
-        if self.substem_min_score is not None and not 0 <= self.substem_min_score <= 1:
-            raise ValueError("AUDIO_SUBSTEM_MIN_SCORE must be in [0, 1]")
-        if not -80 <= self.substem_silent_db <= 0:
-            raise ValueError("AUDIO_SUBSTEM_SILENT_DB must be between -80 and 0")
-        if not self.substem_parents:
-            raise ValueError("AUDIO_SUBSTEM_PARENTS must name at least one stem")
         if self.stem_labels not in {"auto", "off"}:
             raise ValueError("AUDIO_STEM_LABELS must be 'auto' or 'off'")
         if not 0 <= self.stem_label_min_score <= 1:

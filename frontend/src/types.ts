@@ -24,10 +24,12 @@ export interface Stem {
   refinement?: Refinement
   /** Instruments heard in a music stem, most likely first ("Piano", "Strings"). Read-only here. */
   tags?: string[]
-  /** The canonical music label (`other`, `vocals`…) when the stem came from a music split. */
-  canonicalLabel?: string
-  /** Name of the track this one was separated out of ("Separate the rest"), for grouping. */
-  group?: string
+  /** Related effect clips share an identity even when their names change. */
+  effectGroupId?: string
+  effectLabel?: string
+  isEffectClip?: boolean
+  /** Range on the original stem timeline that contains a separated occurrence. */
+  soundInterval?: {start:number;end:number}
 }
 
 /**

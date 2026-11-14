@@ -1,11 +1,11 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, BackendJob, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
+import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
 
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
-import { musicCommand, restCommand, separationCommand } from '../separationCommand'
+import { musicCommand, separationCommand } from '../separationCommand'
 import { separationSettings } from '../agent/separationSettings'
 import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
@@ -15,7 +15,7 @@ import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitResultJob, splitStem, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -64,8 +64,7 @@ export interface ProjectPanelHandle {
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
-  /** "Separate the rest": split one music track into the instruments inside it. */
-  splitTrack: (stemId: string) => Promise<void>
+  editClip: (stemId:string,operation:'move'|'delete',startOffset?:number)=>Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -103,7 +102,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [candidateWarnings,setCandidateWarnings]=useState<string[]>([])
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
-  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'>('separation')
+  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'>('separation')
   const [cinematicStyle,setCinematicStyle]=useState<CinematicStyle>('cinematic')
   const [directorRequest,setDirectorRequest]=useState('Make the whole video more cinematic')
   const [directorGoal,setDirectorGoal]=useState<DirectorIntent>('cinematic')
@@ -152,7 +151,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
   useEffect(() => () => { if(currentUrl) URL.revokeObjectURL(currentUrl) },[currentUrl])
-  useEffect(() => { if (selectedVisual) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual])
+  useEffect(() => { if (selectedVisual && capabilities?.visual !== false) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual, capabilities?.visual])
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
@@ -160,7 +159,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   // A split replaces every layer, so it is offered only before the first separation.
   const canSplit = Boolean(project?.metadata) && !jobId && !candidateId && capabilities?.musicStems?.available !== false
   const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
-  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null,splitTracks:capabilities?.musicSubstems?.available === true})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,capabilities,onProjectState])
+  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
@@ -191,7 +190,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : 'separation')
+        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
         if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='replacement') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
         if (job.provenance?.kind==='cinematic' || job.provenance?.kind==='director') { setCinematicSteps(job.provenance.steps || []); setCinematicStyle(job.provenance.style || 'cinematic'); if(job.provenance.kind==='director') { setDirectorRequest(job.provenance.request || 'Make the whole video more cinematic');setDirectorGoal(job.provenance.intent || 'cinematic');setDirectorChanges(job.provenance.changes || []) } }
         if(job.provenance?.kind==='replacement') {setReplacementPeaks(job.provenance.peak_times || []);setReplacementCount(job.provenance.requested_count ?? null);setReplacementMode(job.provenance.mode || 'replace');setReplacementEvents(job.provenance.events || []);setReplacementAlignment(job.provenance.alignment || 'peak')}
@@ -290,12 +289,24 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await loadVideo(cfg, info)
     suggestRoute(cfg, created.project_id)
     setMessage(info.metadata?.has_video ? 'Uploaded. Pick a sound to separate.' : 'Uploaded. Split it into tracks, or pick a sound to separate.')
+    if (info.metadata?.has_video) {
+      try {
+        const available = await getCapabilities(cfg, info.project_id)
+        if (available.vision?.available && available.vision.automatic) {
+          const started = await startVisualAnalysis(cfg, info.project_id)
+          setResumeVisual({projectId:info.project_id,jobId:started.jobId})
+          setMessage('Uploaded. Finding people and objects…')
+        }
+      } catch {
+        setMessage('Uploaded. Automatic detection could not start; retry Find people and objects.')
+      }
+    }
   })
-  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime) => {
+  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
     try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`) } catch { /* Ignore unavailable storage. */ }
-    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
+    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
@@ -359,7 +370,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const previewEffects = () => run(async () => {
     if (!project) return
     await flush();setMessage('Preparing layer effects preview…')
-    const id=await createEffectsPreview(config,project.project_id,effectsStem || null,effects)
+    const groupId=effectsStem.startsWith('group:') ? effectsStem.slice(6) : undefined
+    const id=await createEffectsPreview(config,project.project_id,groupId ? null : effectsStem || null,effects,groupId)
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`, JSON.stringify({id,sound:'Layer effects'})) } catch { /* Preview remains available. */ }
     setPrompt('Layer effects');await waitCandidate(config,project.project_id,id)
   })
@@ -383,28 +395,17 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await splitInto(config, project, null)
   })
-  /** Replace one music track with its instruments and a Rest; undone like an applied preview. */
-  const splitTrackInto = async (cfg: BackendConfig, projectId: string, stemId: string) => {
-    await flush()
-    setMessage('Separating the rest…')
-    const id = await splitStem(cfg, projectId, stemId)
-    const controller = new AbortController(); abort.current = controller
-    const began = Date.now()
-    const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(jobProgressMessage({...status, stage: undefined}, Date.now()-began, 'Separating the rest'))})
-    if (result.state === 'failed') throw new Error(result.error || 'Separating the track failed.')
-    const job = await getJob(cfg, id), stemsJob = splitResultJob(job)
-    if (!stemsJob) throw new Error('The split finished without its tracks; reload the project.')
-    await onLoadStems(new HttpStemSource(cfg, stemsJob), 'Project stems')
-    const children = (job.result as {stems?: Array<{name?: string}>} | null)?.stems ?? []
-    const inference = (job.result as {inference?: BackendJob['inference']} | null)?.inference
-    setJobId(stemsJob); setUndoId(id); if (inference?.model?.is_mock !== undefined) setMockStems(inference.model.is_mock)
-    setMessage([`Separated into ${children.map(c => c.name).filter(Boolean).join(', ')}.`, ...(inference?.warnings || [])].join(' '))
+  const applyClipEdit = async (stemId:string,operation:'move'|'delete',startOffset?:number) => {
+    if(!project)throw new Error('Open a project first.')
+    await flush();const saved=await getSavedStems(config,project.project_id);const stem=saved.find(s=>s.id===stemId)
+    if(!stem || stem.role!=='effect')throw new Error('The effect clip is unavailable.')
+    setMessage(operation==='move'?'Moving sound…':'Removing sound…')
+    const id=await editEffectClip(config,project.project_id,stem,operation,startOffset)
+    for (;;) { const job=await getCandidate(config,id);if(job.status==='failed')throw new Error(job.error || 'Could not edit the sound.');if(job.status==='completed')break;await new Promise(resolve=>setTimeout(resolve,500)) }
+    const applied=await applyCandidate(config,id);await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
+    setJobId(applied.job_id);setUndoId(id);setProject(await getProject(config,project.project_id));setMessage(operation==='move'?'Sound moved.':'Sound removed.')
   }
-  const splitTrack = (stemId: string) => run(async () => {
-    if (!project) return
-    await splitTrackInto(config, project.project_id, stemId)
-  })
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, splitTrack, visualAction: async (chosen, description, action) => {
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
     if (busyRef.current) throw new Error('A project operation is already running.')
@@ -412,7 +413,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try {
       await flush()
       setPrompt(description);setEditAction(action==='isolate'?'keep':action)
-      await previewSound(config,project,description,{action:action==='isolate'?'keep':action},chosen)
+      await previewSound(config,project,description,{action:action==='isolate'?'keep':action},capabilities?.visual ? chosen : {},null,false,capabilities?.visual ? anchors : [],1,null,null,capabilities?.visual ? undefined : chosen)
     } catch(e) { setError(e instanceof Error ? e.message : String(e)); throw e }
     finally { busyRef.current = false; setBusy(false) }
   }, separateVideo: async (video, description, remove) => {
@@ -468,26 +469,24 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         return {kind:'replacement',description:null,remove:false,actions:[],message:'Replacement preview ready. Compare before applying.'}
       }
       pendingReplacement.current=''
-      const local=separationCommand(text), music=musicCommand(text), rest=restCommand(text)
+      const local=separationCommand(text), music=musicCommand(text)
 
       const directCinematic = cinematicCommand(text, candidateKind==='cinematic'||candidateKind==='director')
       const directCreative = creativeCommand(text)
       const directTimestamp = local?.processingTime !== undefined
       let result:AgentPlan=directTimestamp && local ? {kind:'separate',description:local.description,remove:local.remove,edit_scope:local.editScope || {action:local.remove?'mute':'keep'},processing_time:local.processingTime,actions:[],message:''} : directCinematic || directCreative ? {kind:'director',description:null,remove:false,actions:[],message:''} : await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{
-        if(rest)return {kind:'separate',description:'the rest',remove:false,separation_mode:'music_substems',split_stem_id:null,use_visual:false,actions:[],message:''}
         if(music)return {kind:'separate',description:music.description,remove:music.remove,separation_mode:'music_stems',stems:music.stems,...(music.remove?{edit_scope:{action:'mute'}}:{}),use_visual:false,actions:[],message:''}
         if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
+      if(result.kind==='clip_edit') {
+        const edit=result.clip_edit
+        if(!edit || edit.operation!=='move' || !stems.some(s=>s.id===edit.stem_id && s.effectGroupId) || !Number.isFinite(edit.start_offset) || edit.start_offset<0)throw new Error('The clip edit could not be verified.')
+        await applyClipEdit(edit.stem_id,'move',edit.start_offset)
+        return {...result,message:'Sound moved. Use Undo the last apply to restore it.'}
+      }
       // "Remove the vocals" on a split song mutes its Vocals track; no new separation needed.
       if (result.kind === 'separate' && hasStems) {
         const muted = muteExistingStem(result, await getSavedStems(cfg, current.project_id))
         if (muted) { setMessage(muted.message); return muted }
-      }
-      if (result.kind === 'separate' && result.separation_mode === 'music_substems') {
-        // The rule-based fallback names no track: it means the split song's "other" one.
-        const target = result.split_stem_id || (await getSavedStems(cfg, current.project_id)).find(s => s.role === 'target' && s.label === 'other' && !s.parent_name)?.id
-        if (!target) throw new Error('There is no "other" track to separate. Split the song into tracks first.')
-        await splitTrackInto(cfg, current.project_id, target)
-        return {...result, message: 'Separated the rest into its instruments.'}
       }
       if (result.kind === 'separate' && result.separation_mode === 'music_stems') {
         if (hasStems) throw new Error('This project already has layers. Upload the song again to split it into tracks.')
@@ -534,6 +533,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   }}))
   const visualAnalyzed = (metadata: VisualMetadata) => {
     onVisual(metadata); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('Analysis complete')
+    setMessage('Objects ready. Click an outline, then describe its sound.')
   }
   /** After the backend re-encoded a compatible copy: reload the video, and the original audio if nothing was separated yet. */
   const reloadPreparedMedia = async () => {
@@ -674,7 +674,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         </div>
         <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); if (project) { try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ } } setMessage('Preview discarded.') }}>Discard</button>
       </div>
-      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl} showTarget={candidateKind==='separation' || candidateKind==='replacement'} seekTo={previewSeek}/>
+      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl} showTarget={candidateKind==='separation' || candidateKind==='replacement' || candidateKind==='known-effect-replacement'} seekTo={previewSeek}/>
       {candidateKind==='separation' && processingRange && <div className="mt-2 text-xs text-muted">Processed {processingRange.start.toFixed(2)}–{processingRange.end.toFixed(2)} seconds. <button type="button" className="text-accent underline" onClick={()=>{setCandidateId('');setOpenStep('sound');setMessage('Adjust the processing range, then preview again.')}}>Adjust range</button></div>}
       {(candidateKind==='cinematic' || candidateKind==='director') && <div className="mt-2 text-xs text-muted"><p>{candidateKind==='director'?'Planned changes':'Whole-mix treatment'}: {cinematicSteps.join(' · ')}. No new music or sounds are added.</p>{candidateKind==='director' && directorChanges.map(change=><div key={change.target_stem_id} className="mt-2 flex items-center justify-between gap-2"><span>{change.enabled ? change.action : 'Disabled'}: {change.label} ({change.intervals.map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')})</span><button type="button" disabled={busy} className={secondary} onClick={()=>toggleDirectorChange(change)}>{change.enabled?'Disable':'Enable'}</button></div>)}{candidateWarnings.map(w=><p key={w} className="mt-1">{w}</p>)}<div className="mt-2 flex flex-wrap gap-1">{(['subtle','cinematic','dramatic'] as const).map(style=><button key={style} type="button" disabled={busy || style===cinematicStyle} className={secondary} onClick={()=>cinematic(style)}>{style==='cinematic'?'Balanced':style==='dramatic'?'More dramatic':'Subtle'}</button>)}</div></div>}
       {candidateKind==='replacement' && <div className="mt-3 space-y-2 text-xs text-muted">
@@ -687,6 +687,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         {candidateWarnings.map(w=><p key={w}>{w}</p>)}{error && <p role="alert" className="text-red-600">{error}</p>}<p>Compare the mix and listen for missing background sounds before applying.</p>
       </div>}
       {candidateKind==='effects' && <p className="mt-2 text-xs text-muted">Effects are rendered into the selected layer on apply. Undo restores the previous audio. Listen for clipping.</p>}
+      {candidateKind==='known-effect-replacement' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       <div className="mt-3 flex items-center gap-2">
         <button className={`${button} flex-1 py-2 text-sm`} disabled={busy} onClick={useRetry}>Apply to timeline</button>
         {candidateKind==='separation' && <button className={secondary} disabled={busy || !capabilities?.quality} title={capabilities?.quality ? 'Deep dive: a slower, higher-quality pass' : (capabilities?.reason || '')} onClick={() => void process(true)}>{FEATURES.quality}</button>}
@@ -697,6 +698,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   ) : null
 
   return <section className="shadow-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface text-fg" aria-label="Project controls">
+    {capabilities?.backend && <p className="border-b border-line px-3 py-2 text-xs text-muted" aria-label="Audio separator">
+      {capabilities.backend === 'audiosep' ? 'AudioSep' : capabilities.backend === 'sam' ? 'SAM Audio' : capabilities.backend}
+      {capabilities.preserveVoices && ' · Preserve voices'}
+      {capabilities.loaded === false && ' · Loading'}
+    </p>}
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       <ol className="space-y-1">
         <Step n={1} title="Upload" status={status('upload')} open={open('upload')} onToggle={() => toggle('upload')}
@@ -717,8 +723,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
             {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
-            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">The current separator does not support visual object guidance.</p>}
-            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy || capabilities?.visual === false} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">Select an object to choose its sound. AudioSep separates the sound description.</p>}
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
                 : <p className="text-muted">{visual ? 'Click an object in the video, or describe' : 'Describe'} the sound in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}
@@ -740,7 +746,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
             {project && <div className="rounded-xl border border-line p-2 text-xs">
               <button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>effectsOpen ? setEffectsOpen(false) : openEffects()}>Adjust layer EQ &amp; compression</button>
               {effectsOpen && <div className="mt-2 space-y-2">
-                <label className="block">Layer<select aria-label="Effects layer" className={`${field} mt-1`} value={effectsStem} onChange={e=>setEffectsStem(e.target.value)}>{effectsStems.length ? effectsStems.map(stem=><option key={stem.id} value={stem.id}>{stem.name}</option>) : <option value="">Original audio</option>}</select></label>
+                <label className="block">Layer<select aria-label="Effects layer" className={`${field} mt-1`} value={effectsStem} onChange={e=>setEffectsStem(e.target.value)}>{effectsStems.length ? <>{Array.from(new Set(effectsStems.map(s=>s.effect_group_id || s.sound_group_id).filter((id):id is string=>Boolean(id)))).map(id=>{const items=effectsStems.filter(s=>(s.effect_group_id || s.sound_group_id)===id);return items.length>1?<option key={id} value={`group:${id}`}>{items[0].effect_label || items[0].sound_group_label || items[0].name} · {items.length} clips</option>:null})}{effectsStems.map(stem=><option key={stem.id} value={stem.id}>{stem.name}</option>)}</> : <option value="">Original audio</option>}</select></label>
                 {([{key:'bass',label:'Bass',min:-12,max:12,step:.5,unit:'dB'}, {key:'treble',label:'Treble',min:-12,max:12,step:.5,unit:'dB'}, {key:'highpass',label:'Low-cut',min:0,max:200,step:5,unit:'Hz'}, {key:'compression',label:'Compression',min:1,max:6,step:.1,unit:':1'}] as const).map(control=><label key={control.key} className="block"><span className="flex justify-between"><span>{control.label}</span><span>{effects[control.key]}{control.unit}</span></span><input className="w-full accent-accent" aria-label={control.label} type="range" min={control.min} max={control.max} step={control.step} value={effects[control.key]} onChange={e=>setEffects({...effects,[control.key]:Number(e.target.value)})}/></label>)}
                 <p className="text-muted">Preview before applying. Applying renders these effects into the selected layer; later changes add to them. Undo restores the previous audio.</p>
                 <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={previewEffects}>Preview effects</button><button type="button" className={secondary} disabled={busy} onClick={()=>setEffects({bass:0,treble:0,highpass:0,compression:1})}>Reset controls</button></div>

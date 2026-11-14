@@ -106,10 +106,11 @@ table preserves previous references across restarts. Apply and undo delete no st
 projects, migration initializes this field to their currently referenced original.
 
 `GET /api/projects/{id}/capabilities` exposes a whitelist of usable options, never internal
-paths, credentials, service addresses or raw load errors. `preview` requests one candidate;
-`quality` requests two judge-ranked candidates. Both use 10 s windows, 2 s overlap, batch
-two, automatic spans off, and a mixture-derived residual. Quality controls stay disabled
-when the text judge is unavailable. Ranking expresses preference, not calibrated confidence.
+paths, credentials, service addresses or raw load errors. The default AudioSep preview
+uses one candidate, 10 s windows, 2 s overlap, batch one, automatic spans off, and a
+mixture-derived residual. Quality controls stay disabled for AudioSep. On an explicitly
+selected SAM backend, `quality` can request two ranked candidates when the service
+supports ranking. Ranking expresses preference, not calibrated confidence.
 
 The planner separates `description`, `guidance`, `edit_scope`, and existing-layer actions.
 The backend reloads authoritative stems/edits, validates every generated operation, and
@@ -124,14 +125,16 @@ is experimental: native frame/mask/track/source checks remain enforced, the UI d
 selected mask, and visible intervals no longer automatically create positive sound anchors.
 Unusable visual input fails explicitly; suspicious output offers a text-plus-time retry.
 
-### AudioSep separator
+### Default AudioSep separator
 
-The audio service defaults to `AUDIO_BACKEND=audiosep` with an externally prepared
-AudioSep checkout and official checkpoints. See [AudioSep setup](audio-service/README.md#audiosep-backend).
+The audio service defaults to `AUDIO_BACKEND=audiosep` with a prepared
+AudioSep checkout and official checkpoints. See [AudioSep setup](audio-service/README.md#default-audiosep-backend).
 AudioSep is a real text-only model: visual conditioning, span anchors, independent
 candidates and the SAM judge are unavailable. Capabilities report these limits; the editor
 disables unsupported controls. Inference is still serialized and residuals are derived from
-the original mixture. This backend is opt-in and does not change the SAM default.
+the original mixture. Conservative source-phase suppression defaults to strength 0.9;
+`options.suppression=off` requests the raw separation path. A selected processing range
+confines either path to that interval. SAM and mock backends require explicit selection.
 
 ### Music stems (song → one track per instrument)
 
@@ -282,6 +285,55 @@ For multiple quacks, the generated first burst is isolated and copied with short
 This is a waveform heuristic: it cannot guarantee semantic sound identity or that one
 burst contains exactly one quack. The preview warns users to listen. Other generated
 sounds receive explicit count instructions but their count is not verified.
+
+### Follow-up replacement of known effects
+
+Effect stems store an asset ID, group ID and semantic label in additive SQLite columns;
+their layer IDs, current offsets, gain, mute and automation remain the authoritative
+timeline state. Existing projects with effect roles but no metadata use their layer
+names. A matching follow-up generates one new asset and replaces the matched effect
+files at their current peaks without running detection or separation. “Loud” increases
+the layer gain by 50%, bounded to 2. The preview reports that original video audio was
+not searched and warns about clipping. Apply is atomic and revision checked; undo
+restores the previous effects and settings.
+
+When the exact effect label does not match, the LangChain OpenAI integration can
+resolve the reference to one of the project's existing effect labels. The existing
+`OPENAI_AGENT_MODEL` and `OPENAI_API_KEY`/`OPENAI_API_KEY_FILE` settings apply; only
+the reference and labels are sent to the configured model, not audio. The structured
+result is validated against project-owned effect labels before any file is changed;
+ambiguous requests ask for clarification. If the assistant is unavailable, exact
+labels still work and unrelated audio can still use the existing detection path.
+This resolver does not judge separation quality or prove that untracked sounds in the
+original audio were removed.
+
+### Grouped effect tracks
+
+The timeline groups effect stems by `effect_group_id`, displays a shared row with the
+number of clips, and can expand to individual clip rows. Playback and export still use
+the original separate stems, so grouping itself does not change the mix. Group volume
+scales the members' gains proportionally; mute and solo controls explicitly set all
+member states. These edits are one local undo step. Individual clip arrow and delete
+controls use an authenticated, revision-checked candidate; applying creates a single
+undoable server edit. A group can also be selected in the EQ preview; its member files
+are rendered separately and applied atomically, preserving timing and other layers.
+
+On startup, older effect rows can recover group identity from applied replacement
+history only when at least two current clip IDs and file paths still match. Labels
+alone never cause automatic merging. The project agent resolves group mixer requests
+against saved effect identities, using the existing bounded LangChain resolver for
+nonliteral names. It asks for a displacement when a clip move has no amount and asks
+for clarification when names identify multiple groups. Grouping is a presentation
+and mixer operation, not a new sound detector or a guarantee of separation quality.
+
+Separated target layers from one replacement share a sound-group identity and retain
+their selected intervals. Independently created target previews with the same
+normalized explicit prompt also share a group, unless they already belong to distinct
+groups. Startup recovers older targets from matching candidate history or matching
+explicit prompts without merging conflicting existing groups. The common fader,
+mute/solo commands and group EQ work for these targets too. Full-length separated
+target layers do not expose effect-clip deletion or movement controls. Identical
+descriptions are a grouping hint, not proof of speaker or source identity.
 
 
 ### Peak-aligned effect placement

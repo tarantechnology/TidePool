@@ -9,6 +9,7 @@ import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
 import { FEATURES } from '../features'
+import { groupActions, timelineRows } from '../state/effectGroups'
 
 const ACCENT = '#5b9be3'
 const COLS = 'grid grid-cols-[15rem_minmax(0,1fr)]'
@@ -24,11 +25,11 @@ interface Props {
   tracks: TrackState[]
   duration: number
   onAction: (a: EditAction, coalesceKey?: string) => void
+  onActions: (actions: EditAction[], coalesceKey?: string) => void
+  onClipEdit: (stemId:string,operation:'move'|'delete',startOffset?:number)=>void
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
-  /** "Separate the rest" on the tracks that offer it. */
-  split?: { can: (stem: Stem) => boolean; run: (stemId: string) => void; busy: boolean } | null
 }
 
 function tickStep(duration: number): number {
@@ -106,15 +107,17 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, split = null }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
   // every lane at once, and dragging a lane's bottom edge sizes just that lane.
   const scroller = useRef<HTMLDivElement>(null)
   const [fitHeight, setFitHeight] = useState(96)
   const [allHeight, setAllHeight] = useState<number | null>(null)
   const [laneSizes, setLaneSizes] = useState<Record<string, number>>({})
-  const laneCount = stems.length
+  const rows = timelineRows(stems, expanded)
+  const laneCount = rows.length
   useEffect(() => {
     const el = scroller.current
     if (!el) return
@@ -214,7 +217,22 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
         </div>
 
         {/* Tracks */}
-        {stems.map((stem) => {
+        {rows.map((row) => {
+          if (row.type === 'group') {
+            const members=row.stems.flatMap(s=>tracks.filter(t=>t.stemId===s.id))
+            const ids=row.stems.map(s=>s.id), muted=members.length>0 && members.every(t=>t.muted), solo=members.length>0 && members.every(t=>t.solo)
+            const gain=Math.max(0,...members.map(t=>t.gain))
+            return <div key={row.id} className={`${COLS} relative border-b border-line`} style={{height:laneHeight(row.id)}}>
+              <div className="relative z-30 flex min-h-0 flex-col justify-center gap-1 border-r border-line px-4">
+                <div className="flex items-center gap-1"><button type="button" className="text-accent" aria-label={`${expanded.has(row.id)?'Collapse':'Expand'} ${row.label}`} aria-expanded={expanded.has(row.id)} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(row.id))next.delete(row.id);else next.add(row.id);return next})}>{expanded.has(row.id)?'▾':'▸'}</button><span className="min-w-0 flex-1 truncate text-sm font-medium">{row.label} · {row.stems.length}</span>
+                  <button type="button" aria-label={`${muted?'Unmute':'Mute'} all ${row.label}`} aria-pressed={muted} className="rounded border border-line px-1 text-xs" onClick={()=>onActions(groupActions(tracks,ids,{type:'mute',value:!muted}))}>M</button>
+                  <button type="button" aria-label={`${solo?'Unsolo':'Solo'} all ${row.label}`} aria-pressed={solo} className="rounded border border-line px-1 text-xs" onClick={()=>onActions(groupActions(tracks,ids,{type:'solo',value:!solo}))}>S</button></div>
+                <label className="flex items-center gap-2 text-xs text-muted">Volume<input aria-label={`${row.label} group volume`} className="fader min-w-0 flex-1" type="range" min={0} max={MAX_GAIN} step={.01} value={gain} onChange={e=>onActions(groupActions(tracks,ids,{type:'gain',value:Number(e.target.value)}),`group-gain:${row.id}`)}/></label>
+              </div>
+              <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">{row.stems.map(stem=>{const peaks=engine.getPeaks(stem.id),track=tracks.find(t=>t.stemId===stem.id);if(!peaks||!track)return null;const interval=stem.soundInterval;const clipPath=interval && stem.duration>0 ? `inset(0 ${Math.max(0,100-100*interval.end/stem.duration)}% 0 ${Math.max(0,100*interval.start/stem.duration)}%)` : undefined;return <div key={stem.id} className="absolute inset-y-0" style={{left:`${(stemStart(stem)/duration)*100}%`,width:`${(stem.duration/duration)*100}%`,clipPath}}><Waveform peaks={peaks} color={ACCENT} dimmed={!isAudible(tracks,track)}/></div>})}</div>
+            </div>
+          }
+          const stem = row.stem
           const track = tracks.find((t) => t.stemId === stem.id)
           const peaks = engine.getPeaks(stem.id)
           if (!track || !peaks) return null
@@ -235,7 +253,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
-                {...(split?.can(stem) ? { onSplit: () => split.run(stem.id), splitBusy: split.busy } : {})}
+                clipActions={stem.isEffectClip ? <span className="flex gap-1"><button type="button" aria-label={`Move ${stem.label} earlier`} title="Move 0.1 seconds earlier" onClick={()=>onClipEdit(stem.id,'move',Math.max(0,stemStart(stem)-.1))}>←</button><button type="button" aria-label={`Move ${stem.label} later`} title="Move 0.1 seconds later" onClick={()=>onClipEdit(stem.id,'move',Math.min(Math.max(0,duration-stem.duration),stemStart(stem)+.1))}>→</button><button type="button" aria-label={`Delete ${stem.label}`} title="Remove this effect clip" onClick={()=>onClipEdit(stem.id,'delete')}>×</button></span> : undefined}
               />
               <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">
                 {majors.map((t) => (
@@ -309,7 +327,9 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
           <Playhead engine={engine} duration={duration} />
           {/* Keyframe layer: one box per lane, matching the track rows above. */}
           <div className="absolute inset-x-0 top-8">
-            {stems.map((stem) => {
+            {rows.map((row) => {
+              if (row.type === 'group') return <div key={row.id} className="relative border-b border-transparent" style={{height:laneHeight(row.id)}} />
+              const stem = row.stem
               const track = tracks.find((t) => t.stemId === stem.id)
               if (!track || !engine.getPeaks(stem.id)) return null
               return (

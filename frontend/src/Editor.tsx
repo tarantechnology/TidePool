@@ -4,11 +4,10 @@ import { NO_PROJECT_HINT } from './agent/planOutcome'
 import { NO_PROJECT_STEMS, showsMockBadge } from './state/projectStems'
 import type { ProjectStemsState } from './state/projectStems'
 import { validateActions } from './agent/validate'
-import { canSplitFurther } from './api/backend'
 import type { SyncTarget, VisualMetadata } from './api/backend'
 import type { VisualSelection } from './visual'
 import { loadFromSource, stemFailureMessage } from './api/loadStems'
-import { FileStemSource, isAudioFile, isVideoFile, MockStemSource, PROJECT_STEMS_LABEL } from './api/stemSources'
+import { FileStemSource, isAudioFile, isVideoFile, MockStemSource } from './api/stemSources'
 import type { StemSource } from './api/stemSources'
 import { AudioEngine } from './audio/engine'
 import { resolveActions } from './audio/resolve'
@@ -259,6 +258,11 @@ export default function Editor() {
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
   }, [])
 
+  const dispatchBatch = useCallback((actions: EditAction[], coalesceKey?: string) => {
+    if (!actions.length) return
+    setHistory((h) => commit(h, { ...h.present, tracks: actions.reduce(applyAction, h.present.tracks) }, { coalesceKey, now:Date.now() }))
+  }, [])
+
   const setKind = useCallback((stemId: string, kind: StemKind) => {
     setHistory((h) => commit(h, { ...h.present, kinds: setKindOverride(h.present.kinds, stemId, kind) }))
   }, [])
@@ -269,7 +273,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement') return {message:plan.message,ok:true}
+      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'clip_edit') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
@@ -412,6 +416,7 @@ export default function Editor() {
               visual={visual}
               onSelection={setVisualSelection}
               selection={visualSelection}
+              onClearSelection={() => setVisualSelection(null)}
               seekTo={seekTo}
               audioOnly={!videoSrc && projectStems.audioOnly === true}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
@@ -429,9 +434,10 @@ export default function Editor() {
                 tracks={tracks}
                 duration={duration}
                 onAction={dispatch}
+                onActions={dispatchBatch}
+                onClipEdit={(id,operation,position)=>void projectPanel.current?.editClip(id,operation,position)}
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
-                split={projectStems.projectId && stemsLabel === PROJECT_STEMS_LABEL ? { can: (stem) => canSplitFurther(stem, projectStems.splitTracks !== false), run: (stemId) => void projectPanel.current?.splitTrack(stemId), busy: Boolean(working) } : null}
               />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">

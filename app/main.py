@@ -54,8 +54,8 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload')
-    # Process and split jobs report 'splitting' or 'separating' while the audio service runs.
-    if kind not in ('vision','process','split'): d.pop('stage',None)
+    # Process jobs report 'splitting' or 'separating' while the audio service runs.
+    if kind not in ('vision','process'): d.pop('stage',None)
     output=json.loads(d.pop('output')) if d['output'] else None
     d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':
@@ -119,7 +119,14 @@ def with_passes(opts, passes):
     """Forward passes only when asked; the audio service defaults to one."""
     return opts if passes is None else {**opts,'passes':passes}
 
+class ObjectSelection(BaseModel):
+    analysis_id: str = Field(min_length=1,max_length=100)
+    detection_id: str = Field(min_length=1,max_length=100)
+    track_id: int = Field(ge=0)
+    frame_index: int = Field(ge=0)
+
 class CandidateRequest(BaseModel):
+    object_selection: ObjectSelection | None = None
     processing_interval: Interval | None = None
     processing_time: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     stem_id: str | None=None
@@ -248,14 +255,25 @@ def get_visual(pid: str, authorization: str | None=Header(None)):
     if not p['visual']: raise HTTPException(404,'No visual analysis available')
     return json.loads(p['visual'])
 
+class ObjectAnalysisRequest(BaseModel):
+    concept: str = Field(default='auto',min_length=1,max_length=80)
+
 @app.post('/api/projects/{pid}/visual-analyze',status_code=202)
-def analyze_visual(pid: str, authorization: str | None=Header(None)):
+def analyze_visual(pid: str, body: ObjectAnalysisRequest = ObjectAnalysisRequest(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(409,'Upload a video first')
     from .detector import status
     vision=status()
     if not vision['available']:
-        return JSONResponse({'detail':vision['reason'],'code':'vision_unavailable'},status_code=503)
+        return JSONResponse({'detail':vision['reason'],'code':'vision_unavailable'},status_code=502 if vision.get('retryable') else 503)
+    if vision.get('selection_only'):
+        if not body.concept.strip(): raise HTTPException(422,'Enter an object to find.')
+        if body.concept.strip()=='auto' and not vision.get('automatic'):
+            raise HTTPException(503,'Automatic object discovery is unavailable. Find a specific object with SAM instead.')
+        if body.concept.strip()!='auto' and vision.get('prompted') is False:
+            raise HTTPException(503,'SAM object refinement is unavailable; automatic object discovery is still available.')
+        job=start(pid,'vision',{'object_selection':True,'concept':body.concept.strip(), 'source_sha256':file_sha256(p['original'])})
+        return {'job_id':job,'status':'queued','prepared':False}
     prepare=False
     try: validate_timeline(p['original'], json.loads(p['metadata'])['frame_rate'])
     except UnfixableTimeline as exc: raise HTTPException(422,str(exc)) from exc
@@ -327,6 +345,9 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     import re
     if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
+    from .effect_group_commands import plan_group_command
+    group_plan=plan_group_command(body.prompt,rows)
+    if group_plan is not None:return group_plan
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -348,6 +369,14 @@ def service_capabilities(pid: str, authorization: str | None=Header(None)):
     from .detector import status
     return {**capabilities(),'vision':status()}
 
+def separation_options(profile, candidates):
+    """Select request options from the separator actually serving this app."""
+    from .media import capabilities
+    caps = capabilities()
+    if profile == 'quality' and not caps.get('quality'):
+        raise HTTPException(422, caps.get('reason') or 'Quality retry is unavailable for this separator')
+    return options(profile, candidates, backend=caps.get('backend'))
+
 def source_kind(p):
     """Routing tie-breaker for the audio service: an upload without a video stream is likely a song."""
     return 'video' if p['metadata'] and json.loads(p['metadata']).get('has_video') else 'audio'
@@ -367,7 +396,7 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
     if not p['audio']: raise HTTPException(409,'Upload media first')
     refuse_during_refine(pid)
     # With no prompts, auto lets the service decide (a song becomes music stems); prompted needs one.
-    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and ((not body.prompts and body.mode=='prompted') or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
+    if os.getenv('INFERENCE_ADAPTER', 'http') == 'http' and ((not body.prompts and body.mode=='prompted') or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
         raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
     if body.append and body.mode=='music_stems': raise HTTPException(422,'A music split replaces the layers; it cannot be added to an earlier separation.')
     try: validate_timing(body.prompts,body.guidance,body.edit_scope,probe(p['audio'])['duration'])
@@ -376,7 +405,7 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
     if body.edit_scope.action != 'keep' and targets!=1: raise HTTPException(422,'An edit requires exactly one sound target')
     payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes','mode','stems'})
     payload['anchors']=body.guidance.model_dump()['anchors']
-    payload['options']=with_passes(options(body.profile,body.reranking_candidates),body.passes)
+    payload['options']=with_passes(separation_options(body.profile,body.reranking_candidates),body.passes)
     # Only an explicit mode overrides the service's AUDIO_ROUTING_DEFAULT.
     if 'mode' in body.model_fields_set: payload['options']['mode']=body.mode
     if body.stems: payload['options']['stems']=body.stems
@@ -395,8 +424,25 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
 def create_candidate(pid: str, body: CandidateRequest, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
+    object_context=None
+    if body.object_selection:
+        if body.visual_prompt: raise HTTPException(422,'Choose object context or audio visual conditioning, not both.')
+        from .object_selection import validate_context
+        try: object_context=validate_context(p,body.object_selection.model_dump())
+        except (ValueError,KeyError,TypeError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     refuse_during_refine(pid)
     with connect() as db: rows=db.execute('SELECT * FROM stems WHERE project_id=?',(pid,)).fetchall()
+    if (object_context and not body.stem_id and body.edit_scope.action in ('mute','lower')
+            and body.edit_scope.interval is None and not body.processing_interval and body.processing_time is None
+            and body.profile=='preview' and body.passes in (None,1) and not body.guidance.anchors):
+        matches=[r for r in rows if r['role']=='target' and (r['prompt'] or '').strip().casefold()==description(body.prompt).casefold()]
+        if len(matches)==1:
+            snapshot={'rows':[dict(r) for r in rows],'source':p['audio'],'source_sha256':file_sha256(p['audio']),
+                      'project_audio':p['audio'],'target_id':matches[0]['id'],'residual_id':None,
+                      'stem_hashes':{r['id']:file_sha256(r['path']) for r in rows}}
+            payload={'_candidate':snapshot,'_reuse_target_id':matches[0]['id'],'_object_context':object_context,
+                     'edit_scope':body.edit_scope.model_dump(),'prompts':[description(body.prompt)]}
+            return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
     targets=[r for r in rows if r['id']==body.stem_id and r['name'].lower()!='residual']
     residuals=[r for r in rows if r['name'].lower()=='residual']
     if body.stem_id and (len(rows)!=2 or len(targets)!=1 or len(residuals)!=1):
@@ -422,8 +468,8 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
               'residual_id':residuals[0]['id'] if residuals else None}
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
-             'profile':body.profile, 'options':{**with_passes(options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},'hints':{'source_kind':source_kind(p)},
-             '_candidate':snapshot, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
+             'profile':body.profile, 'options':{**with_passes(separation_options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},'hints':{'source_kind':source_kind(p)},
+             '_candidate':snapshot, '_object_context':object_context, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
@@ -513,20 +559,50 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
     refuse_during_refine(pid)
     from .candidates import safe_path
     from .replacement import parse_replacement
+    from .effect_followup import matching_effects
     try:
         source=safe_path(pid,p['audio']);plan=parse_replacement(body.request,probe(source)['duration'])
         with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-        if plan.get('mode')!='add' and rows and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Try a fresh project or add a sound over the original.')
+        known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
+        if plan.get('mode')!='add' and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Try a fresh project or add a sound over the original.')
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':body.request}),'status':'queued'}
 
 class LayerEffectsRequest(BaseModel):
     stem_id: str | None = Field(default=None,max_length=100)
+    effect_group_id: str | None = Field(default=None,max_length=100)
     bass: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
     treble: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
     highpass: float = Field(default=0,ge=0,le=200,allow_inf_nan=False)
     compression: float = Field(default=1,ge=1,le=6,allow_inf_nan=False)
+
+class EffectClipEdit(BaseModel):
+    stem_id: str = Field(min_length=1,max_length=100)
+    expected_revision: int = Field(ge=0)
+    operation: Literal['move','delete']
+    start_offset: float | None = Field(default=None,ge=0,le=86400,allow_inf_nan=False)
+    @model_validator(mode='after')
+    def fields_match(self):
+        if self.operation=='move' and self.start_offset is None:raise ValueError('Choose a new position.')
+        if self.operation=='delete' and self.start_offset is not None:raise ValueError('Deletion does not take a position.')
+        return self
+
+@app.post('/api/projects/{pid}/effect-clip-edit',status_code=202)
+def effect_clip_edit(pid: str,body: EffectClipEdit,authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']:raise HTTPException(409,'Upload media first.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db:rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    item=next((r for r in rows if r['id']==body.stem_id and r.get('role')=='effect'),None)
+    if not item:raise HTTPException(404,'Effect clip not found.')
+    if item['revision']!=body.expected_revision:raise HTTPException(409,'The clip changed; reload and try again.')
+    try:
+        source=safe_path(pid,p['audio']);snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+        if body.start_offset is not None and body.start_offset>=probe(source)['duration']:raise HTTPException(422,'Move the clip within the project.')
+    except (ValueError,OSError) as exc:raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_clip_edit':True,'_candidate':snapshot,**body.model_dump()}),'status':'queued'}
 
 @app.post('/api/projects/{pid}/effects-preview',status_code=202)
 def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | None=Header(None)):
@@ -535,15 +611,18 @@ def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | No
     refuse_during_refine(pid)
     from .candidates import safe_path
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-    if (rows and not any(r['id']==body.stem_id for r in rows)) or (not rows and body.stem_id is not None):
+    if body.effect_group_id and body.stem_id: raise HTTPException(422,'Choose a layer or a group, not both.')
+    if body.effect_group_id and not any((r['role']=='effect' and r['effect_group_id']==body.effect_group_id) or (r['role']=='target' and r.get('sound_group_id')==body.effect_group_id) for r in rows):
+        raise HTTPException(422,'Select a sound group in this project.')
+    if not body.effect_group_id and ((rows and not any(r['id']==body.stem_id for r in rows)) or (not rows and body.stem_id is not None)):
         raise HTTPException(422,'Select a layer in this project.')
     try:
         source=safe_path(pid,p['audio'])
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
                   'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
-    effects=body.model_dump(exclude={'stem_id'})
-    return {'candidate_id':start(pid,'candidate',{'_effects':True,'_candidate':snapshot,'stem_id':body.stem_id,'effects':effects}),'status':'queued'}
+    effects=body.model_dump(exclude={'stem_id','effect_group_id'})
+    return {'candidate_id':start(pid,'candidate',{'_effects':True,'_candidate':snapshot,'stem_id':body.stem_id,'effect_group_id':body.effect_group_id,'effects':effects}),'status':'queued'}
 
 class CinematicRequest(BaseModel):
     style: Literal['subtle', 'cinematic', 'dramatic'] = 'cinematic'
@@ -656,9 +735,6 @@ def apply_candidate(cid: str,authorization: str | None=Header(None)):
 @app.post('/api/candidates/{cid}/undo')
 def undo_candidate(cid: str,authorization: str | None=Header(None)):
     from .candidates import undo
-    # A track split ("Separate the rest") is undone through the same history as an applied preview.
-    with connect() as db: row=db.execute("SELECT * FROM jobs WHERE id=? AND kind='split'",(cid,)).fetchone()
-    if row: auth(row['project_id'],authorization); return undo(row)
     return undo(candidate_record(cid,authorization))
 
 @app.post('/api/projects/{pid}/stems/{sid}/refine',status_code=202)
@@ -679,24 +755,6 @@ def refine_stem(pid: str, sid: str, body: RefineRequest=RefineRequest(), authori
              'revisions':{sid:target['revision'],residuals[0]['id']:residuals[0]['revision']}}
     return {'job_id':start(pid,'refine',payload),'status':'queued'}
 
-class SplitRequest(BaseModel):
-    stems: list[str] | None=Field(default=None,min_length=1,max_length=8)
-
-@app.post('/api/projects/{pid}/stems/{sid}/split',status_code=202)
-def split_stem(pid: str, sid: str, body: SplitRequest=SplitRequest(), authorization: str | None=Header(None)):
-    """Separate the rest: replace one music track with the instruments inside it and a Rest."""
-    auth(pid,authorization)
-    from .agent import MUSIC_STEMS
-    with connect() as db:
-        target=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
-        busy=db.execute("SELECT kind FROM jobs WHERE project_id=? AND status IN ('queued','processing') LIMIT 1",(pid,)).fetchone()
-    if not target: raise HTTPException(404,'Stem not found')
-    if target['role']!='target' or target['label'] not in MUSIC_STEMS: raise HTTPException(409,'Only a track from a music split can be separated further.')
-    if busy: raise HTTPException(409,f"Wait for the active {busy['kind']} job to finish before splitting a track.")
-    stems=[s.strip().lower() for s in body.stems] if body.stems else None
-    if stems and (any(not s or len(s)>40 for s in stems) or len(set(stems))!=len(stems)): raise HTTPException(422,'stems must be distinct nonempty names')
-    return {'job_id':start(pid,'split',{'stem_id':sid,'revision':target['revision'],'stems':stems}),'status':'queued'}
-
 @app.get('/api/refine-jobs/{jid}')
 def refine_job(jid: str, authorization: str | None=Header(None)):
     return get_job(jid,'refine',authorization)
@@ -704,7 +762,7 @@ def refine_job(jid: str, authorization: str | None=Header(None)):
 @app.get('/api/jobs/{jid}')
 def job(jid: str, authorization: str | None=Header(None)):
     # The editor polls every job here (processing and refine share the response shape).
-    with connect() as db: row=db.execute("SELECT kind FROM jobs WHERE id=? AND kind IN ('process','refine','split')",(jid,)).fetchone()
+    with connect() as db: row=db.execute("SELECT kind FROM jobs WHERE id=? AND kind IN ('process','refine')",(jid,)).fetchone()
     return get_job(jid,row['kind'] if row else 'process',authorization)
 
 @app.get('/api/projects/{pid}/stems')

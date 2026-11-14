@@ -87,6 +87,8 @@ class InferenceOptions(BaseModel):
     chunk_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     chunk_batch: int | None = Field(default=None, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0)
+    suppression: Literal['off', 'conservative'] | None = None
+    suppression_strength: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     # Multi-pass separation: rerun each prompt on its own residual up to this many times.
     # The upper bound is AUDIO_MAX_PASSES (checked by the engine, 400 INVALID_REQUEST).
     passes: int | None = Field(default=None, ge=1, strict=True, description="1..AUDIO_MAX_PASSES; default 1")
@@ -109,17 +111,11 @@ class InferenceOptions(BaseModel):
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.
     return_mode: Literal["base64", "file"] = "base64"
     # Model routing (routing.py). None -> AUDIO_ROUTING_DEFAULT (auto). "prompted" is the text/
-    # span/visual model; "music_stems" splits a song into instrument stems; "music_substems"
-    # splits one stem of an earlier split (the residual "other") into the instruments inside it.
-    mode: Literal["auto", "prompted", "music_stems", "music_substems"] | None = None
+    # span/visual model; "music_stems" splits a song into instrument stems.
+    mode: Literal["auto", "prompted", "music_stems"] | None = None
     # music_stems only: which stems to return (vocals, drums, bass, guitar, piano, other,
     # instrumental, or an alias). None -> the prompts, or every stem when there are none.
-    # music_substems: which instruments to separate (piano, keys, guitar, ... or an alias).
-    # None -> the ones the instrument tagger finds, up to AUDIO_SUBSTEM_MAX.
     stems: list[str] | None = Field(default=None, min_length=1, max_length=8)
-    # music_substems only: canonical label of the stem being split (normally "other"); must be
-    # one of /capabilities music_substems.parents. Used for validation, logging and naming.
-    parent_label: str | None = Field(default=None, min_length=1, max_length=64)
     # music_stems only: must equal the configured AUDIO_STEM_MODEL (one model per process).
     stem_model: str | None = None
 
@@ -329,6 +325,7 @@ class ModelInfo(BaseModel):
     effective_chunk_batch: int = 1
     peak_memory_bytes: int | None = None
     is_mock: bool = False
+    suppression: dict[str, Any] | None = None
     refine: dict[str, Any] | None = Field(default=None, description="Effective mask refinement {mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}; null when off")
     candidates: int = Field(default=1, description="Noise draws returned per window (options.candidates)")
     candidate_select: str = Field(default="first", description="How a draw was picked per window; 'first' when candidates == 1")
@@ -337,14 +334,12 @@ class ModelInfo(BaseModel):
 class RouteInfo(BaseModel):
     """Which separator handled (or would handle) a request, and why."""
 
-    mode: Literal["prompted", "music_stems", "music_substems"]
-    engine: str = Field(description="What runs: mock | sam | audiosep for prompted; mock | demucs | chain | roformer for music_stems; "
-                        "mock | demucs for music_substems")
+    mode: Literal["prompted", "music_stems"]
+    engine: str = Field(description="What runs: mock | sam | audiosep for prompted; mock | demucs | chain for music_stems")
     model_id: str | None
     reason: str
     scores: dict[str, float] | None = Field(default=None, description="Content classifier {music, speech} in [0, 1]; null when it was not run or is unavailable")
-    stems: list[str] | None = Field(default=None, description="music_stems / music_substems: canonical labels of the returned target stems "
-                                    "(music_substems via /v1/route: the requested ones, or null when they are detected at separation time)")
+    stems: list[str] | None = Field(default=None, description="music_stems only: canonical names of the returned target stems")
 
     @model_serializer(mode="wrap")
     def _keep_scores_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema

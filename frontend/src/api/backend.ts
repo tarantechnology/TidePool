@@ -28,6 +28,13 @@ export interface BackendStem {
   start_offset?: number
   mute_ranges?: MuteRange[]
   role?: string
+  effect_group_id?: string | null
+  effect_label?: string | null
+  effect_asset_id?: string | null
+  sound_group_id?: string | null
+  sound_group_label?: string | null
+  sound_start?: number | null
+  sound_end?: number | null
   source_stem_id?: string
   prompt?: string
   label?: string
@@ -39,8 +46,6 @@ export interface BackendStem {
   refinement?: BackendRefinement | null
   /** Instruments heard in a music stem, highest score first. Absent or null otherwise. */
   tags?: Array<{ label: string; score: number }> | null
-  /** Set on the children of a "Separate the rest" split: the replaced track's name. */
-  parent_name?: string | null
 }
 
 export interface BackendRefinement {
@@ -71,12 +76,10 @@ export interface BackendJob {
   inference?: { model?: { is_mock?: boolean; backend?: string }; warnings?: string[] } | null
   /** Which separator the audio service picked, and why. Absent from older backends and the prompted fake. */
   routing?: unknown
-  /** What a finished refine or track-split job produced. */
-  result?: unknown
 }
 
 /** How the audio service separates: `auto` lets its router decide (a song becomes music stems). */
-export type SeparationMode = 'auto' | 'prompted' | 'music_stems' | 'music_substems'
+export type SeparationMode = 'auto' | 'prompted' | 'music_stems'
 
 /** Stem names the music splitters use. The service narrows this to its model's own list. */
 export const MUSIC_STEMS = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] as const
@@ -242,34 +245,17 @@ export function toStem(stem: BackendStem, url: string): Stem {
   return {
     id: stem.id,
     // A music split labels stems canonically ("vocals") and names them for display ("Vocals").
-    label: label && ((MUSIC_STEMS as readonly string[]).includes(label) || stem.parent_name) && stem.name.trim() ? stem.name.trim() : label || stem.name,
+    label: label && (MUSIC_STEMS as readonly string[]).includes(label) && stem.name.trim() ? stem.name.trim() : label || stem.name,
     kind: stem.role === 'residual' ? 'residual' : 'sfx',
     url,
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
     muteRanges: stem.mute_ranges ?? [],
+    ...(stem.role === 'effect' && stem.effect_group_id ? { effectGroupId: stem.effect_group_id, effectLabel: stem.effect_label || stem.name, isEffectClip:true } : {}),
+    ...(stem.role === 'target' && stem.sound_group_id ? {effectGroupId:stem.sound_group_id,effectLabel:stem.sound_group_label || stem.name,...(typeof stem.sound_start==='number' && typeof stem.sound_end==='number' && stem.sound_start>=0 && stem.sound_end>stem.sound_start ? {soundInterval:{start:stem.sound_start,end:stem.sound_end}} : {})} : {}),
     ...(refinement ? { refinement } : {}),
     ...(tags.length ? { tags } : {}),
-    ...(label && (MUSIC_STEMS as readonly string[]).includes(label) && stem.role === 'target' ? { canonicalLabel: label } : {}),
-    ...(stem.parent_name?.trim() ? { group: stem.parent_name.trim() } : {}),
   }
-}
-
-/** "Separate the rest" is offered on a split song's `other` track, once, when the service has a nested model. */
-export function canSplitFurther(stem: Stem, serviceCan = true): boolean {
-  return serviceCan && stem.canonicalLabel === 'other' && !stem.group
-}
-
-/** Separate one music track into the instruments inside it, plus a Rest. Resolves with the job to poll. */
-export async function splitStem(config: BackendConfig, projectId: string, stemId: string, stems: string[] | null = null): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}/split`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(stems?.length ? {stems} : {})})
-  return ((await res.json()) as {job_id:string}).job_id
-}
-
-/** The project stems job a finished track split produced, which the editor reloads. */
-export function splitResultJob(job: BackendJob): string | null {
-  const r = job.result as { stems_job_id?: unknown } | null | undefined
-  return typeof r?.stems_job_id === 'string' && r.stems_job_id ? r.stems_job_id : null
 }
 
 /** The tags worth showing beside a track's name: "Strings · Synthesizer" for a track named Piano. */
@@ -422,11 +408,11 @@ export async function getSoundDiscovery(config:BackendConfig,id:string):Promise<
 
 export interface VisualObject { detection_id: string; track_id: number | null; label: string; bbox_normalized: number[]; mask?: unknown; [key:string]: unknown }
 export interface VisualFrame { frame_index:number; timestamp_seconds:number; valid_until_seconds:number; objects:VisualObject[] }
-export interface VisualMetadata { schema_version:string; video_id:string; analysis_id:string; source_sha256:string; source:string; width:number; height:number; fps:number; processed_frames:number; processed_duration_seconds:number; frames:VisualFrame[] }
+export interface VisualMetadata { discovery_mode?:'automatic'|'prompted'; selection_only?:boolean; schema_version:string; video_id:string; analysis_id:string; source_sha256:string; source:string; width:number; height:number; fps:number; processed_frames:number; processed_duration_seconds:number; frames:VisualFrame[] }
 /** POST /visual-analyze answers 202 with the job, and says whether it had to re-encode a compatible copy first. */
 export interface VisualAnalysisStart { jobId: string; prepared: boolean }
-export async function startVisualAnalysis(config: BackendConfig, projectId: string): Promise<VisualAnalysisStart> {
-  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-analyze`,{method:'POST'})
+export async function startVisualAnalysis(config: BackendConfig, projectId: string, concept = 'auto'): Promise<VisualAnalysisStart> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/visual-analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({concept})})
   const body=(await res.json()) as {job_id?:unknown;prepared?:unknown}
   if (typeof body?.job_id !== 'string' || !body.job_id) throw new Error('Backend did not return a visual job id')
   return {jobId:body.job_id, prepared:body.prepared === true}
@@ -453,7 +439,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null; split_stem_id?:string|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -470,32 +456,37 @@ export async function getPrepareVisual(config:BackendConfig, jobId:string, signa
 
 export interface Anchor {token:"+"|"-";start:number;end:number}
 export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
-export interface PreviewOptions {processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
+export interface ObjectSelectionContext {analysis_id:string;detection_id:string;track_id:number;frame_index:number}
+export interface PreviewOptions {object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
 /** The object detector, as GET /capabilities reports it. Absent fields are null, not guessed. */
-export interface VisionCapability {available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
+export interface VisionCapability {automatic?:boolean;prompted?:boolean;retryable?:boolean;selectionOnly?:boolean;available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
 /**
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
  */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;musicStems?:{available:boolean;stems:string[]};musicSubstems?:{available:boolean;stems:string[]}}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;backend?:string;modelId?:string;loaded?:boolean;preserveVoices?:boolean;musicStems?:{available:boolean;stems:string[]}}
 const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
 export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
   const v=raw as Record<string,unknown>
   if(typeof v.available!=='boolean') return undefined
-  return {available:v.available,reason:text(v.reason),model:text(v.model),weightsCached:typeof v.weights_cached==='boolean'?v.weights_cached:null,device:text(v.device)}
+  return {...(typeof v.automatic==='boolean'?{automatic:v.automatic}:{}),...(typeof v.prompted==='boolean'?{prompted:v.prompted}:{}),...(typeof v.retryable==='boolean'?{retryable:v.retryable}:{}),...(typeof v.selection_only==='boolean'?{selectionOnly:v.selection_only}:{}),available:v.available,reason:text(v.reason),model:text(v.model),weightsCached:typeof v.weights_cached==='boolean'?v.weights_cached:null,device:text(v.device)}
 }
 export function toCapabilities(raw:unknown):Capabilities {
   const c=(raw && typeof raw==='object' ? raw : {}) as Record<string,unknown>
   const vision=toVisionCapability(c.vision)
+  const suppression=c.suppression && typeof c.suppression==='object' ? c.suppression as Record<string,unknown> : null
   return {
     quality:c.quality===true,visual:c.visual===true,reason:typeof c.reason==='string'?c.reason:'',
     ...(typeof c.span_anchors==='boolean'?{spanAnchors:c.span_anchors}:{}),
     ...(vision?{vision}:{}),
     ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
     ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),
+    ...(text(c.backend)?{backend:text(c.backend)!}:{}),
+    ...(text(c.model_id)?{modelId:text(c.model_id)!}:{}),
+    ...(typeof c.loaded==='boolean'?{loaded:c.loaded}:{}),
+    ...(suppression?{preserveVoices:suppression.mode==='conservative'}:{}),
     ...(c.music_stems && typeof c.music_stems==='object' ? {musicStems:toMusicStems(c.music_stems as Record<string,unknown>)} : {}),
-    ...(c.music_substems && typeof c.music_substems==='object' ? {musicSubstems:toMusicStems({...c.music_substems as Record<string,unknown>,stems:(c.music_substems as Record<string,unknown>).instruments})} : {}),
   }
 }
 function toMusicStems(m:Record<string,unknown>):{available:boolean;stems:string[]} {
@@ -506,8 +497,12 @@ export async function getCapabilities(config:BackendConfig,projectId:string):Pro
 }
 export type CinematicStyle = 'subtle'|'cinematic'|'dramatic'
 export interface LayerEffects {bass:number;treble:number;highpass:number;compression:number}
-export async function createEffectsPreview(config:BackendConfig,projectId:string,stemId:string|null,effects:LayerEffects):Promise<string> {
-  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effects-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,...effects})})
+export async function editEffectClip(config:BackendConfig,projectId:string,stem:SavedStem,operation:'move'|'delete',startOffset?:number):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effect-clip-edit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stem.id,expected_revision:stem.revision,operation,...(startOffset===undefined ? {} : {start_offset:startOffset})})})
+  return ((await response.json()) as {candidate_id:string}).candidate_id
+}
+export async function createEffectsPreview(config:BackendConfig,projectId:string,stemId:string|null,effects:LayerEffects,groupId?:string):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effects-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,...(groupId ? {effect_group_id:groupId} : {}),...effects})})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
 export type DirectorIntent = 'cinematic'|'dramatic'|'cool'|'funny'

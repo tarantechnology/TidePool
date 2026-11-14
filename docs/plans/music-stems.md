@@ -147,6 +147,15 @@ Config: `AUDIO_STEM_SPLITTER` (`off|mock|demucs|chain`), `AUDIO_STEM_MODEL`,
 
 ## Phase 4: "Separate the rest" (nested split of the residual instrument stem)
 
+**Status: dropped (2026-11-14).** It was built and benchmarked on the A40, then removed before
+merge because it was not useful enough to ship. Of the licence-clean models, only Demucs
+`htdemucs_6s` separated anything from the `other` stem, and only guitar and piano/keys, at
+roughly +2 dB SDR over the input; organ, synth, strings, brass and woodwinds were not
+separable. Banquet (the strongest query-based option) has CC BY-NC-SA weights, AudioSep
+returned phantom instruments, and SAM Audio was never evaluated. The per-stem instrument
+tags that came out of this work were kept (see the evaluation below). The plan is kept for
+reference.
+
 The main split stays as is (vocals, drums, bass, guitar…, plus a named "other"). The user can
 ask to split *that one track* further. A nested model separates the instruments inside it.
 

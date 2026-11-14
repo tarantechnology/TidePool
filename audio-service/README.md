@@ -1,7 +1,7 @@
 # SoundCanvas audio inference service (Person 1)
 
-Text-, span- and visually-prompted sound separation with Meta's SAM Audio, exposed as a
-small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
+AudioSep text separation by default, with optional Meta SAM Audio text/span/visual
+separation, exposed as a small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
 at the repository root for the cross-team contract and open questions.
 
 ## Run locally (mock backend, no GPU)
@@ -9,7 +9,7 @@ at the repository root for the cross-team contract and open questions.
 ```bash
 cd audio-service
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m sam_audio_service        # http://localhost:8001/docs
+AUDIO_BACKEND=mock .venv/bin/python -m sam_audio_service  # http://localhost:8001/docs
 .venv/bin/python -m pytest -q
 ```
 
@@ -184,15 +184,15 @@ provenance, fixed splits/seeds, metrics, regression gate and staged rollback pro
 Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
 invalid visual guidance fails instead of silently changing to text-only inference.
 
-## Optional AudioSep backend
+## Default AudioSep backend
 
-AudioSep is an alternative **text-only** separator. It uses the AudioSep base checkpoint and
+AudioSep is the default **text-only** separator. It uses the AudioSep base checkpoint and
 CLAP text encoder; it is not SAM Audio and has no visual conditioning, time-anchor
 conditioning, independent candidates or judge-ranked retries. The editor reports those
 limitations. A timed mute is still an edit applied after separation. AudioSep may also
 extract speech, music or other sounds; review the target and edited mix before applying.
 
-The runtime is optional and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
+Install its pinned inference dependencies with `pip install -e ".[audiosep]". The runtime is separate from the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
 prepared [upstream AudioSep checkout](https://github.com/Audio-AGI/AudioSep), its Python
 and PyTorch/torchaudio dependencies, and the official AudioSep and CLAP checkpoints. The
 upstream repository is MIT licensed; check the terms for model weights and dependencies
@@ -238,3 +238,22 @@ residual retains the original channels. The service default mask refinement is o
 latency and memory vary by recording; sample-accurate reconstruction does not guarantee
 correct isolation. Do not mistake the optional experimental spectral repairs for the
 standard AudioSep backend.
+
+### TidePool voice preservation
+
+AudioSep defaults to `AUDIO_SUPPRESSION=conservative` and
+`AUDIO_SUPPRESSION_STRENGTH=0.9`. The engine rebuilds the target from the original
+mixture phase through a selective ratio mask and limits processing when the target
+estimate is weak. This runs once after chunk reconstruction, preserving the full
+stereo timeline. The returned target is what is removed; target + residual still
+reconstruct the original. An additional legacy refinement mask is skipped in this mode.
+
+Request `options.suppression=off` for raw comparisons. `suppression_strength=1`
+uses stronger cleanup; `.9` retains some target to ease damage to other sounds.
+`model.suppression` and `/capabilities.defaults.suppression` report the effective
+settings. No source-separation method guarantees unchanged voices during overlap.
+
+The official AudioSep/CLAP checkpoints are reused from the checkout when present.
+Otherwise the adapter uses the Hugging Face cache and verified Space revision
+`0807a713283035d8b0d0628f1b8e3d6580459f7b`. Explicit missing checkpoint paths fail
+clearly. No SAM model or mock fallback is loaded by the AudioSep path.

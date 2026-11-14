@@ -14,13 +14,16 @@ services:
   audio-service:
     build:
       context: ./audio-service
-      target: ${AUDIO_TARGET:-mock}
+      target: ${AUDIO_TARGET:-audiosep}
     ports:
       - "8001:8001"
     environment:
       # Follows the image target unless overridden explicitly.
-      AUDIO_BACKEND: ${AUDIO_BACKEND:-${AUDIO_TARGET:-mock}}
-      AUDIO_MODEL_ID: ${AUDIO_MODEL_ID:-facebook/sam-audio-large}
+      AUDIO_BACKEND: ${AUDIO_BACKEND:-${AUDIO_TARGET:-audiosep}}
+      AUDIO_MODEL_ID: ${AUDIO_MODEL_ID:-}
+      AUDIO_SUPPRESSION: ${AUDIO_SUPPRESSION:-}
+      AUDIO_SUPPRESSION_STRENGTH: ${AUDIO_SUPPRESSION_STRENGTH:-0.9}
+      AUDIO_CHUNK_BATCH: ${AUDIO_CHUNK_BATCH:-1}
       AUDIO_DEVICE: ${AUDIO_DEVICE:-auto}
       AUDIO_PREDICT_SPANS: ${AUDIO_PREDICT_SPANS:-false}
       AUDIO_RERANKING_CANDIDATES: ${AUDIO_RERANKING_CANDIDATES:-1}

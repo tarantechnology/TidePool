@@ -451,6 +451,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   ) : null
 
   return <section className="shadow-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface text-fg" aria-label="Project controls">
+    {capabilities?.backend && <p className="border-b border-line px-3 py-2 text-xs text-muted" aria-label="Audio separator">
+      {capabilities.backend === 'audiosep' ? 'AudioSep' : capabilities.backend === 'sam' ? 'SAM Audio' : capabilities.backend}
+      {capabilities.preserveVoices && ' · Preserve voices'}
+      {capabilities.loaded === false && ' · Loading'}
+    </p>}
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       <ol className="space-y-1">
         <Step n={1} title="Upload" status={status('upload')} open={open('upload')} onToggle={() => toggle('upload')}

@@ -374,7 +374,7 @@ export interface VisionCapability {available:boolean;reason:string|null;model:st
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
  */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;backend?:string;modelId?:string;loaded?:boolean;preserveVoices?:boolean}
 const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
 export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
@@ -385,12 +385,17 @@ export function toVisionCapability(raw:unknown):VisionCapability|undefined {
 export function toCapabilities(raw:unknown):Capabilities {
   const c=(raw && typeof raw==='object' ? raw : {}) as Record<string,unknown>
   const vision=toVisionCapability(c.vision)
+  const suppression=c.suppression && typeof c.suppression==='object' ? c.suppression as Record<string,unknown> : null
   return {
     quality:c.quality===true,visual:c.visual===true,reason:typeof c.reason==='string'?c.reason:'',
     ...(typeof c.span_anchors==='boolean'?{spanAnchors:c.span_anchors}:{}),
     ...(vision?{vision}:{}),
     ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
     ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),
+    ...(text(c.backend)?{backend:text(c.backend)!}:{}),
+    ...(text(c.model_id)?{modelId:text(c.model_id)!}:{}),
+    ...(typeof c.loaded==='boolean'?{loaded:c.loaded}:{}),
+    ...(suppression?{preserveVoices:suppression.mode==='conservative'}:{}),
   }
 }
 export async function getCapabilities(config:BackendConfig,projectId:string):Promise<Capabilities> {

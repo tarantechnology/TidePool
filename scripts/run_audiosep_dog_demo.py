@@ -92,6 +92,7 @@ def main():
     backend = AudioSepBackend(str(args.audiosep_root), model_id, device='cuda')
     settings = Settings(backend='audiosep', model_id=model_id, device='cuda',
                         chunk_seconds_env=args.chunk_seconds, chunk_batch_env=1, refine='off',
+                        suppression='off',
                         load_span_predictor=False, load_rankers=False)
     engine = Engine(settings, backend)
     report = {
@@ -120,6 +121,7 @@ def main():
         result = engine.separate(audio, SeparationMetadata.model_validate({
             'prompts':['dog barking'],
             'options':{'seed':42,'passes':1,'chunk_seconds':args.chunk_seconds,'chunk_batch':1,
+                       'suppression':'off',
                        'refine':'off','residual':'mixture_minus_targets'},
         }))
         torch.cuda.synchronize()

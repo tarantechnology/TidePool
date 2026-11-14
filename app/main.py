@@ -319,19 +319,27 @@ def service_capabilities(pid: str, authorization: str | None=Header(None)):
     from .detector import status
     return {**capabilities(),'vision':status()}
 
+def separation_options(profile, candidates):
+    """Select request options from the separator actually serving this app."""
+    from .media import capabilities
+    caps = capabilities()
+    if profile == 'quality' and not caps.get('quality'):
+        raise HTTPException(422, caps.get('reason') or 'Quality retry is unavailable for this separator')
+    return options(profile, candidates, backend=caps.get('backend'))
+
 @app.post('/api/projects/{pid}/process',status_code=202)
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
     refuse_during_refine(pid)
-    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
+    if os.getenv('INFERENCE_ADAPTER', 'http') == 'http' and (not body.prompts or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
         raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
     try: validate_timing(body.prompts,body.guidance,body.edit_scope,probe(p['audio'])['duration'])
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     if body.edit_scope.action != 'keep' and len(body.prompts)!=1: raise HTTPException(422,'An edit requires exactly one sound target')
     payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes'})
     payload['anchors']=body.guidance.model_dump()['anchors']
-    payload['options']=with_passes(options(body.profile,body.reranking_candidates),body.passes)
+    payload['options']=with_passes(separation_options(body.profile,body.reranking_candidates),body.passes)
     with connect() as db: payload['_baseline']={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
     if body.append:
         with connect() as db: rows=db.execute("SELECT id,revision,start_offset FROM stems WHERE project_id=? AND lower(name)='residual'",(pid,)).fetchall()
@@ -366,7 +374,7 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
               'residual_id':residuals[0]['id'] if residuals else None}
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
-             'profile':body.profile, 'options':{**with_passes(options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},
+             'profile':body.profile, 'options':{**with_passes(separation_options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},
              '_candidate':snapshot}
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc

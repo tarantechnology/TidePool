@@ -87,6 +87,8 @@ class InferenceOptions(BaseModel):
     chunk_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     chunk_batch: int | None = Field(default=None, ge=1, le=8)
     seed: int | None = Field(default=None, ge=0)
+    suppression: Literal['off', 'conservative'] | None = None
+    suppression_strength: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     # Multi-pass separation: rerun each prompt on its own residual up to this many times.
     # The upper bound is AUDIO_MAX_PASSES (checked by the engine, 400 INVALID_REQUEST).
     passes: int | None = Field(default=None, ge=1, strict=True, description="1..AUDIO_MAX_PASSES; default 1")
@@ -295,6 +297,7 @@ class ModelInfo(BaseModel):
     effective_chunk_batch: int = 1
     peak_memory_bytes: int | None = None
     is_mock: bool = False
+    suppression: dict[str, Any] | None = None
     refine: dict[str, Any] | None = Field(default=None, description="Effective mask refinement {mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}; null when off")
     candidates: int = Field(default=1, description="Noise draws returned per window (options.candidates)")
     candidate_select: str = Field(default="first", description="How a draw was picked per window; 'first' when candidates == 1")

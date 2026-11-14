@@ -2,9 +2,20 @@
 
 SoundCanvas is a browser-based audio-layer editor for video. Create a project, upload media, separate sounds into stems, adjust and automate the layers, and export the result. The repository includes the editor, FastAPI backend, audio service and vision pipeline. See [INTEGRATION.md](INTEGRATION.md) for their contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for collaboration.
 
+## Default separator: AudioSep
+
+TidePool uses AudioSep for text-prompted separation, with conservative source-phase
+suppression enabled to reduce unwanted changes to voices. Requests use one candidate,
+10-second windows, 2-second overlaps and sequential processing. The editor reports the
+serving model. Preview, apply/undo, timed edits and export use the same processed stems.
+AudioSep has no visual masks, sound anchors or ranked quality retries.
+
+See [TidePool + AudioSep startup](docs/tidepool_audiosep.md) for the RunPod service,
+private SSH tunnel and Mac editor. Keep the Pod running while using inference.
+
 ## Run locally on a Mac
 
-Install Docker Desktop, start it, and run:
+With the AudioSep GPU service forwarded to localhost:8001, install Docker Desktop and run:
 
 ```sh
 docker compose up --build
@@ -13,7 +24,7 @@ docker compose up --build
 Open **http://localhost:5173**. The API documentation is at http://localhost:8000/docs. Data persists in `./storage`. The first build installs CPU vision dependencies; the first visual analysis downloads detector weights to `./storage/vision`. A network connection and sufficient disk space are needed.
 
 1. Choose an MP4, MOV, WAV or MP3 to upload it. Copy the project ID and access token shown in the project panel; they are needed to restore the project later.
-2. Enter comma-separated sound descriptions and start processing. The default local inference adapter **copies the entire audio into each test stem**; it does not separate sounds. This mode is useful for exercising the editor without a GPU.
+2. Enter comma-separated sound descriptions and start processing. The backend sends the request to the configured AudioSep service. For explicit UI-only development, set `INFERENCE_ADAPTER=fake`; that mode copies audio and performs no separation.
 3. Play and edit the layers, then choose MP4, WAV or MP3 and export. For video object selection, run visual analysis, pause the video, and click a detected object. A sound prompt is still required.
 4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
 
@@ -38,25 +49,24 @@ STORAGE_ROOT=$PWD/storage INFERENCE_ADAPTER=http SAM_AUDIO_SERVICE_URL=http://12
 cd frontend && npm ci && VITE_API_BASE_URL=/api npm run dev    # http://localhost:5173
 ```
 
-Leave out terminal 1 and `INFERENCE_ADAPTER`/`SAM_AUDIO_SERVICE_URL` to run the backend's built-in fake adapter (stems are plain copies of the audio). The script never installs into a conda or system interpreter: it uses the active virtualenv if it is 3.11+, else `.venv`, else `audio-service/.venv`, else creates `.venv`; `PYTHON=/path/to/python` overrides.
+To use the built-in fake adapter explicitly, set `INFERENCE_ADAPTER=fake` (stems are plain copies of the audio). An unavailable real separator fails with an error; it does not fall back to fake audio. The script never installs into a conda or system interpreter: it uses the active virtualenv if it is 3.11+, else `.venv`, else `audio-service/.venv`, else creates `.venv`; `PYTHON=/path/to/python` overrides.
 
 `scripts/dev_setup.sh` installs the object-detection package (`pip install -e ./vision`) into the same interpreter that runs the API, because the worker launches the detector as `python -m soundcanvas_cv` with that interpreter. It also downloads the default weights (`VISION_MODEL`, `yolo26n-seg.pt`, about 6 MB) to `$STORAGE_ROOT/vision`. Without the package the editor's object detection is reported as unavailable (`GET /api/projects/{id}/capabilities` → `vision.available: false`) rather than failing a job. Without cached weights the first analysis downloads them, so it needs network access once.
 
 ## Use a rented cloud GPU from a Mac
 
-The Mac runs the browser. The Linux GPU machine runs the editor, backend, CPU vision pipeline and NVIDIA SAM Audio service together, sharing project files. The GPU service is internal to Compose and isn't exposed publicly. This avoids mounting your Mac filesystem or sending local paths to another host.
+The Mac runs the browser. The Linux GPU machine runs the editor, backend, CPU vision pipeline and NVIDIA AudioSep service together, sharing project files. The GPU service is internal to Compose and isn't exposed publicly. This avoids mounting your Mac filesystem or sending local paths to another host.
 
 1. Rent a Linux x86-64 NVIDIA GPU VM with enough GPU memory and disk for the model, Docker images, uploaded media and outputs. Install Docker Compose and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), and confirm a GPU container can see the device. Open SSH to your trusted IP; keep application ports private.
-2. Obtain access to the gated [`facebook/sam-audio-small`](https://huggingface.co/facebook/sam-audio-small) model and a Hugging Face token with that access. Clone this repository on the VM and start it there:
+2. Clone this repository on the VM and start it there. AudioSep uses public, pinned official checkpoints; no gated SAM token is required:
 
    ```sh
    cd SoundCanvas
-   read -rs HF_TOKEN; export HF_TOKEN   # paste token, then press Enter
    docker compose -f compose.cloud.yaml up --build -d
    docker compose -f compose.cloud.yaml logs -f
    ```
 
-   Initial image builds and model downloads can take a while. The API waits for the audio service's readiness check. Model files persist in a Docker volume; projects persist in the VM's `./storage`. The defaults use the small model, CUDA and 10-second audio chunks, with one chunk window per model batch (`AUDIO_CHUNK_BATCH=1`; batch `k` costs roughly `k x` the activation memory and is unverified on the A40, see [audio-service/docs/chunk_concurrency.md](audio-service/docs/chunk_concurrency.md)); inspect `compose.cloud.yaml` for overrides.
+   Initial image builds and model downloads can take a while. The API waits for the audio service's readiness check. Model files persist in a Docker volume; projects persist in the VM's `./storage`. The defaults use AudioSep base 4M, CUDA and 10-second audio chunks, with one chunk window per model batch (`AUDIO_CHUNK_BATCH=1`; batch `k` costs roughly `k x` the activation memory and is unverified on the A40, see [audio-service/docs/chunk_concurrency.md](audio-service/docs/chunk_concurrency.md)); inspect `compose.cloud.yaml` for overrides.
 3. On your Mac, create an SSH tunnel, replacing the placeholders with your VM details:
 
    ```sh
@@ -106,9 +116,9 @@ earlier source snapshot. Stale candidates fail safely. Visual guidance remains e
 the selected mask is displayed, visibility does not imply audibility, and suspicious results
 offer an explicit text-plus-time retry before any edit is applied.
 
-The existing A40 profile remains SAM Audio Large, 10-second windows, 2-second overlap,
-batch two, one candidate, automatic spans disabled. Longer windows and independent stereo
+SAM Audio remains opt-in. The default AudioSep profile uses 10-second windows, 2-second
+overlap, batch one, one candidate and conservative suppression. Longer windows and independent stereo
 channels remain benchmark options. See [guided contracts](INTEGRATION.md#guided-candidates-current-contract)
 and [benchmark procedure](audio-service/benchmarks/GUIDED.md).
 
-SoundCanvas also supports an optional **AudioSep** text-only separator. See [AudioSep setup and limitations](audio-service/README.md#optional-audiosep-backend); its model code and checkpoints are installed separately.
+See [AudioSep setup and limitations](audio-service/README.md#default-audiosep-backend). Its runtime is installed with the `audiosep` extra; official model source and cached weights are prepared separately or by the AudioSep container.

@@ -18,7 +18,7 @@ class InferenceError(RuntimeError):
 
 def separate(audio, directory, payload, report=None):
     directory.mkdir(parents=True, exist_ok=True)
-    mode = os.getenv('INFERENCE_ADAPTER', 'fake')
+    mode = os.getenv('INFERENCE_ADAPTER', 'http')
     if mode == 'fake':
         passes=int((payload.get('options') or {}).get('passes') or 1)
         if report is not None:
@@ -38,7 +38,7 @@ def separate(audio, directory, payload, report=None):
             results.append({'name':name,'path':path,'role':role,'prompt':name,'label':name,'refinement':refinement})
         return results
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
-    url = os.getenv('SAM_AUDIO_SERVICE_URL')
+    url = os.getenv('SAM_AUDIO_SERVICE_URL', 'http://127.0.0.1:8001/separate')
     if not url: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
     try:
         with open(audio, 'rb') as f:
@@ -165,7 +165,7 @@ def export(stems, original, destination, fmt, include_video):
     labels.append(f'[{silent}:a]')
     filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0[mix]')
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
-    if include_video: args += ['-map','0:v:0','-c:v','copy','-c:a','aac','-t',str(duration),'-movflags','+faststart']
+    if include_video: args += ['-map','0:v:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',str(duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
     else: args += ['-c:a','pcm_f32le']
     run(*args,str(destination))
@@ -173,22 +173,26 @@ def export(stems, original, destination, fmt, include_video):
 
 def capabilities():
     """Whitelist public capability fields; never expose URLs, paths or load errors."""
-    if os.getenv('INFERENCE_ADAPTER','fake') != 'http':
+    if os.getenv('INFERENCE_ADAPTER','http') != 'http':
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Fake adapter: no AI separation or judge ranking.',
-                'max_passes':max_passes(),'refine':True}
+                'backend':'fake','max_passes':max_passes(),'refine':True}
     from urllib.parse import urlsplit, urlunsplit
-    url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL',''))
+    url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL','http://127.0.0.1:8001/separate'))
     try:
         response=httpx.get(urlunsplit((url.scheme,url.netloc,'/capabilities','','')),timeout=5)
         response.raise_for_status(); data=response.json(); model=data.get('model',{})
         defaults=data.get('defaults') or {}
+        identity={'backend':data.get('backend') or model.get('backend'), 'model_id':model.get('model_id'),
+                  'loaded':model.get('loaded') is True, 'is_mock':data.get('is_mock') is True,
+                  'suppression':defaults.get('suppression')}
         ranked=bool(model.get('text_ranker_loaded')); consistent='candidate_select' in defaults and data.get('independent_candidates', True) is not False
         quality=bool(model.get('loaded') and not data.get('is_mock') and (ranked or consistent))
         reason='' if quality else ('Quality retry needs a real model (the mock backend cannot rank or refine).' if data.get('is_mock') or not model.get('loaded')
                                    else 'Quality retry requires the pretrained text ranker or a service with per-window candidate selection.')
-        return {'preview':True,'quality':quality,'visual':bool(data.get('prompting_modes',{}).get('visual')),
+        return {**identity,'preview':True,'quality':quality,'visual':bool(data.get('prompting_modes',{}).get('visual')),
                 'experimental_visual':True,**({'span_anchors': data['prompting_modes']['span_anchors']} if isinstance((data.get('prompting_modes') or {}).get('span_anchors'), bool) else {}),'reason':reason,'quality_mode':('ranker' if ranked else 'consistency') if quality else None,
-                'profiles':{'preview':{'candidates':1,'chunk_seconds':10,'chunk_batch':2},'quality':{'candidates':2,'chunk_seconds':10,'chunk_batch':2,**guidance.profile_extras('quality')}},
+                'profiles':{'preview':guidance.options('preview', backend=identity['backend'] or 'sam'),
+                            **({'quality':guidance.options('quality', backend=identity['backend'] or 'sam')} if quality else {})},
                 'long_window_promoted':False,'automatic_spans':False,**passes_capability(data)}
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.',

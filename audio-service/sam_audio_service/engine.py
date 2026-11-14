@@ -34,6 +34,7 @@ from .candidates import choose, choose_residual
 from .config import Settings
 from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
 from .refine import mask_refine
+from .suppression import suppress_target
 from .errors import (
     AudioServiceError,
     InferenceFailure,
@@ -180,6 +181,16 @@ class Engine:
             "gate_db": float(pick(options.refine_gate_db, s.refine_gate_db)),
         }
 
+    def _resolve_suppression(self, options: InferenceOptions) -> dict[str, Any] | None:
+        mode = options.suppression or self.settings.suppression
+        if mode == 'off':
+            return None
+        if self.backend.name != 'audiosep':
+            raise UnsupportedOperation('Conservative suppression requires AudioSep')
+        strength = self.settings.suppression_strength if options.suppression_strength is None else options.suppression_strength
+        return {'mode':'conservative', 'strength':strength, 'mask_threshold':.85,
+                'activity_low_db':-36., 'activity_high_db':-24., 'n_fft':2048}
+
     @staticmethod
     def _refine_target(mixture: np.ndarray, target: np.ndarray, cfg: dict[str, Any], stereo_mode: str) -> np.ndarray:
         kwargs = {k: cfg[k] for k in ("p", "n_fft", "floor", "blend", "threshold", "residual_threshold", "gate_db")}
@@ -203,7 +214,10 @@ class Engine:
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
         batch = metadata.options.chunk_batch or self.settings.chunk_batch
         passes = metadata.options.passes or 1
-        refine_cfg = self._resolve_refine(metadata.options)
+        suppression_cfg = self._resolve_suppression(metadata.options)
+        # The conservative AudioSep path already rebuilds a source-phase mask.
+        # Applying the older mask again would alter the tested processing.
+        refine_cfg = None if suppression_cfg else self._resolve_refine(metadata.options)
         k_cands = backend_options.candidates
         if (batch > 1 or k_cands > 1) and backend_options.seed is not None:
             warnings.append(
@@ -314,7 +328,9 @@ class Engine:
                         stopped_early, stop_reason = True, "silent_residual"
                         break
                 target = cumulative
-                if refine_cfg is not None:
+                if suppression_cfg is not None:
+                    target = mixture - suppress_target(mixture, target, **{k:v for k,v in suppression_cfg.items() if k != 'mode'})
+                elif refine_cfg is not None:
                     # Post-processing on the summed target only: passes above ran on the
                     # raw model residual chain, and the residual stem is still derived as
                     # mixture - sum(targets) below, so stems keep summing to the mixture.
@@ -384,6 +400,7 @@ class Engine:
             "effective_chunk_batch": effective_batch if chunked else 1,
             "passes": max_passes_run,
             "refine": refine_cfg,
+            "suppression": suppression_cfg,
             "candidates": k_cands,
             "candidate_select": backend_options.candidate_select if k_cands > 1 else "first",
             "elapsed_seconds": round(elapsed, 3),

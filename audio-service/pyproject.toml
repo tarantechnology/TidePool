@@ -14,6 +14,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-timeout>=2.3"]
+audiosep = [
+    "torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0",
+    "numpy>=1.26,<2", "transformers==4.37.2", "huggingface_hub>=0.25,<1",
+    "lightning==2.5.6", "pytorch-lightning==2.5.6", "torchmetrics==0.11.4",
+    "torchlibrosa==0.1.0", "librosa>=0.10,<0.12", "timm==0.9.16",
+    "pandas==2.3.3", "h5py>=3.8,<4", "scipy>=1.11,<2", "soundfile",
+    "einops", "ftfy", "regex", "pyyaml", "webdataset", "braceexpand", "wget",
+]
 # Real model runtime. SAM Audio is not on PyPI; it is installed from GitHub and pulls
 # several git dependencies itself (dacvae, perception_models, ImageBind, CLAP).
 sam = [

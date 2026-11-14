@@ -45,8 +45,8 @@ def _opt_int(name: str) -> int | None:
 class Settings:
     # "mock" is a deterministic DSP stand-in for local development and CI. It is NOT
     # source separation. "sam" loads the real SAM Audio checkpoints.
-    backend: str = field(default_factory=lambda: os.getenv("AUDIO_BACKEND", "mock"))
-    model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID", "facebook/sam-audio-large"))
+    backend: str = field(default_factory=lambda: os.getenv("AUDIO_BACKEND", "audiosep"))
+    model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID") or 'facebook/sam-audio-large')
     # "auto" picks cuda > mps > cpu.
     device: str = field(default_factory=lambda: os.getenv("AUDIO_DEVICE", "auto"))
     dtype: str = field(default_factory=lambda: os.getenv("AUDIO_DTYPE", "float32"))
@@ -81,6 +81,8 @@ class Settings:
     refine_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_THRESHOLD", 0.0))
     refine_residual_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_RESIDUAL_THRESHOLD", 0.0))
     refine_gate_db: float = field(default_factory=lambda: _float("AUDIO_REFINE_GATE_DB", 0.0))
+    suppression: str = field(default_factory=lambda: os.getenv("AUDIO_SUPPRESSION", ""))
+    suppression_strength: float = field(default_factory=lambda: _float("AUDIO_SUPPRESSION_STRENGTH", .9))
     # Noise draws returned per chunk window and how one is picked (candidates.py). Each
     # extra draw costs one more batch item (K x compute and activation memory).
     candidates: int = field(default_factory=lambda: _int("AUDIO_CANDIDATES", 1))
@@ -138,7 +140,9 @@ class Settings:
     ffmpeg_timeout: int = field(default_factory=lambda: _int("AUDIO_FFMPEG_TIMEOUT", 600))
 
     def __post_init__(self) -> None:
-        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and 'AUDIO_MODEL_ID' not in os.environ:
+        if not self.suppression:
+            self.suppression = 'conservative' if self.backend == 'audiosep' else 'off'
+        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and not os.getenv('AUDIO_MODEL_ID'):
             self.model_id = 'audiosep-base-4M'
         if self.backend == 'audiosep' and self.chunk_batch_env is None and self.chunk_workers is None:
             self.chunk_batch = 1
@@ -177,6 +181,14 @@ class Settings:
             self.refine = "mask" if self.backend == "sam" else "off"
 
     def validate(self) -> None:
+        if self.backend == 'audiosep' and self.model_id.startswith('facebook/sam-'):
+            raise ValueError('AudioSep selected with an old SAM AUDIO_MODEL_ID; unset AUDIO_MODEL_ID or use audiosep-base-4M')
+        if self.suppression not in {'off', 'conservative'}:
+            raise ValueError('AUDIO_SUPPRESSION must be off or conservative')
+        if not 0 <= self.suppression_strength <= 1:
+            raise ValueError('AUDIO_SUPPRESSION_STRENGTH must be within [0, 1]')
+        if self.suppression != 'off' and self.backend != 'audiosep':
+            raise ValueError('Conservative suppression is available with AudioSep only')
         if self.visual_batch_size is not None and self.visual_batch_size <= 0:
             raise ValueError('AUDIO_VISUAL_BATCH_SIZE must be positive')
         if self.backend not in {"mock", "sam", "audiosep"}:

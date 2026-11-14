@@ -422,6 +422,39 @@ def test_separate_many_builds_one_processor_call_for_k_windows(backend):
     assert [r.extra["batch"] for r in results] == [3, 3, 3]
 
 
+def test_candidates_repeat_each_window_and_return_every_draw(backend):
+    mixtures = windows(0.5, 0.25)
+    prompts = [
+        BackendPrompt(text="Siren", anchors=[("+", 0.0, 0.2)]),
+        BackendPrompt(text="dog", anchors=[("-", 0.1, 0.2)]),
+    ]
+    results = backend.separate_many(mixtures, prompts, BackendOptions(candidates=2, reranking_candidates=1))
+
+    assert len(backend._model.separate_calls) == 1, "K draws of k windows are ONE model call"
+    call = backend._processor.calls[-1]
+    assert len(call["audios"]) == 2 * len(mixtures)
+    assert [tuple(a.shape) for a in call["audios"]] == [(1, len(m)) for m in mixtures for _ in range(2)]
+    assert call["descriptions"] == ["siren", "siren", "dog", "dog"]
+    assert call["anchors"] == [[("+", 0.0, 0.2)]] * 2 + [[("-", 0.1, 0.2)]] * 2
+    separate = backend._model.separate_calls[-1]
+    assert separate["batch_size"] == 4 and separate["reranking_candidates"] == 1
+    for i, (m, r) in enumerate(zip(mixtures, results, strict=True)):
+        assert len(r.candidates) == 2 and len(r.candidate_residuals) == 2
+        assert [len(c) for c in r.candidates] == [len(m), len(m)]  # trimmed to this window
+        # The fake adds 1000 * batch_row; window i's draws are rows 2i and 2i + 1.
+        assert [float(c[0]) for c in r.candidates] == [1000.0 * (2 * i), 1000.0 * (2 * i + 1)]
+        assert r.target is r.candidates[0] and r.residual is r.candidate_residuals[0]
+        assert all(np.allclose(res, -c) for c, res in zip(r.candidates, r.candidate_residuals, strict=True))
+        assert r.extra["candidates"] == 2 and r.extra["description"] == ("siren" if i == 0 else "dog")
+
+
+def test_one_candidate_returns_no_candidate_list(backend):
+    result = backend.separate(mixture(0.2), BackendPrompt(text="siren"), BackendOptions())
+    assert result.candidates is None and result.candidate_residuals is None
+    assert result.extra["candidates"] == 1
+    assert len(backend._processor.calls[-1]["audios"]) == 1
+
+
 def test_separate_is_separate_many_with_one_window(backend):
     result = backend.separate(mixture(0.3), BackendPrompt(text="siren"), BackendOptions())
     assert backend._model.separate_calls[-1]["batch_size"] == 1
@@ -792,3 +825,21 @@ def test_judge_only_defers_text_ranker_until_after_main_model_moves():
                               load_visual_ranker=False, judge_only=True)
     kwargs = backend._model_kwargs()
     assert kwargs['text_ranker'] is None and kwargs['visual_ranker'] is None
+
+
+def test_visual_microbatch_retains_encoder_and_resolution(fake_sam, monkeypatch):
+    from sam_audio_service.backends.sam_audio import SamAudioBackend
+    original = FakeSAMAudio.__init__
+    def init(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        self.vision_encoder.batch_size = 300
+    monkeypatch.setattr(FakeSAMAudio, '__init__', init)
+    backend = SamAudioBackend(model_id='m', device='cpu', visual_batch_size=8)
+    try:
+        backend.load()
+        assert backend._model.vision_encoder.batch_size == 8
+        assert backend._model.vision_encoder.image_size == 336
+        assert backend.info()['visual_batch_size'] == 8
+        assert backend._model.moved == [{'device': torch.device('cpu'), 'dtype': torch.float32}]
+    finally:
+        backend.unload()

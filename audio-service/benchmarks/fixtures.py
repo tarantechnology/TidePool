@@ -19,6 +19,10 @@ Fixture set (the minimum the cinematic demo and the separation experiments need)
     Prompt ``"guitar"`` -- the music-separation experiment.
 ``long_mixture(seconds)``
     Mono speech + siren of arbitrary length, for latency / real-time-factor measurement.
+``competing_voices(seconds)`` (a *long* fixture, default 24 s)
+    Two talkers taking turns and talking over each other across chunk boundaries, panned
+    apart. Prompt ``"man speaking"``. Exercises chunked separation, window candidates and
+    the speaker-consistency problem that short clips cannot show.
 
 Speech is real speech when macOS ``say`` is available (``speech_mode="auto"``) and a
 synthetic formant/harmonic voice otherwise, so the suite behaves identically on Linux CI.
@@ -26,7 +30,9 @@ The fixture records which was used in ``speech_source``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -59,6 +65,22 @@ DEMO_LINES = (
     "I told you to turn it off, not unplug the entire thing.",
     "You never listen to a single word I say, not once.",
 )
+# Extra lines for the long competing-voices fixture so each turn says something new.
+COMPETING_LINES_LOW = (
+    "I told you to turn it off, not unplug the entire thing.",
+    "That is not what happened and you know it, so stop pretending.",
+    "Fine, then explain to me why the whole street lost power at midnight.",
+)
+COMPETING_LINES_HIGH = (
+    "You never listen to a single word I say, not once.",
+    "Because you always do this, every single time.",
+    "Oh please, the street was dark long before I touched anything.",
+)
+# (start_s, end_s) turns at the reference length of 24 s; scaled to the requested length.
+# A (low voice) and B (high voice) overlap at 3-5, 8-9, 12-13 and 18-24 s.
+COMPETING_SCHEDULE_LOW = ((0.0, 5.0), (8.0, 13.0), (16.0, 24.0))
+COMPETING_SCHEDULE_HIGH = ((3.0, 9.0), (12.0, 15.0), (18.0, 24.0))
+COMPETING_REFERENCE_SECONDS = 24.0
 
 __all__ = [
     "Fixture",
@@ -66,11 +88,14 @@ __all__ = [
     "PEAK_CEILING",
     "MANIFEST_SCHEMA",
     "QUALITY_FIXTURES",
+    "LONG_FIXTURES",
     "DEFAULT_OUT_DIR",
     "speech_plus_siren",
     "two_speakers",
     "music_mix",
     "long_mixture",
+    "competing_voices",
+    "competing_schedule",
     "build_all",
     "write_fixture_set",
     "say_available",
@@ -293,15 +318,42 @@ def _plucked_tone(seconds: float, rng: np.random.Generator, *, f0: float = 330.0
 
 
 # ------------------------------------------------------------------------ real speech
+def say_cache_dir() -> Path | None:
+    """Directory of pre-rendered ``say`` lines (``SOUNDCANVAS_SAY_CACHE``), or ``None``.
+
+    macOS renders a line once into ``<voice>-<sha1(text)[:12]>.aiff`` there; a Linux GPU host
+    with a copy of the directory then builds the very same real-speech fixtures without
+    ``say``. Set the variable on both machines and rsync the directory.
+    """
+    value = os.getenv("SOUNDCANVAS_SAY_CACHE", "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def _say_cache_path(text: str, voice: str) -> Path | None:
+    directory = say_cache_dir()
+    if directory is None:
+        return None
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    return directory / f"{voice}-{digest}.aiff"
+
+
 def say_available() -> bool:
-    """True when macOS ``say`` can be used (never true on Linux CI)."""
-    return shutil.which("say") is not None
+    """True when macOS ``say`` can be used, or a pre-rendered cache is present (Linux hosts)."""
+    directory = say_cache_dir()
+    return shutil.which("say") is not None or bool(directory and directory.is_dir() and any(directory.glob("*.aiff")))
 
 
 def _say_voices(pool: tuple[str, ...]) -> list[str]:
-    """Installed voices from ``pool``, in preference order (empty when ``say`` is absent)."""
-    if not say_available():
-        return []
+    """Usable voices from ``pool``, in preference order (empty when ``say`` is absent).
+
+    Without the ``say`` binary, a voice counts as usable when the cache holds at least one
+    line rendered with it.
+    """
+    if shutil.which("say") is None:
+        directory = say_cache_dir()
+        if not directory or not directory.is_dir():
+            return []
+        return [voice for voice in pool if any(directory.glob(f"{voice}-*.aiff"))]
     try:
         listing = subprocess.run(["say", "-v", "?"], capture_output=True, timeout=20, check=False).stdout.decode("utf-8", "replace")
     except (OSError, subprocess.SubprocessError):
@@ -317,12 +369,21 @@ def _say_speech(text: str, voice: str, seconds: float, rng: np.random.Generator)
     synthetic voice. Decoding reuses :func:`sam_audio_service.audio_io.decode`.
     """
     n = _frames(seconds)
+    cached = _say_cache_path(text, voice)
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "speech.aiff"
         try:
-            proc = subprocess.run(["say", "-v", voice, "-r", "180", "-o", str(path), text], capture_output=True, timeout=60, check=False)
-            if proc.returncode != 0 or not path.exists():
+            if cached is not None and cached.is_file():
+                path = cached
+            elif shutil.which("say") is None:
                 return None
+            else:
+                if cached is not None:
+                    cached.parent.mkdir(parents=True, exist_ok=True)
+                    path = cached
+                proc = subprocess.run(["say", "-v", voice, "-r", "180", "-o", str(path), text], capture_output=True, timeout=60, check=False)
+                if proc.returncode != 0 or not path.exists():
+                    return None
             audio = decode(path=path, target_rate=SAMPLE_RATE, max_channels=1)
         except Exception:  # noqa: BLE001 - any failure falls back to the synthetic voice
             return None
@@ -354,6 +415,59 @@ def _speech(seconds: float, rng: np.random.Generator, mode: SpeechMode, *, line:
             raise RuntimeError("speech_mode='say' requested but macOS `say` is unavailable or failed")
     formants = ((700.0 * (f0 / 112.0) ** 0.25, 130.0, 1.0), (1220.0 * (f0 / 112.0) ** 0.2, 180.0, 0.55), (2600.0, 260.0, 0.22))
     return _speech_like(seconds, rng, f0=f0, syllable_rate=syllable_rate, formants=formants), "synthetic"
+
+
+def _say_segments(
+    voice: str | None,
+    schedule: list[tuple[float, float, str]],
+    seconds: float,
+    rng: np.random.Generator,
+    *,
+    mode: SpeechMode = "auto",
+    f0: float = 112.0,
+    syllable_rate: float = 3.8,
+) -> tuple[np.ndarray, str]:
+    """One talker speaking only inside ``schedule``: ``(start_s, end_s, line)`` turns.
+
+    Each turn is rendered with ``say`` (``voice``) and fitted to its slot via
+    :func:`_say_speech`; when ``voice`` is ``None``, ``say`` fails or ``mode`` is
+    ``"synthetic"``, that turn falls back to :func:`_speech_like`. Outside the turns the
+    signal is exactly zero. Returns the mono signal and its source tag (``say:<voice>``,
+    ``synthetic`` or ``mixed:<voice>+synthetic``).
+    """
+    n = _frames(seconds)
+    out = np.zeros(n, dtype=np.float64)
+    used: set[str] = set()
+    formants = ((700.0 * (f0 / 112.0) ** 0.25, 130.0, 1.0), (1220.0 * (f0 / 112.0) ** 0.2, 180.0, 0.55), (2600.0, 260.0, 0.22))
+    for start_s, end_s, line in schedule:
+        start = min(max(int(round(start_s * SAMPLE_RATE)), 0), n)
+        end = min(int(round(end_s * SAMPLE_RATE)), n)
+        if end - start < 2:
+            continue
+        length = (end - start) / SAMPLE_RATE
+        rendered = _say_speech(line, voice, length, rng) if (voice and mode != "synthetic") else None
+        if rendered is None:
+            if mode == "say":
+                raise RuntimeError("speech_mode='say' requested but macOS `say` is unavailable or failed")
+            rendered = _speech_like(length, rng, f0=f0, syllable_rate=syllable_rate, formants=formants)
+            used.add("synthetic")
+        else:
+            used.add(f"say:{voice}")
+        out[start:end] += rendered[: end - start]
+    if not used or used == {"synthetic"}:
+        return out, "synthetic"
+    if len(used) == 1:
+        return out, used.pop()
+    return out, "mixed:" + "+".join(sorted(used))
+
+
+def competing_schedule(seconds: float = COMPETING_REFERENCE_SECONDS) -> dict[str, list[tuple[float, float]]]:
+    """The ``competing_voices`` turn schedule scaled to ``seconds`` (per source name)."""
+    scale = seconds / COMPETING_REFERENCE_SECONDS
+    return {
+        "speaker_low": [(a * scale, b * scale) for a, b in COMPETING_SCHEDULE_LOW],
+        "speaker_high": [(a * scale, b * scale) for a, b in COMPETING_SCHEDULE_HIGH],
+    }
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -435,8 +549,46 @@ def long_mixture(seconds: float = 30.0, *, seed: int = 59, speech_mode: SpeechMo
     )
 
 
+def competing_voices(seconds: float = 24.0, *, seed: int = 71, speech_mode: SpeechMode = "auto") -> Fixture:
+    """Long speaker-separation case: two talkers taking turns and overlapping, panned apart.
+
+    Schedule at 24 s (scaled by ``seconds / 24``): A (low voice, the target) speaks at
+    0-5, 8-13 and 16-24 s; B (high voice) at 3-9, 12-15 and 18-24 s. With 10 s chunks
+    the turns straddle window boundaries, so a separator that picks a different talker
+    per window (speaker flip) loses SI-SDR here even when each window looks fine alone.
+    """
+    rng = np.random.default_rng(seed)
+    schedule = competing_schedule(seconds)
+    use_say = speech_mode in ("auto", "say")
+    low_voice = next(iter(_say_voices(SAY_VOICES_LOW)), None) if use_say else None
+    high_voice = next(iter(_say_voices(SAY_VOICES_HIGH)), None) if use_say else None
+    if speech_mode == "say" and (low_voice is None or high_voice is None):
+        raise RuntimeError("speech_mode='say' requested but macOS `say` voices are unavailable")
+    low_turns = [(a, b, COMPETING_LINES_LOW[i % len(COMPETING_LINES_LOW)]) for i, (a, b) in enumerate(schedule["speaker_low"])]
+    high_turns = [(a, b, COMPETING_LINES_HIGH[i % len(COMPETING_LINES_HIGH)]) for i, (a, b) in enumerate(schedule["speaker_high"])]
+    low, low_source = _say_segments(low_voice, low_turns, seconds, rng, mode=speech_mode, f0=104.0, syllable_rate=3.4)
+    high, high_source = _say_segments(high_voice, high_turns, seconds, rng, mode=speech_mode, f0=205.0, syllable_rate=4.9)
+    sources = {
+        "speaker_low": _pan(_at_rms(low, -18.0), -0.5),
+        "speaker_high": _pan(_at_rms(high, -18.5), 0.5),
+    }
+    return Fixture(
+        name="competing_voices",
+        prompt="man speaking",
+        target="speaker_low",
+        sources=_normalise(sources),
+        notes=f"{seconds:g}s, two talkers taking turns and overlapping across chunk boundaries, panned apart. "
+              "Long-form speaker separation: catches per-window speaker flips.",
+        speech_source=f"low={low_source} high={high_source}",
+        extra={"kind": "long", "other_prompt": "woman speaking"},
+    )
+
+
 QUALITY_FIXTURES = ("speech_plus_siren", "two_speakers", "music_mix")
-_BUILDERS = {"speech_plus_siren": speech_plus_siren, "two_speakers": two_speakers, "music_mix": music_mix}
+# Long fixtures take their own length (``--long-seconds``), not the quality-clip length.
+LONG_FIXTURES = ("competing_voices",)
+_BUILDERS = {"speech_plus_siren": speech_plus_siren, "two_speakers": two_speakers, "music_mix": music_mix,
+             "competing_voices": competing_voices}
 
 
 def build_all(seconds: float = 6.0, *, speech_mode: SpeechMode = "auto", names: tuple[str, ...] = QUALITY_FIXTURES) -> list[Fixture]:

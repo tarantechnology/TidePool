@@ -1,0 +1,402 @@
+{
+  "date": "2026-11-13",
+  "hardware": "NVIDIA L4",
+  "torch": "2.8.0+cu129",
+  "source": {
+    "url": "https://commons.wikimedia.org/wiki/File:Cutting_Vegitable_In_A_Market.webm",
+    "author": "Obihoja",
+    "license": "CC BY-SA 4.0",
+    "source_sha1": "fff39ddc436b0517615634087c0a2f13a8f9df52",
+    "normalized_sha256": "fb02dd31395f83dbd8e8d487f8f1f4e6de7aaa1f35591ed61bb71e06119f9e4b",
+    "seconds": 12,
+    "fps": 30,
+    "frames": 360
+  },
+  "vision": {
+    "yolo-n": {
+      "elapsed_seconds": 23.773931707721204,
+      "cuda_peak_allocated_bytes": 114839040,
+      "cuda_peak_reserved_bytes": 253755392,
+      "gpu": "NVIDIA L4",
+      "torch": "2.8.0+cu129",
+      "observations": {
+        "person": 658,
+        "handbag": 209,
+        "bowl": 124,
+        "pizza": 27,
+        "frisbee": 3,
+        "broccoli": 30,
+        "cup": 8,
+        "bottle": 1
+      },
+      "target_tracks": {},
+      "target_coverage": 0.0,
+      "quality_metrics": "Coverage and track lengths are proxies; no ground-truth accuracy or ID-switch claim",
+      "detector": {
+        "name": "ultralytics",
+        "version": "8.4.212",
+        "model": "yolo26n-seg.pt",
+        "weights_sha256": "361fbfabab285c3237700b6bb91d7ecfa602cd945fffda8dbe1242829b71e73f",
+        "task": "segment",
+        "device": "cuda:0",
+        "confidence_threshold": 0.25,
+        "image_size": 640,
+        "tracking": true,
+        "tracker": "bytetrack.yaml",
+        "tracking_cadence": "every decoded frame"
+      }
+    },
+    "yolo-x": {
+      "elapsed_seconds": 46.0304005080834,
+      "cuda_peak_allocated_bytes": 787764224,
+      "cuda_peak_reserved_bytes": 922746880,
+      "gpu": "NVIDIA L4",
+      "torch": "2.8.0+cu129",
+      "observations": {
+        "person": 1002,
+        "handbag": 322,
+        "knife": 203,
+        "frisbee": 224,
+        "scissors": 5,
+        "suitcase": 36,
+        "bowl": 1,
+        "bottle": 18
+      },
+      "target_tracks": {
+        "track:3": 172,
+        "track:73": 19,
+        "track:104": 10,
+        "track:135": 1,
+        "track:152": 1
+      },
+      "target_coverage": 0.5638888888888889,
+      "quality_metrics": "Coverage and track lengths are proxies; no ground-truth accuracy or ID-switch claim",
+      "selected_object_id": "track:3",
+      "detector": {
+        "name": "ultralytics",
+        "version": "8.4.212",
+        "model": "yolo26x-seg.pt",
+        "weights_sha256": "92b3de0065766a17180d6219858717dc9d03cdce8a3ca9576c97fd75aabb64f3",
+        "task": "segment",
+        "device": "cuda:0",
+        "confidence_threshold": 0.25,
+        "image_size": 1280,
+        "tracking": true,
+        "tracker": "bytetrack.yaml",
+        "tracking_cadence": "every decoded frame"
+      }
+    },
+    "sam2-large": {
+      "elapsed_seconds": 55.626631618943065,
+      "cuda_peak_allocated_bytes": 1803206144,
+      "cuda_peak_reserved_bytes": 2149580800,
+      "gpu": "NVIDIA L4",
+      "torch": "2.8.0+cu129",
+      "observations": {
+        "knife": 360
+      },
+      "target_tracks": {
+        "track:1": 360
+      },
+      "target_coverage": 1.0,
+      "quality_metrics": "Coverage and track lengths are proxies; no ground-truth accuracy or ID-switch claim",
+      "selected_object_id": "track:1",
+      "detector": {
+        "name": "meta-sam2",
+        "model": "sam2.1-hiera-large",
+        "config": "configs/sam2.1/sam2.1_hiera_l.yaml",
+        "weights_sha256": "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318",
+        "tracking": true,
+        "device": "cuda",
+        "tracking_cadence": "every decoded frame",
+        "seed_provenance": [
+          {
+            "object_id": 1,
+            "label": "knife",
+            "frame_index": 0,
+            "points": [
+              [
+                0.58,
+                0.704
+              ],
+              [
+                0.547,
+                0.657
+              ],
+              [
+                0.645,
+                0.65
+              ],
+              [
+                0.58,
+                0.8
+              ]
+            ],
+            "point_labels": [
+              1,
+              1,
+              0,
+              0
+            ]
+          }
+        ],
+        "confidence_semantics": "mean foreground sigmoid; not class or physical-identity confidence",
+        "label_provenance": "user seed; no automatic object detection"
+      }
+    },
+    "sam3p1-final": {
+      "elapsed_seconds": 177.6470270100981,
+      "cuda_peak_allocated_bytes": 9801986560,
+      "cuda_peak_reserved_bytes": 10305404928,
+      "gpu": "NVIDIA L4",
+      "torch": "2.8.0+cu129",
+      "observations": {
+        "knife": 357
+      },
+      "target_tracks": {
+        "track:0": 348,
+        "track:1": 2,
+        "track:2": 3,
+        "track:3": 2,
+        "track:4": 2
+      },
+      "target_coverage": 0.9666666666666667,
+      "quality_metrics": "Coverage and track lengths are proxies; no ground-truth accuracy or ID-switch claim",
+      "selected_object_id": "track:0",
+      "detector": {
+        "name": "meta-sam3",
+        "model": "sam3.1",
+        "concept": "knife",
+        "class_id_semantics": "0 = prompted concept; not a COCO class ID",
+        "weights_sha256": "0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6",
+        "tracking": true,
+        "grounding_batch_size": 1,
+        "tracking_cadence": "every decoded frame",
+        "device": "cuda",
+        "confidence_threshold": 0.5,
+        "cuda_peak_allocated_bytes": 9801986560,
+        "cuda_peak_reserved_bytes": 10305404928
+      }
+    }
+  },
+  "audio": {
+    "model_id": "facebook/sam-audio-small-tv",
+    "downloaded_revision": "afc58d67609fee0086b9c032d91b7db8ebec1aa7",
+    "is_mock": false,
+    "interval": [
+      0.0,
+      4.0
+    ],
+    "seed": 42,
+    "mask_mode": "keep_object",
+    "dtype": "float32",
+    "model": {
+      "model_id": "facebook/sam-audio-small-tv",
+      "device": "cuda",
+      "dtype": "float32",
+      "sample_rate": 48000,
+      "loaded": true,
+      "mask_mode": "keep_object",
+      "frame_size": 336,
+      "visual_batch_size": 8,
+      "ode": {
+        "method": "midpoint",
+        "step_size": 0.0625
+      },
+      "load_span_predictor": false,
+      "load_rankers": false,
+      "supports_span_prediction": false,
+      "parameters": 1384664326,
+      "load_seconds": 28.915,
+      "torch_version": "2.8.0+cu129",
+      "revision": null,
+      "model_sample_rate": 48000,
+      "hop_length": 1920,
+      "processor_sample_rate": 48000,
+      "processor_hop_length": 1920,
+      "vision_image_size": 336,
+      "vision_dim": 1024,
+      "span_predictor_loaded": false,
+      "visual_ranker_loaded": false,
+      "text_ranker_loaded": false,
+      "cuda_device_name": "NVIDIA L4",
+      "cuda_peak_allocated_bytes": 5557655552,
+      "cuda_peak_reserved_bytes": 5702156288
+    },
+    "load_including_imports_seconds": 92.67280934285372,
+    "temporal_anchor_provenance": "unverified_candidate",
+    "results": [
+      {
+        "mode": "text",
+        "elapsed_seconds": 1.50403000600636,
+        "prompt": "knife chopping",
+        "temporal_anchors": null,
+        "cuda_peak_allocated_bytes": 7047516672,
+        "cuda_peak_reserved_bytes": 7772045312,
+        "sample_count": 576512,
+        "target_rms": 0.009119143709540367,
+        "reconstruction_max_abs": 1.4901161193847656e-08,
+        "extra": {
+          "mask_mode": null,
+          "visual_frames": 0,
+          "predict_spans": false,
+          "reranking_candidates": 1,
+          "description": "knife chopping",
+          "batch": 1,
+          "notes": []
+        },
+        "near_silent_target": false
+      },
+      {
+        "mode": "visual",
+        "elapsed_seconds": 7.398020076099783,
+        "prompt": "",
+        "temporal_anchors": null,
+        "cuda_peak_allocated_bytes": 7081791488,
+        "cuda_peak_reserved_bytes": 7776239616,
+        "sample_count": 576512,
+        "target_rms": 0.009205822832882404,
+        "reconstruction_max_abs": 2.9802322387695312e-08,
+        "extra": {
+          "mask_mode": "keep_object",
+          "visual_frames": 120,
+          "predict_spans": false,
+          "reranking_candidates": 1,
+          "description": "",
+          "batch": 1,
+          "notes": []
+        },
+        "near_silent_target": false
+      },
+      {
+        "mode": "text_visual",
+        "elapsed_seconds": 7.483366711065173,
+        "prompt": "knife chopping",
+        "temporal_anchors": null,
+        "cuda_peak_allocated_bytes": 7082688512,
+        "cuda_peak_reserved_bytes": 7776239616,
+        "sample_count": 576512,
+        "target_rms": 0.006089047994464636,
+        "reconstruction_max_abs": 2.9802322387695312e-08,
+        "extra": {
+          "mask_mode": "keep_object",
+          "visual_frames": 120,
+          "predict_spans": false,
+          "reranking_candidates": 1,
+          "description": "knife chopping",
+          "batch": 1,
+          "notes": []
+        },
+        "near_silent_target": false
+      },
+      {
+        "mode": "combined",
+        "elapsed_seconds": 7.437778102234006,
+        "prompt": "knife chopping",
+        "temporal_anchors": [
+          [
+            "+",
+            2.32,
+            2.44
+          ],
+          [
+            "+",
+            2.42,
+            2.54
+          ],
+          [
+            "+",
+            2.58,
+            2.7
+          ]
+        ],
+        "cuda_peak_allocated_bytes": 7085030400,
+        "cuda_peak_reserved_bytes": 7776239616,
+        "sample_count": 576512,
+        "target_rms": 0.0023657092824578285,
+        "reconstruction_max_abs": 2.9802322387695312e-08,
+        "extra": {
+          "mask_mode": "keep_object",
+          "visual_frames": 120,
+          "predict_spans": false,
+          "reranking_candidates": 1,
+          "description": "knife chopping",
+          "batch": 1,
+          "notes": []
+        },
+        "near_silent_target": false
+      }
+    ],
+    "checkpoint_sha256": "1a9693b235efc3176986664dac349eb64022c7468cf8d4195954490a2457e6a9",
+    "implementation_commit": "bb4c6999d2677c7402360e426afc01ddfad6dce0",
+    "perception_commit": "e72b6810b1133e1c879f2cc965d276eb73803f1f"
+  },
+  "quality_evaluation": {
+    "ground_truth_masks": false,
+    "reference_audio_stems": false,
+    "listening": "not performed",
+    "visual_benefit": "unverified",
+    "target_specific_attenuation_db": null,
+    "dialogue_preservation": null,
+    "music_preservation": null,
+    "caveat": "Coverage is not accuracy; non-silent targets and reconstruction do not prove correct separation."
+  },
+  "backend_e2e": {
+    "is_mock": false,
+    "source_sample_count": 576512,
+    "stem_sample_counts": [
+      576512,
+      576512
+    ],
+    "sample_rate": 48000,
+    "channels": 2,
+    "reconstruction_max_abs_against_pcm16_before": 1.080334186553955e-05,
+    "reconstruction_reference_note": "Captured remote before.wav is PCM16; comparison includes its quantization and standard mono-to-stereo upmix.",
+    "export_sample_count_local_ffmpeg": 576000,
+    "export_residual_rmse_first_12_seconds": 0.0012174906441941857,
+    "cross_decoder_note": "Local Mac FFmpeg decodes original MP4 to 575552 samples; remote audio decode produced 576512. Source PCM before.wav is authoritative for this comparison. Full cross-decoder sample parity is not claimed.",
+    "model": {
+      "backend": "sam",
+      "model_id": "facebook/sam-audio-small-tv",
+      "device": "cuda",
+      "dtype": "float32",
+      "predict_spans": false,
+      "reranking_candidates": 1,
+      "stereo_mode": "duplicate",
+      "chunked": false,
+      "passes": 1,
+      "elapsed_seconds": 22.403,
+      "chunk_seconds": 10.0,
+      "chunk_overlap_seconds": 1.0,
+      "requested_chunk_batch": 2,
+      "effective_chunk_batch": 1,
+      "peak_memory_bytes": 9367383552,
+      "is_mock": false
+    },
+    "edit": {
+      "volume": 0.0,
+      "muted": true,
+      "solo": false
+    },
+    "streams": [
+      {
+        "codec_type": "audio",
+        "codec_name": "aac",
+        "start_time": "0.000000",
+        "duration": "12.000000",
+        "nb_frames": "564",
+        "sample_rate": "48000",
+        "channels": 2
+      },
+      {
+        "codec_type": "video",
+        "codec_name": "h264",
+        "start_time": "0.000000",
+        "duration": "12.000000",
+        "nb_frames": "360",
+        "sample_rate": null,
+        "channels": null
+      }
+    ]
+  }
+}

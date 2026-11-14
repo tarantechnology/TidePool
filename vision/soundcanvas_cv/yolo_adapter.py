@@ -7,7 +7,7 @@ from .masks import encode_mask
 
 class YOLODetector:
     def __init__(self, model_path='yolo26n.pt', confidence=.30, device='auto', track=True,
-                 tracker='bytetrack.yaml'):
+                 tracker='bytetrack.yaml', image_size=None):
         if not math.isfinite(confidence) or not 0 < confidence <= 1:
             raise ValueError('confidence must be in (0,1]')
         from ultralytics import YOLO
@@ -17,6 +17,7 @@ class YOLODetector:
         self.device = device
         self.track = track
         self.tracker = tracker
+        self.image_size = image_size
 
     def reset(self):
         for tracker in getattr(self.model.predictor, 'trackers', []):
@@ -29,11 +30,14 @@ class YOLODetector:
                 "weights_sha256": file_sha256(self.model_path) if Path(self.model_path).is_file() else None, "task": self.model.task,
                 "device": str(getattr(self.model.predictor, 'device', self.device)),
                 "confidence_threshold": self.confidence,
+                "image_size": self.image_size,
                 "tracking": self.track, "tracker": self.tracker if self.track else None,
                 "tracking_cadence": "every decoded frame" if self.track else None}
 
     def detect(self, frame):
         kwargs = {'conf': self.confidence, 'verbose': False}
+        if self.image_size is not None:
+            kwargs['imgsz'] = self.image_size
         if self.device not in (None, 'auto'):
             kwargs['device'] = self.device
         if self.model.task == 'segment':

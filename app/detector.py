@@ -28,6 +28,13 @@ def device():
     return os.getenv('VISION_DEVICE', 'cpu')
 
 
+def adapter():
+    value = os.getenv('VISION_ADAPTER', 'yolo')
+    if value not in ('yolo', 'sam3', 'sam3.1', 'sam2.1'):
+        raise ValueError('VISION_ADAPTER must be yolo, sam3, sam3.1 or sam2.1')
+    return value
+
+
 def home():
     """Detector working directory: ultralytics downloads bare asset names into its cwd."""
     path = core.ROOT / 'vision'
@@ -75,7 +82,10 @@ def _spawn(args, timeout, **kwargs):
 def _probe_import():
     """Import the detector stack in the worker's interpreter once, without loading weights."""
     try:
-        result = _spawn([sys.executable, '-c', 'import soundcanvas_cv.yolo_adapter, ultralytics'], 120,
+        imports = {'yolo': 'import soundcanvas_cv.yolo_adapter, ultralytics',
+                   'sam2.1': 'import soundcanvas_cv.sam2_adapter; from sam2.build_sam import build_sam2_video_predictor'}.get(
+                       adapter(), 'import soundcanvas_cv.sam3_adapter; from sam3.model_builder import build_sam3_predictor')
+        result = _spawn([sys.executable, '-c', imports], 120,
                         cwd=home(), env=environment())
     except (subprocess.SubprocessError, OSError) as exc:
         return f'Object detection could not be checked: {exc}'
@@ -91,8 +101,9 @@ def status(refresh=False):
         if refresh:
             _import_error = ...
         if _import_error is ...:
-            if any(importlib.util.find_spec(name) is None for name in ('soundcanvas_cv', 'ultralytics')):
-                _import_error = NOT_INSTALLED
+            dependency = {'yolo': 'ultralytics', 'sam2.1': 'sam2'}.get(adapter(), 'sam3')
+            if any(importlib.util.find_spec(name) is None for name in ('soundcanvas_cv', dependency)):
+                _import_error = NOT_INSTALLED if adapter() == 'yolo' else 'Official SAM runtime is not installed in the detector interpreter'
             else:
                 _import_error = _probe_import()
         reason = _import_error
@@ -135,6 +146,14 @@ def detect(source, output_dir, video_id):
     args = [sys.executable, '-m', 'soundcanvas_cv', '--input', str(source), '--output-dir', str(output_dir),
             '--model', model_argument(), '--sample-fps', '1000', '--max-seconds', os.getenv('VISION_MAX_SECONDS', '30'),
             '--device', device(), '--video-id', video_id]
+    if adapter() != 'yolo':
+        args.extend(['--adapter', adapter(), '--concept', os.getenv('VISION_CONCEPT', 'knife')])
+    if adapter() == 'sam2.1':
+        if not os.getenv('VISION_SEED_OBJECTS'):
+            raise DetectorError('SAM 2 requires VISION_SEED_OBJECTS with user-supplied points; it has no text detector')
+        args.extend(['--seed-objects', str(Path(os.environ['VISION_SEED_OBJECTS']).expanduser().resolve())])
+    if os.getenv('VISION_IMAGE_SIZE') and adapter() == 'yolo':
+        args.extend(['--image-size', os.environ['VISION_IMAGE_SIZE']])
     timeout = int(os.getenv('VISION_TIMEOUT_SECONDS', os.getenv('FFMPEG_TIMEOUT', '600')))
     try:
         result = _spawn(args, timeout, cwd=home(), env=environment())
@@ -152,6 +171,9 @@ def detect(source, output_dir, video_id):
 
 def prefetch():
     """Download the configured weights into the same place the worker will look (dev_setup.sh)."""
+    if adapter() != 'yolo':
+        print('SAM requires an approved official checkpoint at VISION_MODEL; automatic prefetch is disabled', file=sys.stderr)
+        return 2
     result = _spawn([sys.executable, '-c', 'import sys; from ultralytics import YOLO; YOLO(sys.argv[1])', model_argument()],
                     None, cwd=home(), env=environment())
     if result.returncode != 0:

@@ -156,6 +156,7 @@ class SamAudioBackend(Backend):
         ode_method: str = "midpoint",
         ode_step_size: float = 2 / 32,
         frame_size: int = 336,
+        visual_batch_size: int | None = None,
         ffmpeg: str = "ffmpeg",
         ffprobe: str = "ffprobe",
         ffmpeg_timeout: int = 600,
@@ -171,6 +172,9 @@ class SamAudioBackend(Backend):
         self.load_visual_ranker = load_visual_ranker
         self.judge_only = judge_only
         self.frame_size = frame_size
+        if visual_batch_size is not None and (type(visual_batch_size) is not int or visual_batch_size <= 0):
+            raise ValueError('visual_batch_size must be a positive integer')
+        self.visual_batch_size = visual_batch_size
         self.ode_opt: dict[str, Any] = {"method": ode_method, "options": {"step_size": ode_step_size}}
         self.ffmpeg, self.ffprobe, self.ffmpeg_timeout = ffmpeg, ffprobe, ffmpeg_timeout
         # Span prediction needs the span predictor; shadow the class flag per instance.
@@ -225,9 +229,14 @@ class SamAudioBackend(Backend):
                 ) from exc
             raise InferenceFailure(f"loading {self.model_id} failed: {type(exc).__name__}: {exc}") from exc
 
-        model = model.eval().to(device=device)
-        if dtype is not torch.float32:
-            model = model.to(dtype=dtype)
+        # Transfer directly in the requested dtype, avoiding a temporary full-fp32
+        # GPU copy when bfloat16 is explicitly requested on a 24-GB device.
+        model = model.eval().to(device=device, dtype=dtype)
+        if self.visual_batch_size is not None:
+            vision = getattr(model, 'vision_encoder', None)
+            if vision is None or not hasattr(vision, 'batch_size'):
+                raise InferenceFailure('Loaded model lacks the official visual encoder batch_size control')
+            vision.batch_size = self.visual_batch_size
         if self.load_rankers and self.judge_only:
             # Loading both checkpoints before moving SAM to the GPU can exhaust a
             # 50 GB host even when the models fit in VRAM. Load the judge afterwards.
@@ -367,6 +376,7 @@ class SamAudioBackend(Backend):
             "loaded": self.loaded,
             "mask_mode": self.mask_mode,
             "frame_size": self.frame_size,
+            "visual_batch_size": self.visual_batch_size,
             "ode": {"method": self.ode_opt["method"], "step_size": self.ode_opt["options"]["step_size"]},
             "load_span_predictor": self.load_span_predictor,
             "load_rankers": self.load_rankers,
@@ -414,12 +424,21 @@ class SamAudioBackend(Backend):
     def _separate_batch(
         self, mixtures: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions
     ) -> list[BackendResult]:
-        """ONE processor batch and ONE ``model.separate`` call for every window given."""
+        """ONE processor batch and ONE ``model.separate`` call for every window given.
+
+        With ``options.candidates = K > 1`` every window is repeated K times consecutively in
+        the batch (item ``i``'s draws are batch rows ``i*K .. i*K+K-1``), so one call returns
+        K independent noise draws per window; the engine picks one per window. This is
+        orthogonal to ``reranking_candidates`` (R), which the model still applies to EVERY
+        batch row: K x R draws per window are allowed, at K x R the compute. The engine
+        divides its window batch by K so a call never exceeds ``AUDIO_CHUNK_BATCH`` rows.
+        """
         torch, model, processor = self._torch, self._model, self._processor
         lengths = [int(np.asarray(m).shape[-1]) for m in mixtures]
         if all(n == 0 for n in lengths):
             empty = np.zeros(0, dtype=np.float32)
             return [BackendResult(target=empty.copy(), residual=empty.copy(), spans=[]) for _ in mixtures]
+        k_draws = max(1, int(getattr(options, "candidates", 1) or 1))
 
         # Shape (1, T) per item: the processor averages channels to mono, so hand it mono
         # already. ``batch_audio`` pads the batch to the longest item; each output is
@@ -427,10 +446,11 @@ class SamAudioBackend(Backend):
         audios = [
             torch.from_numpy(np.ascontiguousarray(np.asarray(m, dtype=np.float32).reshape(-1))).unsqueeze(0)
             for m in mixtures
+            for _ in range(k_draws)
         ]
-        descriptions = [self._description(p) for p in prompts]
+        descriptions = [self._description(p) for p in prompts for _ in range(k_draws)]
         anchors = (
-            [[(token, float(start), float(end)) for token, start, end in (p.anchors or ())] for p in prompts]
+            [[(token, float(start), float(end)) for token, start, end in (p.anchors or ())] for p in prompts for _ in range(k_draws)]
             if any(p.anchors for p in prompts)
             else None
         )
@@ -453,7 +473,7 @@ class SamAudioBackend(Backend):
                     ffprobe=self.ffprobe,
                     timeout=self.ffmpeg_timeout,
                 )
-                masked_videos = processor.mask_videos([frames], [masks])
+                masked_videos = processor.mask_videos([frames] * k_draws, [masks] * k_draws)
 
             batch = processor(
                 descriptions=descriptions,
@@ -492,10 +512,11 @@ class SamAudioBackend(Backend):
             if _is_oom(exc):
                 raise InsufficientGpuMemory(
                     "GPU ran out of memory during separation; lower AUDIO_CHUNK_BATCH, shorten "
-                    "AUDIO_CHUNK_SECONDS, lower AUDIO_RERANKING_CANDIDATES, or set "
-                    "AUDIO_LOAD_SPAN_PREDICTOR=false",
+                    "AUDIO_CHUNK_SECONDS, lower AUDIO_RERANKING_CANDIDATES or options.candidates "
+                    "(AUDIO_CANDIDATES), or set AUDIO_LOAD_SPAN_PREDICTOR=false",
                     details={
                         "batch": len(mixtures),
+                        "candidates": k_draws,
                         "frames": max(lengths),
                         "seconds": round(max(lengths) / self.sample_rate, 3),
                         "model_id": self.model_id,
@@ -510,16 +531,22 @@ class SamAudioBackend(Backend):
                 "visual_frames": int(frames.shape[0]) if frames is not None else 0,
                 "predict_spans": predict_spans,
                 "reranking_candidates": candidates,
-                "description": descriptions[i],
+                "description": descriptions[i * k_draws],
                 "batch": len(mixtures),
+                "candidates": k_draws,
                 "notes": notes,
             }
+            rows = range(i * k_draws, (i + 1) * k_draws)
+            cands = [self._to_numpy(result.target[j], length) for j in rows]
+            res = [self._to_numpy(result.residual[j], length) for j in rows] if result.residual is not None else [None] * k_draws
             results.append(
                 BackendResult(
-                    target=self._to_numpy(result.target[i], length),
-                    residual=self._to_numpy(result.residual[i], length) if result.residual is not None else None,
-                    spans=self._predicted_spans(batch, i) if predict_spans else None,
+                    target=cands[0],
+                    residual=res[0],
+                    spans=self._predicted_spans(batch, i * k_draws) if predict_spans else None,
                     extra=extra,
+                    candidates=cands if k_draws > 1 else None,
+                    candidate_residuals=res if k_draws > 1 else None,
                 )
             )
         return results

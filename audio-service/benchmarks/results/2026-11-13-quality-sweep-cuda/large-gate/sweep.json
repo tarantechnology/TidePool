@@ -1,0 +1,285 @@
+{
+  "schema": "soundcanvas/audio-sweep-1",
+  "name": "gate",
+  "generated_at": "2026-11-13T22:43:32+00:00",
+  "command": "python -m benchmarks.run_benchmark --backend sam --seconds 6 --latency-seconds 15 --long-seconds 24 --speech-mode synthetic --seed 1234 --sweep gate --out /workspace/bench/large-gate",
+  "backend": {
+    "mode": "engine",
+    "name": "sam",
+    "is_mock": false,
+    "model_id": "facebook/sam-audio-large",
+    "device": "cuda",
+    "dtype": "float32"
+  },
+  "is_mock": false,
+  "configs": [
+    {
+      "name": "thr0.5-gate0",
+      "dir": "thr0.5-gate0",
+      "settings": {
+        "passes": 1,
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_nfft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 0
+      },
+      "request_options": {
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_n_fft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 0
+      },
+      "fixtures": {
+        "speech_plus_siren": {
+          "si_sdri_db": -30.872745563207957,
+          "si_sdr_db": -37.39270464727167,
+          "leakage_db": 21.755677258140246
+        },
+        "two_speakers": {
+          "si_sdri_db": 12.999516456738563,
+          "si_sdr_db": 13.5122234058412,
+          "leakage_db": -20.237311343157508
+        },
+        "music_mix": {
+          "si_sdri_db": 16.710178722266008,
+          "si_sdr_db": 17.711512087307064,
+          "leakage_db": -36.39863732419054
+        },
+        "competing_voices": {
+          "si_sdri_db": -3.360006723920306,
+          "si_sdr_db": -2.8965678199439884,
+          "leakage_db": -19.740886879440325
+        }
+      },
+      "mean_si_sdri_db": -1.130764277030923,
+      "mean_leakage_db": -13.655289572162031,
+      "rtf": 0.4871698467992246,
+      "peak_rss_bytes": 31243280384,
+      "delta": {
+        "mean_si_sdri_db": 0.0,
+        "mean_leakage_db": 0.0,
+        "speech_plus_siren": {
+          "si_sdri_db": 0.0,
+          "leakage_db": 0.0
+        },
+        "two_speakers": {
+          "si_sdri_db": 0.0,
+          "leakage_db": 0.0
+        },
+        "music_mix": {
+          "si_sdri_db": 0.0,
+          "leakage_db": 0.0
+        },
+        "competing_voices": {
+          "si_sdri_db": 0.0,
+          "leakage_db": 0.0
+        }
+      }
+    },
+    {
+      "name": "thr0.5-gate10",
+      "dir": "thr0.5-gate10",
+      "settings": {
+        "passes": 1,
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_nfft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 10
+      },
+      "request_options": {
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_n_fft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 10
+      },
+      "fixtures": {
+        "speech_plus_siren": {
+          "si_sdri_db": -30.87277981369683,
+          "si_sdr_db": -37.392738897760545,
+          "leakage_db": 21.75556854639433
+        },
+        "two_speakers": {
+          "si_sdri_db": 12.916196907247272,
+          "si_sdr_db": 13.428903856349908,
+          "leakage_db": -20.26639825393111
+        },
+        "music_mix": {
+          "si_sdri_db": 15.39649902034349,
+          "si_sdr_db": 16.397832385384547,
+          "leakage_db": -35.778665301304095
+        },
+        "competing_voices": {
+          "si_sdri_db": -3.511189091221806,
+          "si_sdr_db": -3.047750187245488,
+          "leakage_db": -19.734584982560435
+        }
+      },
+      "mean_si_sdri_db": -1.5178182443319683,
+      "mean_leakage_db": -13.506019997850327,
+      "rtf": 0.4907623456635823,
+      "peak_rss_bytes": 31243280384,
+      "delta": {
+        "mean_si_sdri_db": -0.38705396730104535,
+        "mean_leakage_db": 0.1492695743117043,
+        "speech_plus_siren": {
+          "si_sdri_db": -3.4250488873510676e-05,
+          "leakage_db": -0.0001087117459164233
+        },
+        "two_speakers": {
+          "si_sdri_db": -0.08331954949129106,
+          "leakage_db": -0.02908691077360359
+        },
+        "music_mix": {
+          "si_sdri_db": -1.313679701922517,
+          "leakage_db": 0.6199720228864436
+        },
+        "competing_voices": {
+          "si_sdri_db": -0.1511823673014998,
+          "leakage_db": 0.006301896879890023
+        }
+      }
+    },
+    {
+      "name": "thr0.5-gate15",
+      "dir": "thr0.5-gate15",
+      "settings": {
+        "passes": 1,
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_nfft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 15
+      },
+      "request_options": {
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_n_fft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 15
+      },
+      "fixtures": {
+        "speech_plus_siren": {
+          "si_sdri_db": -30.872754757268495,
+          "si_sdr_db": -37.39271384133221,
+          "leakage_db": 21.755669772247018
+        },
+        "two_speakers": {
+          "si_sdri_db": 12.994053036437371,
+          "si_sdr_db": 13.506759985540008,
+          "leakage_db": -20.240126641963858
+        },
+        "music_mix": {
+          "si_sdri_db": 16.671389994590818,
+          "si_sdr_db": 17.672723359631874,
+          "leakage_db": -36.435927919283245
+        },
+        "competing_voices": {
+          "si_sdri_db": -3.4010735893913724,
+          "si_sdr_db": -2.9376346854150546,
+          "leakage_db": -19.74034940754414
+        }
+      },
+      "mean_si_sdri_db": -1.1520963289079196,
+      "mean_leakage_db": -13.665183549136056,
+      "rtf": 0.4942203160064916,
+      "peak_rss_bytes": 31243280384,
+      "delta": {
+        "mean_si_sdri_db": -0.021332051876996605,
+        "mean_leakage_db": -0.009893976974025165,
+        "speech_plus_siren": {
+          "si_sdri_db": -9.19406053867533e-06,
+          "leakage_db": -7.4858932279653345e-06
+        },
+        "two_speakers": {
+          "si_sdri_db": -0.005463420301191846,
+          "leakage_db": -0.0028152988063503415
+        },
+        "music_mix": {
+          "si_sdri_db": -0.038788727675189705,
+          "leakage_db": -0.03729059509270627
+        },
+        "competing_voices": {
+          "si_sdri_db": -0.041066865471066194,
+          "leakage_db": 0.0005374718961839164
+        }
+      }
+    },
+    {
+      "name": "thr0.5-gate20",
+      "dir": "thr0.5-gate20",
+      "settings": {
+        "passes": 1,
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_nfft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 20
+      },
+      "request_options": {
+        "seed": 1234,
+        "refine": "mask",
+        "refine_p": 2,
+        "refine_n_fft": 2048,
+        "refine_threshold": 0.5,
+        "refine_gate_db": 20
+      },
+      "fixtures": {
+        "speech_plus_siren": {
+          "si_sdri_db": -30.872746405027904,
+          "si_sdr_db": -37.39270548909162,
+          "leakage_db": 21.7556754427586
+        },
+        "two_speakers": {
+          "si_sdri_db": 12.999382906836086,
+          "si_sdr_db": 13.512089855938722,
+          "leakage_db": -20.23760682634788
+        },
+        "music_mix": {
+          "si_sdri_db": 16.710178722266008,
+          "si_sdr_db": 17.711512087307064,
+          "leakage_db": -36.39863732419054
+        },
+        "competing_voices": {
+          "si_sdri_db": -3.370507778924331,
+          "si_sdr_db": -2.9070688749480134,
+          "leakage_db": -19.74049020947064
+        }
+      },
+      "mean_si_sdri_db": -1.1334231387125353,
+      "mean_leakage_db": -13.655264729312613,
+      "rtf": 0.49628348293093344,
+      "peak_rss_bytes": 31243280384,
+      "delta": {
+        "mean_si_sdri_db": -0.0026588616816123345,
+        "mean_leakage_db": 2.4842849418504898e-05,
+        "speech_plus_siren": {
+          "si_sdri_db": -8.418199470838772e-07,
+          "leakage_db": -1.8153816441213166e-06
+        },
+        "two_speakers": {
+          "si_sdri_db": -0.00013354990247727017,
+          "leakage_db": -0.00029548319037076
+        },
+        "music_mix": {
+          "si_sdri_db": 0.0,
+          "leakage_db": 0.0
+        },
+        "competing_voices": {
+          "si_sdri_db": -0.010501055004024984,
+          "leakage_db": 0.0003966699696853482
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PROJECT_STEMS_LABEL } from '../api/stemSources'
-import { NO_PROJECT_STEMS, showsMockBadge, stemsReadySummary, stemsStateFromJob } from './projectStems'
+import { NO_PROJECT_STEMS, showsMockBadge, splitSuggestion, stemsReadySummary, stemsStateFromJob } from './projectStems'
 
 describe('stemsStateFromJob', () => {
   it('keeps the mock flag and the warnings the job reported', () => {
@@ -47,5 +47,15 @@ describe('showsMockBadge', () => {
     expect(showsMockBadge({ ...mock, mockStems: false }, PROJECT_STEMS_LABEL)).toBe(false)
     expect(showsMockBadge({ ...mock, mockStems: null }, PROJECT_STEMS_LABEL)).toBe(false)
     expect(showsMockBadge(NO_PROJECT_STEMS, PROJECT_STEMS_LABEL)).toBe(false)
+  })
+})
+
+describe('splitSuggestion', () => {
+  it('offers a split only when the router heard music', () => {
+    const route = { engine: 'demucs', modelId: null, stems: null }
+    expect(splitSuggestion({ ...route, mode: 'music_stems', reason: 'music score 0.97' })).toBe('This sounds like a song (music score 0.97).')
+    expect(splitSuggestion({ ...route, mode: 'music_stems', reason: null })).toBe('This sounds like a song.')
+    expect(splitSuggestion({ ...route, mode: 'prompted', reason: 'speech' })).toBeNull()
+    expect(splitSuggestion(null)).toBeNull()
   })
 })

@@ -54,12 +54,14 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload')
-    if kind!='vision': d.pop('stage',None)
+    # Process jobs report 'splitting' or 'separating' while the audio service runs.
+    if kind not in ('vision','process'): d.pop('stage',None)
     output=json.loads(d.pop('output')) if d['output'] else None
     d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':
         d['stems'] = output.get('stems', []) if isinstance(output, dict) else output or []
         d['inference'] = output.get('inference') if isinstance(output, dict) else None
+        d['routing'] = (d['inference'] or {}).get('routing')
     elif kind=='export': d['download_url']=f'/api/exports/{jid}/download' if output else None
     else: d['result']=output
     if kind=='vision':
@@ -96,10 +98,18 @@ class Process(BaseModel):
     append: bool=False
     reranking_candidates: int=Field(default=1,ge=1,le=4)
     passes: int | None=None
+    # auto lets the audio service route (song -> music stems, otherwise the prompted model).
+    mode: Literal['auto','prompted','music_stems']='auto'
+    stems: list[str] | None=Field(default=None,min_length=1,max_length=16)
     @model_validator(mode='after')
     def within_prompt_cap(self):
         if len(self.prompts)>max_prompts(): raise ValueError(f'At most {max_prompts()} prompts per job')
         check_passes(self.passes)
+        if self.stems is not None:
+            if self.mode!='music_stems': raise ValueError('stems requires mode music_stems')
+            self.stems=[s.strip().lower() for s in self.stems]
+            if any(not s or len(s)>40 for s in self.stems) or len(set(self.stems))!=len(self.stems): raise ValueError('stems must be distinct nonempty names')
+        if self.mode=='music_stems' and self.prompts: raise ValueError('Use stems, not prompts, with mode music_stems')
         return self
 
 def check_passes(passes):
@@ -156,7 +166,7 @@ async def upload(pid: str, file: UploadFile=File(...), authorization: str | None
     p=auth(pid,authorization)
     if p['original']: raise HTTPException(409,'Project already has media')
     ext=Path(file.filename or '').suffix.lower()
-    if ext not in ('.mp4','.mov','.wav','.mp3'): raise HTTPException(415,'Supported extensions: mp4, mov, wav, mp3')
+    if ext not in ('.mp4','.mov','.wav','.mp3','.flac','.m4a'): raise HTTPException(415,'Supported extensions: mp4, mov, wav, mp3, flac, m4a')
     path=project_dir(pid)/'original'/(uid()+ext); audio=project_dir(pid)/'extracted'/'audio.wav'
     size=0
     try:
@@ -307,7 +317,8 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     p=auth(pid,authorization)
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
     body.has_project_stems=bool(rows)
-    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration']} for r in rows]
+    # A music split's canonical label and instrument tags let "remove the piano" find the "other" track.
+    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration'],'canonical_label':r['label'],'tags':[t['label'] for t in json.loads(r['tags'])] if r['tags'] else None} for r in rows]
     body.tracks=[{'stemId':r['id'],'gain':r['volume'],'muted':bool(r['muted']),'solo':bool(r['solo']),'automation':[{'t':k['time'],'value':k['value']} for k in json.loads(r['automation'])]} for r in rows]
     if p['metadata']: body.duration=json.loads(p['metadata'])['duration']
     parsed=parse(body.prompt)
@@ -331,19 +342,39 @@ def service_capabilities(pid: str, authorization: str | None=Header(None)):
     from .detector import status
     return {**capabilities(),'vision':status()}
 
+def source_kind(p):
+    """Routing tie-breaker for the audio service: an upload without a video stream is likely a song."""
+    return 'video' if p['metadata'] and json.loads(p['metadata']).get('has_video') else 'audio'
+
+@app.get('/api/projects/{pid}/route')
+def route(pid: str, authorization: str | None=Header(None)):
+    """Dry run of the audio service's router, so the editor can suggest a split. Separates nothing."""
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    from .media import InferenceError, route as route_audio
+    try: return route_audio(p['audio'],source_kind(p))
+    except (InferenceError,RuntimeError,ValueError) as exc: raise HTTPException(502,str(exc)) from exc
+
 @app.post('/api/projects/{pid}/process',status_code=202)
 def process(pid: str, body: Process=Process(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
     refuse_during_refine(pid)
-    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and (not body.prompts or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
+    # With no prompts, auto lets the service decide (a song becomes music stems); prompted needs one.
+    if os.getenv('INFERENCE_ADAPTER', 'fake') == 'http' and ((not body.prompts and body.mode=='prompted') or any(not (prompt if isinstance(prompt,str) else prompt.text).strip() for prompt in body.prompts)):
         raise HTTPException(422, 'At least one nonempty audio prompt is required for HTTP inference')
+    if body.append and body.mode=='music_stems': raise HTTPException(422,'A music split replaces the layers; it cannot be added to an earlier separation.')
     try: validate_timing(body.prompts,body.guidance,body.edit_scope,probe(p['audio'])['duration'])
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
-    if body.edit_scope.action != 'keep' and len(body.prompts)!=1: raise HTTPException(422,'An edit requires exactly one sound target')
-    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes'})
+    targets=len(body.stems or []) if body.mode=='music_stems' else len(body.prompts)
+    if body.edit_scope.action != 'keep' and targets!=1: raise HTTPException(422,'An edit requires exactly one sound target')
+    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes','mode','stems'})
     payload['anchors']=body.guidance.model_dump()['anchors']
     payload['options']=with_passes(options(body.profile,body.reranking_candidates),body.passes)
+    # Only an explicit mode overrides the service's AUDIO_ROUTING_DEFAULT.
+    if 'mode' in body.model_fields_set: payload['options']['mode']=body.mode
+    if body.stems: payload['options']['stems']=body.stems
+    payload['hints']={'source_kind':source_kind(p)}
     with connect() as db: payload['_baseline']={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
     if body.append:
         with connect() as db: rows=db.execute("SELECT id,revision,start_offset FROM stems WHERE project_id=? AND lower(name)='residual'",(pid,)).fetchall()
@@ -385,7 +416,7 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
               'residual_id':residuals[0]['id'] if residuals else None}
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
-             'profile':body.profile, 'options':{**with_passes(options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},
+             'profile':body.profile, 'options':{**with_passes(options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},'hints':{'source_kind':source_kind(p)},
              '_candidate':snapshot, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
@@ -478,6 +509,7 @@ def director_adjust(cid: str, body: DirectorAdjustment, authorization: str | Non
 def candidate_status(cid: str,authorization: str | None=Header(None)):
     row=candidate_record(cid,authorization); output=json.loads(row['output']) if row['output'] else None
     return {'id':cid,'project_id':row['project_id'],'status':row['status'],'progress':row['progress'],'error':row['error'],
+        'stage':row['stage'] if row['status']=='processing' else None,
         'audio_url':f'/api/candidates/{cid}/audio' if output else None,
         'mix_url':f'/api/candidates/{cid}/audio?part=mix' if output and 'mix' in output else None,
         'original_url':f'/api/candidates/{cid}/audio?part=original' if output and 'original' in output else None,

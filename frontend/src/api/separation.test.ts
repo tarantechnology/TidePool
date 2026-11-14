@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SavedStem } from './backend'
-import { buildVisualPrompt, findRemoveTargets, missingResidualMessage, normalizeStemName, NO_VISUAL_PROMPT } from './separation'
+import { buildVisualPrompt, canRemove, findRemoveTargets, missingResidualMessage, musicStemName, normalizeStemName, NO_VISUAL_PROMPT } from './separation'
 
 const stem = (over: Partial<SavedStem> & { id: string; name: string }): SavedStem => ({
   duration: 4,
@@ -101,5 +101,57 @@ describe('findRemoveTargets', () => {
   it('will not pick a target when two stems share the name', () => {
     const stems = [stem({ id: 'a', name: 'siren' }), stem({ id: 'b', name: 'siren' }), stem({ id: 'r', name: 'residual' })]
     expect(findRemoveTargets(stems, 'siren').target).toBeNull()
+  })
+})
+
+describe('music splits', () => {
+  const split = ['vocals', 'drums', 'bass', 'other'].map((label) => stem({ id: label, name: label[0].toUpperCase() + label.slice(1), role: 'target', label }))
+
+  it('maps everyday words onto stem names', () => {
+    expect(musicStemName('The Singer')).toBe('vocals')
+    expect(musicStemName('vocals')).toBe('vocals')
+    expect(musicStemName('percussion')).toBe('drums')
+    expect(musicStemName('dog barking')).toBeNull()
+  })
+
+  it('mutes a split track without a residual, since its siblings hold the rest of the song', () => {
+    for (const words of ['vocals', 'Vocals', 'the singer', 'voice']) {
+      const found = findRemoveTargets(split, words)
+      expect(found.target?.id, words).toBe('vocals')
+      expect(found.residual).toBeNull()
+      expect(found.split).toBe(true)
+      expect(canRemove(found)).toBe(true)
+    }
+    expect(findRemoveTargets(split, 'siren').target).toBeNull()
+  })
+
+  it('still needs a residual for a lone target, as the fake adapter returns', () => {
+    const found = findRemoveTargets([stem({ id: 'v', name: 'Vocals', role: 'target', label: 'vocals' })], 'vocals')
+    expect(found.split).toBe(false)
+    expect(canRemove(found)).toBe(false)
+  })
+
+  it('mutes a subset split against its residual', () => {
+    const found = findRemoveTargets([split[0], stem({ id: 'r', name: 'residual', role: 'residual' })], 'vocals')
+    expect(canRemove(found)).toBe(true)
+  })
+})
+
+describe('instrument tags', () => {
+  const tags = (...labels: string[]) => labels.map((label, i) => ({ label, score: 0.9 - i / 10 }))
+  const split = [
+    stem({ id: 'v', name: 'Vocals', role: 'target', label: 'vocals', tags: tags('Female singing') }),
+    stem({ id: 'd', name: 'Drums', role: 'target', label: 'drums', tags: tags('Drum kit') }),
+    stem({ id: 'o', name: 'Synth & Strings', role: 'target', label: 'other', tags: tags('Synthesizer', 'Strings', 'Piano') }),
+  ]
+
+  it('finds the descriptive "other" track by its tags and by its canonical label', () => {
+    for (const words of ['piano', 'the strings', 'synth', 'Synth & Strings', 'other']) {
+      const found = findRemoveTargets(split, words)
+      expect(found.target?.id, words).toBe('o')
+      expect(canRemove(found), words).toBe(true)
+    }
+    expect(findRemoveTargets(split, 'kit').target).toBeNull()  // too short to shorten a tag word
+    expect(findRemoveTargets(split, 'trumpet').target).toBeNull()
   })
 })

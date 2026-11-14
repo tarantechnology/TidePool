@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentPlan } from '../api/backend'
-import { NO_PROJECT_HINT, planOutcome, plannerFailure } from './planOutcome'
+import type { AgentPlan, SavedStem } from '../api/backend'
+import { muteExistingStem, NO_PROJECT_HINT, planOutcome, plannerFailure } from './planOutcome'
 
 const plan = (over: Partial<AgentPlan>): AgentPlan => ({
   kind: 'edit',
@@ -58,6 +58,42 @@ describe('plannerFailure', () => {
 
 describe('NO_PROJECT_HINT', () => {
   it('tells the user where to upload a video', () => {
-    expect(NO_PROJECT_HINT).toBe('Upload a video (step 1) to start giving commands')
+    expect(NO_PROJECT_HINT).toBe('Upload a video or song (step 1) to start giving commands')
+  })
+})
+
+describe('muteExistingStem', () => {
+  const saved = (id: string, name: string, role: string, label?: string): SavedStem => ({
+    id, name, role, ...(label ? { label } : {}), duration: 4, audio_url: `/a/${id}`, revision: 0, volume: 1, muted: false, solo: false, automation: [], start_offset: 0, mute_ranges: [],
+  })
+  const split = [saved('v', 'Vocals', 'target', 'vocals'), saved('d', 'Drums', 'target', 'drums'), saved('b', 'Bass', 'target', 'bass'), saved('o', 'Other', 'target', 'other')]
+
+  it('turns "remove vocals" on a split song into a mute of the Vocals track', () => {
+    const edit = muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: true }), split)
+    expect(edit?.kind).toBe('edit')
+    expect(edit?.actions).toEqual([{ type: 'set_mute', stemId: 'v', muted: true }])
+    // A karaoke plan names the stem rather than describing it.
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'karaoke', remove: true, separation_mode: 'music_stems', stems: ['vocals'] }), split)?.actions)
+      .toEqual([{ type: 'set_mute', stemId: 'v', muted: true }])
+  })
+
+  it('mutes the descriptive "other" track for "remove the piano" and "remove other"', () => {
+    const named = [...split.slice(0, 3), { ...saved('p', 'Piano', 'target', 'other'), tags: [{ label: 'Piano', score: 0.7 }, { label: 'Strings', score: 0.3 }] }]
+    for (const description of ['piano', 'other', 'strings']) {
+      expect(muteExistingStem(plan({ kind: 'separate', description, remove: true }), named)?.actions, description).toEqual([{ type: 'set_mute', stemId: 'p', muted: true }])
+    }
+  })
+
+  it('leaves isolating, timed removals and unknown sounds to a separation', () => {
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: false }), split)).toBeNull()
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: true, edit_scope: { action: 'mute', interval: { start: 1, end: 2 } } }), split)).toBeNull()
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: true, processing_time: 4 }), split)).toBeNull()
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'siren', remove: true }), split)).toBeNull()
+  })
+
+  it('never mutes a lone target that only stands in for another sound', () => {
+    const prompted = [saved('t', 'dog', 'target', 'dog'), saved('r', 'residual', 'residual')]
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'siren', remove: true }), prompted)).toBeNull()
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'dog', remove: true }), prompted)?.actions).toEqual([{ type: 'set_mute', stemId: 't', muted: true }])
   })
 })

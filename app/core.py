@@ -30,7 +30,7 @@ def connect():
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
-                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'))
+                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'))
 JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():
@@ -83,12 +83,39 @@ def probe(path):
         info.update(width=video['width'], height=video['height'], frame_rate=fps)
     return info
 
+def discard(pid, paths):
+    """Delete the audio files of replaced stems once nothing can bring them back. Call only after
+    the replacing transaction committed, so a failed job leaves the old files intact. Kept: files
+    any stem row uses, the rows a still-possible undo would restore, and the rows and source a
+    still-applicable preview would use. An undo or preview that the current revisions rule out
+    can never run, so its files go too (this also clears ones deferred by an earlier call)."""
+    try:
+        directory=(project_dir(pid)/'stems').resolve()
+        with connect() as db:
+            current={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
+            keep={r['path'] for r in db.execute('SELECT path FROM stems WHERE project_id=?',(pid,))}
+            doomed=set(paths)
+            for h in db.execute('SELECT h.previous_rows,h.applied_revisions FROM candidate_history h JOIN jobs j ON j.id=h.candidate_id WHERE j.project_id=? AND h.undone=0',(pid,)):
+                rows=[r['path'] for r in json.loads(h['previous_rows'])]
+                (keep if json.loads(h['applied_revisions'])==current else doomed).update(rows)
+            for j in db.execute("SELECT output FROM jobs WHERE project_id=? AND kind='candidate' AND status='completed' AND id NOT IN (SELECT candidate_id FROM candidate_history)",(pid,)):
+                data=json.loads(j['output'] or 'null') or {}; snapshot=data.get('snapshot') or {}
+                if {r['id']:r['revision'] for r in snapshot.get('rows',[])}==current:
+                    keep.update([r['path'] for r in snapshot.get('rows',[])+data.get('proposed',[])]+[snapshot.get('source')])
+        for path in doomed-keep:
+            path=Path(path).resolve()
+            if path.parent==directory: path.unlink(missing_ok=True)
+    except (OSError,ValueError,TypeError,KeyError,sqlite3.Error) as exc:
+        # The job already succeeded; a leftover file is only wasted space.
+        event('stem_cleanup_failed',project_id=pid,error=str(exc))
+
 def stem(row):
     d = dict(row)
     d['muted'], d['solo'] = bool(d['muted']), bool(d['solo'])
     d['automation'], d['mute_ranges'] = json.loads(d['automation']), json.loads(d['mute_ranges'])
     d['spans'] = json.loads(d['spans']) if d.get('spans') else None
     d['refinement'] = json.loads(d['refinement']) if d.get('refinement') else None
+    d['tags'] = json.loads(d['tags']) if d.get('tags') else None
     d.pop('path')
     d['audio_url'] = f"/api/projects/{d['project_id']}/stems/{d['id']}/audio"
     return d

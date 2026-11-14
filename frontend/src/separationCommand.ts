@@ -21,3 +21,24 @@ export function separationCommand(text: string): {description: string; remove: b
   if (!description || /\b(?:from|between|until|after|before|when|while|then|and|at)\b|\d/i.test(description)) return null
   return {description:description.toLowerCase(), remove}
 }
+
+/** A request for a music split, read without the AI planner. */
+export interface MusicCommand { stems: string[] | null; remove: boolean; description: string }
+
+/**
+ * Song-level requests: "split this song into tracks" (every instrument) and
+ * "make a karaoke version" or "make it instrumental" (vocals, muted, over the
+ * rest). Single sounds such as "isolate the drums" stay with separationCommand:
+ * the audio service routes them to the music splitter when the clip is a song.
+ */
+export function musicCommand(text: string): MusicCommand | null {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/, '')
+  if (/\bkaraoke\b/.test(t) || /\b(?:make|turn)\b.*\binstrumental\b/.test(t) || /^instrumental(?: version)?$/.test(t)) {
+    return { stems: ['vocals'], remove: true, description: 'vocals' }
+  }
+  const into = '(?: into (?:separate |individual )?(?:tracks|stems|instruments|parts|layers))'
+  if (new RegExp(`^(?:split|separate|break)(?: up)?(?: (?:this|the|my) (?:song|track|music|audio)${into}?| it${into}|${into}| (?:the )?(?:instruments|stems))$`).test(t) || /^(?:get|give me) (?:the )?stems$/.test(t)) {
+    return { stems: null, remove: false, description: 'all instruments' }
+  }
+  return null
+}

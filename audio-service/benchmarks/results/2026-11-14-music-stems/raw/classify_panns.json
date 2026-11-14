@@ -1,0 +1,82 @@
+{
+ "tagger": "panns",
+ "load_s": 8.058993049082346,
+ "windows": 4,
+ "peak_alloc_mb": 625,
+ "peak_reserved_mb": 1082,
+ "rules": {
+  "music": {
+   "threshold": 0.72,
+   "best_plateau": [
+    0.59,
+    0.84
+   ],
+   "accuracy": 1.0,
+   "confusion": {
+    "music": {
+     "pred_music": 51,
+     "pred_not_music": 0
+    },
+    "speech": {
+     "pred_music": 0,
+     "pred_not_music": 87
+    },
+    "sfx": {
+     "pred_music": 0,
+     "pred_not_music": 100
+    }
+   },
+   "errors": [],
+   "speech_over_music_pred_music": {
+    "som-10": 10,
+    "som-20": 10
+   },
+   "accuracy_at_0.5": 0.9957983193277311
+  },
+  "music_minus_speech": {
+   "threshold": 0.6,
+   "best_plateau": [
+    0.31,
+    0.77
+   ],
+   "accuracy": 0.9915966386554622,
+   "confusion": {
+    "music": {
+     "pred_music": 49,
+     "pred_not_music": 2
+    },
+    "speech": {
+     "pred_music": 0,
+     "pred_not_music": 87
+    },
+    "sfx": {
+     "pred_music": 0,
+     "pred_not_music": 100
+    }
+   },
+   "errors": [
+    {
+     "file": "musdb/dec/29/mix.wav",
+     "label": "music",
+     "score": 0.449,
+     "top": "Music"
+    },
+    {
+     "file": "musdb/dec/48/mix.wav",
+     "label": "music",
+     "score": 0.238,
+     "top": "Music"
+    }
+   ],
+   "speech_over_music_pred_music": {
+    "som-10": 0,
+    "som-20": 0
+   },
+   "accuracy_at_0.5": null
+  }
+ },
+ "latency_warm_mean_s": 0.11589806701612916,
+ "latency_warm_p95_s": 0.15394248540978847,
+ "latency_first_s": 0.5341592419426888,
+ "latency_fullsong_s": 2.2852411470375955
+}

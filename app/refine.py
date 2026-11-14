@@ -9,7 +9,7 @@ import json
 import shutil
 import numpy as np
 from .candidates import completed_job, safe_path
-from .core import connect, event, probe, project_dir, stem, uid
+from .core import connect, discard, probe, project_dir, stem, uid
 from .guidance import options
 from .media import energy_db, read_wav, separate, write_wav
 from .visual import prepare_payload
@@ -134,6 +134,4 @@ def refine(project, payload, job_id):
         shutil.rmtree(scratch, ignore_errors=True)
         raise
     shutil.rmtree(scratch, ignore_errors=True)
-    for path in (target['path'], residual['path']):
-        try: safe_path(pid, path).unlink()
-        except (OSError, ValueError) as exc: event('refine_cleanup_failed', job_id=job_id, error=str(exc))
+    discard(pid, [target['path'], residual['path']])

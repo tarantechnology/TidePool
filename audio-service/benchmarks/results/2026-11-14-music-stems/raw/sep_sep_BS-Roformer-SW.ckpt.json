@@ -1,0 +1,22 @@
+{
+ "tag": "sep_BS-Roformer-SW.ckpt",
+ "model": "sep:BS-Roformer-SW.ckpt",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 9.146459833020344,
+ "first_clip_s": 4.043137614033185,
+ "mean_clip_s_excl_first": 1.9071477959502716,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.2803212046778223,
+ "peak_alloc_mb": 1338,
+ "peak_reserved_mb": 1648,
+ "stems_native": [
+  "bass",
+  "drums",
+  "guitar",
+  "other",
+  "piano",
+  "vocals"
+ ]
+}

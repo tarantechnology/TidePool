@@ -1,0 +1,23 @@
+{
+ "tag": "chain_sep_model_bs_roformer_ep_317_sdr_12.9755.ckpt+demucs_htdemucs_6s",
+ "model": "chain:sep:model_bs_roformer_ep_317_sdr_12.9755.ckpt+demucs:htdemucs_6s",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 12.182675292016938,
+ "first_clip_s": 6.0401330350432545,
+ "mean_clip_s_excl_first": 3.865677607117449,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.5681947702345246,
+ "peak_alloc_mb": 1261,
+ "peak_reserved_mb": 1840,
+ "stems_native": [
+  "bass",
+  "drums",
+  "guitar",
+  "other",
+  "other_vocal_leak",
+  "piano",
+  "vocals"
+ ]
+}

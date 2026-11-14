@@ -133,6 +133,25 @@ candidates and the SAM judge are unavailable. Capabilities report these limits; 
 disables unsupported controls. Inference is still serialized and residuals are derived from
 the original mixture. This backend is opt-in and does not change the SAM default.
 
+### Music stems (song → one track per instrument)
+
+The audio service can split a song into instrument stems with a dedicated model (Demucs)
+when `AUDIO_STEM_SPLITTER` is set (off by default). Send `options.mode: "music_stems"` (or
+leave `auto` and send no prompts, or stem prompts such as `"vocals"`) and optionally
+`options.stems` (`vocals`, `drums`, `bass`, `guitar`, `piano`, `other`, `instrumental`) and
+`hints.source_kind` (`"audio"` | `"video"`). Stems come back as `role: "target"` with
+`label` = the canonical stem and `name` = your wording or `Vocals`/`Drums`/…; a full split
+has no residual, a subset has one. Every response carries `routing` (`mode`, `engine`,
+`model_id`, `reason`, `scores`, `stems`), and `POST /v1/route` (same multipart body) returns
+only that decision, for a "this sounds like a song: split into tracks?" suggestion.
+`music_stems` without a splitter is `400 UNSUPPORTED_OPERATION`; an unknown stem name is
+`400 INVALID_REQUEST` with `details.valid_stems`. See `docs/contracts/audio_contracts.md`.
+The editor's planner never combines a song split with a timestamp (`processing_time`): a
+split always covers the whole song, so such a request comes back as a clarification.
+A full split leaves no residual, so the creative director skips its localized sound
+separations on that project (it still applies the whole-mix treatment) and a new prompted
+candidate needs a fresh project or a subset split.
+
 ## Cinematic mix preview
 
 `POST /api/projects/{id}/cinematic-preview` accepts a bearer token and an optional JSON

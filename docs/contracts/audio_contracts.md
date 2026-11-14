@@ -182,6 +182,10 @@ Full request:
 | `options.passes` | int 1–`AUDIO_MAX_PASSES` (3, at most 5) | `1` | Multi-pass separation for when the model only attenuates the sound. Pass 1 separates the mixture → t₁; pass k ≥ 2 runs the **same** prompt (text, anchors, visual prompt) on that prompt's residual `mixture − (t₁+…+tₖ₋₁)` → tₖ; the stem is `t₁+…+tₖ`. Several prompts each run their own chain from the mixture; the residual stem is still `mixture − all targets` (`residual: "model"` uses the last pass's model residual). Chunking, `stereo_mode`, anchors and visual intervals apply unchanged to every pass. **Early stop:** if pass k extracts < −30 dB of pass 1's energy it is discarded and the chain stops with the warning `"pass {k} extracted negligible energy; stopped after {k-1} pass(es)"`; a silent pass 1 (`"pass 1 extracted negligible energy; stopped after 1 pass(es)"`) or a silent residual also stops it. Must be a JSON integer; out of range → `INVALID_REQUEST`. Cost: up to n× per prompt; `elapsed_seconds` covers all passes. |
 | `options.seed` | int ≥ 0 | `null` | Forwarded to the backend for reproducibility. |
 | `options.return_mode` | `base64` \| `file` | `base64` | `base64` inlines the WAV in `stems[].audio_base64` (Person 4's contract today). `file` writes WAVs under `AUDIO_OUTPUT_ROOT` and returns `stems[].audio_ref` instead — proposed for large payloads. |
+| `options.mode` | `auto` \| `prompted` \| `music_stems` | `AUDIO_ROUTING_DEFAULT` (`auto`) | Which separator runs; see [Model routing](#model-routing-music-stems). `prompted` is everything above. `music_stems` splits a song into instrument stems with a dedicated model and needs `AUDIO_STEM_SPLITTER` (else `UNSUPPORTED_OPERATION`). In `auto`, non-music prompts route exactly as before. |
+| `options.stems` | array of string (1–8) \| `null` | `null` | `music_stems` only: which stems to return — `vocals`, `drums`, `bass`, `guitar`/`piano` (6-stem model only), `other`, `instrumental` (every non-vocal stem summed) or an alias (`lead vocal`, `beat`, `karaoke`, …; the list is under `GET /capabilities` → `music_stems.aliases`). `null` → the prompts are the stem request; no prompts → every stem. Unknown names → `INVALID_REQUEST` with `details.valid_stems`; overlapping names (`instrumental` + `drums`) → `INVALID_REQUEST`. Ignored with a warning when the request routes to `prompted`. |
+| `options.stem_model` | string \| `null` | `AUDIO_STEM_MODEL` | `music_stems` only. A different model than the loaded one → `UNSUPPORTED_OPERATION`. |
+| `hints.source_kind` | `audio` \| `video` \| `null` | `null` | What the upload was. Tie-breaker only: in `auto` without a content classifier, stem prompts go to the splitter only for `"audio"`. Top-level (not under `options`) because it describes the media, not the inference. |
 | `asset_id` | string | `null` | Echoed as `source.asset_id` / `stems[].source_asset_id`. Superseded by `source.asset_id`; both are accepted. |
 | `request_id` | string ≤ 128 | generated | Echoed in the response; the correlation id for logs across services. Person 4's `job_id` is the natural value. |
 
@@ -191,6 +195,9 @@ Full request:
   a string). **Person 4's existing contract**, unchanged.
 - `POST /v1/separate` — JSON body = the same object plus `audio_ref` (Contract A). Proposed;
   avoids pushing hundreds of MB through the request body when both services share a volume.
+- `POST /v1/route` — multipart, same as `/separate`, separates nothing and returns
+  `{"routing": {...}, "source": {...}, "warnings": [...], "contract_version"}`. The same
+  validation errors as `/separate` apply (an unknown stem in `music_stems` is still 400).
 
 **Compatibility.** `{"prompts": [...], "visual_prompt": {...}}` — the only two keys Person
 4's `Process` model forwards — is a valid Contract B request, and the only one exercised in
@@ -202,7 +209,7 @@ the executed integration test. Everything else is additive.
 
 **Status: proposed, awaiting team agreement.** Implemented by `contracts.SeparationResponse`.
 HTTP 200. `null` fields are omitted from the wire response
-(`response_model_exclude_none=True`), except `stems[].refinement`, which residual stems always carry as `null`. `GET /capabilities` reports `defaults.passes` (1) and `limits.max_passes` (`AUDIO_MAX_PASSES`).
+(`response_model_exclude_none=True`), except `stems[].refinement` (residual stems always carry it as `null`) and `stems[].tags` (always emitted; `null` outside music_stems). `GET /capabilities` reports `defaults.passes` (1) and `limits.max_passes` (`AUDIO_MAX_PASSES`).
 
 ```json
 {
@@ -286,12 +293,14 @@ A committed copy with truncated base64 lives at
 | `stems[].spans` | `[[start, end], ...]` \| null | proposed | Seconds on the source timeline where the target is believed active: predicted spans when `predict_spans`, otherwise the `+` anchors. A **UI hint**, not a trim instruction — audio outside a span is in the file and usually near-silent. |
 | `stems[].source_asset_id` | string \| null | proposed | Echo of the request's asset id. |
 | `stems[].refinement` | object \| null | proposed | Multi-pass bookkeeping (`options.passes`). Target stems: `{"passes_requested": n, "passes_run": k, "per_pass_energy_db": [e₁, …, eₖ], "stopped_early": bool}` where eᵢ = 10·log10(energy of tᵢ / energy of the mixture), floored at −120, one entry per pass **kept** (a pass discarded by early stop is not listed). Present on every target stem, also for `passes: 1`. Residual stems: always `null` — the one field emitted even though it is null. |
+| `stems[].tags` | `[{"label": string, "score": number}]` \| null | proposed | **music_stems only.** Up to 3 instrument tags from the router's AudioSet tagger (PANNs/AST): display names such as `"Synth"`, `"Strings"`, `"Electric guitar"`, `"Female singing"`, `"Drum machine"`; `score` = mean probability over the stem's active 10 s windows, each ≥ `AUDIO_STEM_LABEL_MIN_SCORE`, sorted by score. A stem's trivial class is left out (no `"Drums"` on drums, no `"Guitar"` on guitar), and singing classes are left out of instrument stems (they are vocal bleed). `[]` when the stem is near-silent (< −45 dB vs the mix) or nothing clears the minimum. `null` on prompted results, when labeling is off (`AUDIO_STEM_LABELS=off`), when the classifier cannot tag (`off`/`mock`), or when labeling failed (with a warning). Always emitted, like `refinement`. |
 | `model.passes` | int | proposed | Most passes run for any prompt (≥ 1). |
 | `model.*` | object | proposed | What actually ran: `backend` (`mock`\|`sam`), `model_id`, `device`, `dtype`, the effective `predict_spans` / `reranking_candidates` / `stereo_mode`, whether chunking kicked in, wall-clock `elapsed_seconds`, and `is_mock`. |
 | `model.is_mock` | bool | proposed | **`true` means the stems are band-pass filtered copies of the mixture, not separation.** Any UI that can show mock output must surface this. |
 | `source.*` | object | proposed | What we measured after decoding: `duration`, `sample_rate` (48000), `channels`, `sample_count`, `asset_id`. |
 | `request_id` | string | proposed | Echo or generated. |
 | `warnings` | array of string | proposed | Non-fatal: mock backend in use, visual fields that could not steer the model, chunking disabled, residual fallback. **Never** a reason to fail a job; worth storing next to the job so the user can be told "the siren was isolated from text only — masks were missing". |
+| `routing` | object | proposed | Which separator ran and why: `{"mode": "prompted"|"music_stems", "engine", "model_id", "reason", "scores": {"music", "speech"} | null, "stems": [canonical names] | absent}`. `scores` is always present (`null` when the content classifier did not run or is unavailable). See [Model routing](#model-routing-music-stems). |
 | `contract_version` | string | proposed | `"2025-11-draft-1"`. Bumped on any breaking change here. |
 
 ### The residual, and why it matters to the editor
@@ -311,6 +320,52 @@ stem, and the default all-stems-at-unity mix reproduces the original. Verified b
 
 `options.residual: "model"` returns the model's own residual instead (single prompt only) —
 then the stems do **not** sum to the mixture. `"none"` returns targets only.
+
+### Model routing (music stems)
+
+Every request is routed before anything runs (`audio-service/sam_audio_service/routing.py`;
+plan: `docs/plans/music-stems.md`). The first matching row wins:
+
+| Request | Route |
+| --- | --- |
+| `options.mode: "prompted"` | prompted |
+| `options.mode: "music_stems"` | music_stems; `UNSUPPORTED_OPERATION` without a splitter, `INVALID_REQUEST` for non-stem names |
+| `auto`, no splitter configured | prompted (so "no prompts" is still `INVALID_REQUEST`) |
+| `auto`, no prompts and no `options.stems` | music_stems, every stem (a warning when the classifier says it is not music) |
+| `auto`, a prompt has anchors or its own visual prompt | prompted |
+| `auto`, no prompt / some prompts not a stem name | prompted (`reason` says "mixed prompts" for the latter) |
+| `auto`, requested stems overlap | prompted |
+| `auto`, all stem names, classifier music ≥ `AUDIO_ROUTER_MUSIC_THRESHOLD` | music_stems |
+| `auto`, all stem names, classifier below threshold | prompted |
+| `auto`, all stem names, classifier unavailable | music_stems if `hints.source_kind: "audio"`, else prompted |
+
+A **music_stems** response differs from a prompted one only in content: target stems have
+`role: "target"`, `label` = the canonical stem (`vocals`), `name` = the caller's wording
+(prompt form) or the title-cased canonical name (`Vocals`, for a full split or
+`options.stems`), `prompt: null` and no `spans`/`refinement` values. Every music stem (the
+residual and `instrumental` included) carries `tags`.
+
+**Descriptive name for `other`.** When the service named the canonical `other` stem itself
+(full split, or `options.stems`, i.e. the name would be `"Other"`), `name` becomes what it
+sounds like: the top tag, or `"A & B"` when the second tag scores ≥ 60% of the first
+(`"Guitar"`, `"Organ & Guitar"`, `"Synth & Strings"`). It stays `"Other"` when the stem is
+near-silent, nothing clears the minimum score, or labeling is off/unavailable/failed. `label`
+stays `"other"`, so code should key on `label`, not `name`. A name that came from the caller's
+own prompt wording (`"other instruments"`) is never replaced, and the residual keeps
+`options.residual_name`. Other stems keep `Vocals`/`Drums`/`Bass`/`Guitar`/`Piano`. The splitter's stems
+are made to sum exactly to the mixture (the error is spread over the stems in proportion to
+their energy), so:
+
+- a **full split returns no residual** — the stems already sum to the source;
+- a subset returns exactly one `residual` (the sum of the other stems; `options.residual:
+  "none"` drops it; `residual_name` names it).
+
+`model.backend` reports what actually ran (`mock`, `demucs`, `chain`, `roformer` for music stems;
+`mock`, `sam`, `audiosep` for prompted), with `stereo_mode: "native"`. `output_format`,
+`return_mode` and `AUDIO_MAX_DURATION_SECONDS` apply unchanged. `GET /capabilities` adds
+`music_stems: {available, backend, is_mock, model_id, license, stems, aliases, max_duration_seconds}`
+and `routing: {default_mode, modes, classifier, music_threshold}`; `GET /health` adds
+`splitter` (null when off) and `classifier` status.
 
 **Compatibility.** `{"stems": [{"name", "audio_base64"}]}` is a subset of the above, so
 Person 4's `app/media.py` works against this response unmodified — that is the executed
@@ -471,14 +526,15 @@ served at `GET /capabilities` under `error_codes`.
 
 | Code | HTTP | Retryable | Raised when |
 | --- | --- | --- | --- |
-| `INVALID_REQUEST` | 400 | no | Bad/absent prompts, unparseable `metadata` JSON, failed validation, a reference outside `AUDIO_MEDIA_ROOT`, a visual interval under 100 ms. |
+| `INVALID_REQUEST` | 400 | no | Bad/absent prompts, unknown or overlapping music stem names (`details.valid_stems`), unparseable `metadata` JSON, failed validation, a reference outside `AUDIO_MEDIA_ROOT`, a visual interval under 100 ms. |
 | `INVALID_MEDIA` | 422 | no | Audio cannot be decoded, has no audio stream, is empty, exceeds `AUDIO_MAX_INPUT_BYTES`, or decoding timed out. |
-| `UNSUPPORTED_OPERATION` | 400 | no | A different `options.model_id`, `predict_spans` on a backend without a span predictor, audio longer than `AUDIO_MAX_DURATION_SECONDS`. |
+| `UNSUPPORTED_OPERATION` | 400 | no | A different `options.model_id` or `options.stem_model`, `predict_spans` on a backend without a span predictor, audio longer than `AUDIO_MAX_DURATION_SECONDS`, `options.mode: "music_stems"` with no stem splitter configured. |
 | `MISSING_ASSET` | 404 | no | A `file://`/`http(s)` reference resolves to nothing (deleted upload, wrong volume mount, 404 from the host). |
 | `MISSING_MODEL` | 503 | **yes** | Checkpoint not downloaded, Hugging Face access not granted, `sam_audio` not installed, load failed. `/health` reports `degraded` with `model.load_error`. |
 | `INSUFFICIENT_GPU_MEMORY` | 503 | **yes** | CUDA OOM on load or during inference. `details` carries the window length; retry with a shorter input, `chunk_seconds`, or fewer reranking candidates. |
 | `INFERENCE_FAILURE` | 500 | no | The model raised. `message` is `TypeName: text`; the traceback is in our logs only. |
 | `STORAGE_FAILURE` | 500 | **yes** | Could not write a stem (`return_mode: "file"`) or fetch an http(s) reference. |
+| `CANCELLED` | 409 | **yes** | A stem split was cancelled between chunks. Reserved: the synchronous HTTP API has no way to cancel yet. |
 | `SERVICE_BUSY` | 503 | **yes** | Reserved for admission control. Not raised today — one request at a time is serialised by a lock instead. |
 | `INTERNAL_ERROR` | 500 | no | Anything unhandled. `message` carries the exception type only. |
 

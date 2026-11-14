@@ -1,0 +1,26 @@
+{
+ "tag": "stemforge_viperx_vocals_ov4",
+ "model": "sep:model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 8.913004421046935,
+ "first_clip_s": 5.182058686972596,
+ "mean_clip_s_excl_first": 2.7167005536992255,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.399312928750977,
+ "peak_alloc_mb": 1239,
+ "peak_reserved_mb": 1806,
+ "stems_native": [
+  "instrumental",
+  "vocals"
+ ],
+ "config": {
+  "tag": "stemforge_viperx_vocals_ov4",
+  "model": "sep:model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+  "mdxc_overlap": 4
+ },
+ "load_report": [
+  null
+ ]
+}

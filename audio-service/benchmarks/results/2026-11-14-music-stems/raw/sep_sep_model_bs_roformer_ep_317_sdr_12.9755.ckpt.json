@@ -1,0 +1,18 @@
+{
+ "tag": "sep_model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+ "model": "sep:model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 17.811449597938918,
+ "first_clip_s": 5.86036293907091,
+ "mean_clip_s_excl_first": 3.0254539485298553,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.4446948985023902,
+ "peak_alloc_mb": 1239,
+ "peak_reserved_mb": 1806,
+ "stems_native": [
+  "instrumental",
+  "vocals"
+ ]
+}

@@ -1,3 +1,4 @@
+import { Tip } from './Tip'
 import type { CSSProperties } from 'react'
 import { refinementBadge } from '../api/refine'
 import { MAX_GAIN, toDb } from '../edits'
@@ -37,7 +38,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
   } as CSSProperties
 
   return (
-    <div className={`flex min-h-0 flex-col justify-center overflow-hidden border-r border-line px-4 ${compact ? 'gap-0' : 'gap-2.5'}`}>
+    <div className={`relative z-30 flex min-h-0 flex-col justify-center border-r border-line px-4 ${compact ? 'gap-0' : 'gap-2.5'}`}>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium tracking-tight">{stem.label}</div>
@@ -73,20 +74,26 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             )}
           </div>
         </div>
-        <button
-          title="Mute"
-          className={btn(track.muted, 'border-red-200 bg-red-50 text-red-600')}
-          onClick={() => onAction({ type: 'set_mute', stemId: stem.id, muted: !track.muted })}
-        >
-          M
-        </button>
-        <button
-          title="Solo"
-          className={btn(track.solo, 'border-amber-300 bg-amber-50 text-amber-700')}
-          onClick={() => onAction({ type: 'set_solo', stemId: stem.id, solo: !track.solo })}
-        >
-          S
-        </button>
+        <Tip side="bottom" label={track.muted ? 'Unmute' : 'Mute'} detail={track.muted ? 'Bring this layer back into the mix.' : 'Silence this layer. Everything else keeps playing.'}>
+          <button
+            aria-label={track.muted ? `Unmute ${stem.label}` : `Mute ${stem.label}`}
+            aria-pressed={track.muted}
+            className={btn(track.muted, 'border-red-200 bg-red-50 text-red-600')}
+            onClick={() => onAction({ type: 'set_mute', stemId: stem.id, muted: !track.muted })}
+          >
+            M
+          </button>
+        </Tip>
+        <Tip side="bottom" label={track.solo ? 'Unsolo' : 'Solo'} detail={track.solo ? 'Hear the full mix again.' : 'Hear only this layer (and any other soloed ones).'}>
+          <button
+            aria-label={track.solo ? `Unsolo ${stem.label}` : `Solo ${stem.label}`}
+            aria-pressed={track.solo}
+            className={btn(track.solo, 'border-amber-300 bg-amber-50 text-amber-700')}
+            onClick={() => onAction({ type: 'set_solo', stemId: stem.id, solo: !track.solo })}
+          >
+            S
+          </button>
+        </Tip>
       </div>
       <div className={`flex items-center gap-2.5 ${compact ? 'hidden' : ''}`}>
         <div className="relative flex-1">

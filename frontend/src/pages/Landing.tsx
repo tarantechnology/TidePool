@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
+import { FeaturesDialog } from '../components/FeaturesDialog'
 import { HeroPreview } from '../components/HeroPreview'
 import { Logo } from '../components/Logo'
 import { RippleField } from '../components/RippleField'
@@ -20,6 +22,7 @@ function OpenButton({ children, large = false }: { children: ReactNode; large?: 
 }
 
 export default function Landing() {
+  const [showFeatures, setShowFeatures] = useState(false)
   return (
     <div className="relative min-h-screen overflow-x-clip bg-canvas text-fg">
       {/* Nav */}
@@ -28,7 +31,10 @@ export default function Landing() {
           <a href="#/" className="text-fg">
             <Logo />
           </a>
-          <OpenButton>Open editor</OpenButton>
+          <button type="button" onClick={() => setShowFeatures(true)}
+            className="inline-flex h-9 items-center rounded-full border border-line-strong bg-surface/70 px-4 text-sm font-medium text-fg transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent">
+            Features
+          </button>
         </div>
       </nav>
 
@@ -42,7 +48,7 @@ export default function Landing() {
             <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_rgb(43_123_214/0.9)]" />
             Prompt-driven audio editing, early prototype
           </div>
-          <h1 className="mx-auto max-w-3xl text-balance font-display text-5xl leading-[1.02] font-bold tracking-[-0.035em] text-fg sm:text-7xl">
+          <h1 className="mx-auto max-w-3xl text-balance font-display text-5xl leading-[1.02] font-bold tracking-[-0.02em] text-fg sm:text-7xl">
             Edit sound with a sentence.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
@@ -58,6 +64,8 @@ export default function Landing() {
           <HeroPreview />
         </div>
       </header>
+
+      <FeaturesDialog open={showFeatures} onClose={() => setShowFeatures(false)} />
 
       <footer className="border-t border-line">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-6 font-mono text-[11px] text-faint">

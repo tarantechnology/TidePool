@@ -285,3 +285,13 @@ input[type="range"].fader::-moz-range-thumb {
   .tp-drop-fall, .tp-drop-splash { animation: none; opacity: 0; }
   .tp-drop-ring { animation: none; opacity: 0.5; transform: scale(calc(0.35 + var(--i) * 0.3)); }
 }
+
+/* Features dialog: rises in, its rows following one after another. */
+.tp-dialog[open] { animation: tp-dialog-in 260ms cubic-bezier(0.16, 1, 0.3, 1); }
+.tp-dialog[open]::backdrop { animation: tp-fade 260ms ease-out; }
+.tp-dialog[open] .tp-feature { animation: rise-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: calc(80ms + var(--i, 0) * 35ms); }
+@keyframes tp-dialog-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } }
+@keyframes tp-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .tp-dialog[open], .tp-dialog[open]::backdrop, .tp-dialog[open] .tp-feature { animation: none; }
+}

@@ -9,12 +9,11 @@ export default function App() {
   useEffect(() => {
     if (route === 'app') window.scrollTo(0, 0)
   }, [route])
-  return route === 'app' ? (
+  return (
     <>
-      <Editor />
+      {route === 'app' ? <Editor /> : <Landing />}
+      {/* The site's entrance: plays once when you arrive, whichever page you arrive on. */}
       <EntryRipple />
     </>
-  ) : (
-    <Landing />
   )
 }

@@ -17,14 +17,24 @@ const ORIGIN_Z = 4.6
 const SHADES = ['#2a64b0', '#3478d0', '#4a92e6', '#6eaef2', '#9ccbf7', '#d6ecff']
 
 /**
- * Entering the app: a pool of points, a glowing drop at its center, and rings
+ * Arriving on the site: a pool of points, a glowing drop at its center, and rings
  * that roll outward through the points like a sound wave. Then the water opens
- * from the drop onto the editor, which has been rendering underneath the whole
+ * from the drop onto the page, which has been rendering underneath the whole
  * time. Any click or key skips it, and reduced motion skips it entirely.
  */
+const SEEN_KEY = 'tidepool.entranceSeen'
+function alreadySeen(): boolean {
+  try { return sessionStorage.getItem(SEEN_KEY) === '1' } catch { return false }
+}
+function markSeen() {
+  try { sessionStorage.setItem(SEEN_KEY, '1') } catch { /* it will just play again next time */ }
+}
+
 export function EntryRipple() {
   const canvas = useRef<HTMLCanvasElement>(null)
-  const [done, setDone] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  const [done, setDone] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches || alreadySeen())
+  // Once per visit: moving between the home page and the editor does not replay it.
+  useEffect(() => { if (done) markSeen() }, [done])
 
   useEffect(() => {
     if (done) return

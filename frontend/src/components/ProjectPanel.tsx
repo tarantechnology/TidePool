@@ -51,6 +51,7 @@ interface Props {
   /** Select an object from the object list, the same way a click on the video does. */
   onSelectVisual: (selection: VisualSelection) => void
   onSeek: (seconds: number) => void
+  getPlayhead: () => number
   /** The detections the editor is showing, for the object list. */
   visual: VisualMetadata | null
   /** What the panel is busy with, for the timeline's working state; null when idle. */
@@ -67,7 +68,7 @@ export interface ProjectPanelHandle {
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, onBusy}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, getPlayhead, visual, onBusy}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -82,6 +83,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [rangeEnd, setRangeEnd] = useState('')
   const [jobId, setJobId] = useState('')
   const [format, setFormat] = useState<'mp4'|'wav'|'mp3'>('mp4')
+  const [trimStart,setTrimStart] = useState('0')
+  const [trimEnd,setTrimEnd] = useState('')
   const [command, setCommand] = useState('')
   const [retryPrompt,setRetryPrompt]=useState('')
   const [retryStems,setRetryStems]=useState<SavedStem[]>([])
@@ -228,6 +231,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await flush()
     const cfg = {baseUrl, token:credential.trim()}
     const info = await getProject(cfg, id.trim())
+    setTrimStart('0'); setTrimEnd('')
     attachedVideo.current = null; setFile(null)
     setUndoId(info.latest_undoable_candidate_id || ''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
 
@@ -271,6 +275,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { if (readyToRestore) restoreTab() }, [baseUrl, readyToRestore])
   const uploadMedia = (media: File) => run(async () => {
     await flush()
+    setTrimStart('0'); setTrimEnd('')
     const created = await createProject(baseUrl)
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
@@ -542,7 +547,10 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const exportFile = () => run(async () => {
     if (!project) return
     await flush()
-    const id = await startExport(config,project.project_id,format)
+    const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : project.metadata?.duration
+    if (!trimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (project.metadata?.duration || 0) + 1e-6) throw new Error('Choose a valid trim range within the media duration.')
+    const trim = start === 0 && !trimEnd.trim() ? undefined : {start,end}
+    const id = await startExport(config,project.project_id,format,trim)
     await finishExport(id, format)
   })
   const readJson = async (input: File): Promise<unknown> => {
@@ -747,8 +755,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           </div>
         </Step>
 
-        <Step n={4} title="Export" tag={FEATURES.export} status={status('export')} open={open('export') && Boolean(jobId)} onToggle={() => jobId && toggle('export')}>
-          {project && <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>}
+        <Step n={4} title="Trim and export" tag={FEATURES.export} status={status('export')} open={open('export') && Boolean(project?.metadata)} onToggle={() => project?.metadata && toggle('export')}>
+          {project?.metadata && <div className="space-y-2"><p className="text-muted">Choose the portion to keep. The original stays intact.</p><div className="flex gap-2"><label className="flex-1">Start (seconds)<input className={field} aria-label="Trim start" type="number" min="0" max={durationSeconds} step="0.01" value={trimStart} onChange={e=>setTrimStart(e.target.value)}/></label><label className="flex-1">End (seconds)<input className={field} aria-label="Trim end" type="number" min="0" max={durationSeconds} step="0.01" placeholder={durationSeconds?.toFixed(2)} value={trimEnd} onChange={e=>setTrimEnd(e.target.value)}/></label></div><div className="flex flex-wrap gap-1"><button type="button" className={secondary} onClick={()=>setTrimStart(getPlayhead().toFixed(2))}>Set start at playhead</button><button type="button" className={secondary} onClick={()=>setTrimEnd(getPlayhead().toFixed(2))}>Set end at playhead</button><button type="button" className={secondary} onClick={()=>{setTrimStart('0');setTrimEnd('')}}>Reset trim</button></div><div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy} onClick={exportFile}>Export</button></div></div>}
         </Step>
       </ol>
     </div>

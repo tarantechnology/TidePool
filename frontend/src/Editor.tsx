@@ -457,7 +457,7 @@ export default function Editor() {
             onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
           <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={setWorking} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onBusy={setWorking} />
           </div>
         </main>
       )}

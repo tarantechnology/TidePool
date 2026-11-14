@@ -203,7 +203,7 @@ def energy_db(samples):
     return round(max(-120.0, 10 * math.log10(power)) if power > 0 else -120.0, 3)
 
 
-def export(stems, original, destination, fmt, include_video):
+def export(stems, original, destination, fmt, include_video, trim=None):
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
     # A silent source maintains duration for an all-muted mix.
     duration = probe(original)['duration']
@@ -228,9 +228,16 @@ def export(stems, original, destination, fmt, include_video):
         labels.append(f'[a{i}]')
     silent=base+len(active)
     labels.append(f'[{silent}:a]')
-    filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0[mix]')
+    mixed=''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0'
+    if trim:
+        start,end=float(trim['start']),float(trim['end'])
+        if not 0 <= start < end <= duration + 1e-6: raise ValueError('Invalid trim interval')
+        mixed+=f',atrim=start={start}:end={end},asetpts=PTS-STARTPTS'
+        if include_video: filters.append(f'[0:v]setpts=PTS-STARTPTS,trim=start={start}:end={end},setpts=PTS-STARTPTS[video]')
+    filters.append(mixed+'[mix]')
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
-    if include_video: args += ['-map','0:v:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',str(duration),'-movflags','+faststart']
+    if include_video:
+        args += ['-map','[video]' if trim else '0:v:0','-c:v','libx264' if trim else 'copy','-c:a','aac','-b:a','192k','-t',str(end-start if trim else duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
     else: args += ['-c:a','pcm_f32le']
     run(*args,str(destination))

@@ -369,8 +369,8 @@ export async function getRoute(config: BackendConfig, projectId: string, signal?
   const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/route`, {}, signal, 120_000)
   return toRouting(await res.json())
 }
-export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4'})})
+export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3', trim?: {start:number;end:number}): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(trim ? {trim} : {})})})
   return ((await res.json()) as {export_id:string}).export_id
 }
 export async function getExport(config: BackendConfig, exportId: string, signal?: AbortSignal): Promise<ExportInfo> {

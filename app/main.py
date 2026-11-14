@@ -152,6 +152,7 @@ class RefineRequest(BaseModel):
 class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
     include_video: bool=True
+    trim: Interval | None = None
     @model_validator(mode='after')
     def valid_format(self):
         if self.include_video != (self.format=='mp4'): raise ValueError('Use mp4 with video, or wav/mp3 without video')
@@ -767,8 +768,9 @@ def audio(pid: str,sid: str,authorization: str | None=Header(None)):
 @app.post('/api/projects/{pid}/export',status_code=202)
 def create_export(pid: str,body: Export,authorization: str | None=Header(None)):
     p=auth(pid,authorization)
-    if not p['original'] or not list_stems(pid,authorization): raise HTTPException(409,'Processed stems required')
+    if not p['original'] or not p['audio']: raise HTTPException(409,'Upload media first')
     if body.include_video and not json.loads(p['metadata'])['has_video']: raise HTTPException(422,'Original has no video')
+    if body.trim and body.trim.end > json.loads(p['metadata'])['duration'] + 1e-6: raise HTTPException(422,'Trim extends beyond the media duration')
     return {'export_id':start(pid,'export',body.model_dump()),'status':'queued'}
 
 @app.get('/api/exports/{eid}')

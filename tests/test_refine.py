@@ -315,7 +315,7 @@ def test_quality_profile_works_without_a_text_ranker(client, tmp_path, monkeypat
     caps=client.get(f'/api/projects/{pid}/capabilities',headers=h).json()
     assert caps['quality'] is True and caps['quality_mode']=='ranker'
     quality=options('quality')
-    assert quality['reranking_candidates']==1 and quality['candidates']==3 and quality['candidate_select']=='auto' and quality['refine']=='mask' and quality['refine_threshold']==0.5
+    assert quality['reranking_candidates']==1 and quality['candidates']==3 and quality['candidate_select']=='auto' and quality['refine']=='mask' and quality['refine_threshold']==0.5 and quality['refine_residual_threshold']==0.5
     monkeypatch.setenv('QUALITY_RERANKING','true'); assert options('quality')['reranking_candidates']==2
     preview=options('preview')
     assert preview['reranking_candidates']==1 and 'candidates' not in preview and preview['refine']=='mask' and preview['refine_threshold']==0.0

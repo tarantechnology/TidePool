@@ -80,22 +80,24 @@ def profile_extras(profile):
     audio-service/docs/quality_tuning.md). ``quality`` asks the service for 3 noise draws per
     chunk window (consensus/majority pick, average when the draws disagree, no re-ranker
     needed; 2 draws cannot out-vote a wrong first draw) and rebuilds the
-    stem through a time-frequency mask with a leakage threshold (cleaner, slightly less
-    accurate); ``preview`` applies the plain mask (accurate, no threshold). Measured
-    2026-11-13 on sam-audio-small: the mask alone is +3.3 dB SI-SDRi / -3.6 dB leakage; the
-    threshold trades -2.3 dB SI-SDRi for a further -1.9 dB leakage. Override with env vars."""
+    stem through a time-frequency mask with thresholds on both sides (background bins the
+    model only half-attenuated are zeroed; bins where the target dominates are moved fully out
+    of the residual); ``preview`` applies the plain mask. Measured 2026-11-13 (sam-audio-large,
+    A40, real speech, mean of 4 fixtures): mask alone +10 dB SI-SDRi vs raw; 3 draws + both
+    thresholds +17 dB SI-SDRi, 5.9 dB less background in the stem and 6.4 dB less of the removed
+    sound in the residual, at about 2.6x the GPU time. Override with env vars."""
     if profile == 'quality':
         extras = {'candidates': _env_number('QUALITY_CANDIDATES', 3, int),
                   'candidate_select': os.getenv('QUALITY_CANDIDATE_SELECT', 'auto'),
                   'refine': os.getenv('QUALITY_REFINE', 'mask')}
-        p, threshold, gate = (_env_number('QUALITY_REFINE_P', 2.0), _env_number('QUALITY_REFINE_THRESHOLD', 0.5),
-                              _env_number('QUALITY_REFINE_GATE_DB', 0.0))
+        p, threshold, residual = (_env_number('QUALITY_REFINE_P', 2.0), _env_number('QUALITY_REFINE_THRESHOLD', 0.5),
+                                  _env_number('QUALITY_REFINE_RESIDUAL_THRESHOLD', 0.5))
     else:
         extras = {'refine': os.getenv('PREVIEW_REFINE', 'mask')}
-        p, threshold, gate = (_env_number('PREVIEW_REFINE_P', 2.0), _env_number('PREVIEW_REFINE_THRESHOLD', 0.0),
-                              _env_number('PREVIEW_REFINE_GATE_DB', 0.0))
+        p, threshold, residual = (_env_number('PREVIEW_REFINE_P', 2.0), _env_number('PREVIEW_REFINE_THRESHOLD', 0.0),
+                                  _env_number('PREVIEW_REFINE_RESIDUAL_THRESHOLD', 0.0))
     if extras['refine'] == 'mask':
-        extras.update({'refine_p': p, 'refine_threshold': threshold, 'refine_gate_db': gate})
+        extras.update({'refine_p': p, 'refine_threshold': threshold, 'refine_residual_threshold': residual})
     else:
         extras.pop('refine', None)
     return extras

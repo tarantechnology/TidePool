@@ -65,6 +65,14 @@ running the model N times or caching outputs. So it gets its own small interface
    scores. If it is unavailable (mock/CI, or not installed), the decision uses the prompt
    rules alone and records `scores: null`.
 4. `hints.source_kind` (`audio` | `video`) from the app is a tie-breaker only.
+5. **Intent from natural language (OpenAI planner, app side).** `app/agent.py` already turns
+   editor instructions into bounded operations with OpenAI Structured Outputs (Responses
+   API, strict JSON schema). That schema gains `separation_mode` (`auto|prompted|music_stems`)
+   and `stems`, so "split this song into tracks" or "make a karaoke version" becomes an
+   explicit mode. The app forwards it as `options.mode`. The LLM decides *intent*; it cannot
+   hear the audio, so the *content* signal stays with the GPU classifier. The service router
+   is the authority and works with no OpenAI key (CI, offline). The planner is a better front
+   end for it, not a dependency.
 
 Every response carries `routing` so decisions can be explained and debugged. There is also
 a dry-run endpoint, `POST /v1/route` (multipart, same as `/separate`), which returns only the
@@ -102,6 +110,9 @@ Config: `AUDIO_STEM_SPLITTER` (`off|mock|demucs|chain`), `AUDIO_STEM_MODEL`,
   adapter, in which case the service decides).
 - `source_kind` hint from the project's upload (audio-only vs video).
 - The `fake` adapter emits named instrument stems for `music_stems` (copies, clearly marked as mock).
+- Planner (`app/agent.py`): add `separation_mode` + `stems` to the structured-output schema
+  and validate them; the rule-based frontend parser gets the same intents ("split",
+  "stems", "karaoke", "instrumental") so it works without a key.
 - Persist `routing` in the job output; `GET /api/projects/{pid}/route` proxies `/v1/route`.
 - Projects without a video stream already work (audio-only path). Verify, and fix if not.
 

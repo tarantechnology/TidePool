@@ -268,7 +268,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director') return {message:plan.message,ok:true}
+      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}

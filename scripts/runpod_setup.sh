@@ -50,7 +50,7 @@ case "$cmd" in
     if [ -d $REPO/.git ]; then
       git -C $REPO fetch -q origin "$BRANCH" 2>/dev/null && git -C $REPO checkout -q "$BRANCH" 2>/dev/null && git -C $REPO merge -q --ff-only FETCH_HEAD 2>/dev/null || git -C $REPO checkout -q "$BRANCH"
     else
-      git clone -q https://github.com/AkhilNam/SoundCanvas.git $REPO && git -C $REPO checkout -q "$BRANCH"
+      git clone -q https://github.com/tarantechnology/TidePool.git $REPO && git -C $REPO checkout -q "$BRANCH"
     fi
     echo "repo at $(git -C $REPO rev-parse --short HEAD) ($(git -C $REPO branch --show-current))"
     [ -x $PY ] || uv venv --python 3.12 $VENV

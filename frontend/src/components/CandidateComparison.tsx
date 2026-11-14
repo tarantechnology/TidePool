@@ -1,15 +1,16 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const LABELS = { original: 'Original', edited: 'Edited mix', target: 'Just the sound' } as const
 
 /** One transport, one decoded timeline: switch sources without loudness normalization. */
-export function CandidateComparison({original,edited,target,showTarget=true}:{original:string;edited:string;target:string;showTarget?:boolean}) {
+export function CandidateComparison({original,edited,target,showTarget=true,seekTo}:{original:string;edited:string;target:string;showTarget?:boolean;seekTo?:{time:number;id:number}|null}) {
   const originalRef=useRef<HTMLAudioElement>(null), editedRef=useRef<HTMLAudioElement>(null), targetRef=useRef<HTMLAudioElement>(null)
   const [mode,setMode]=useState<'original'|'edited'|'target'>('edited')
   const [playing,setPlaying]=useState(false)
   const [time,setTime]=useState(0)
   const [duration,setDuration]=useState(0)
   const refs={original:originalRef,edited:editedRef,target:targetRef}
+  useEffect(()=>{if(!seekTo)return;[originalRef,editedRef,targetRef].forEach(ref=>{if(ref.current)ref.current.currentTime=seekTo.time});setTime(seekTo.time)},[seekTo])
   const switchTo=(next:typeof mode)=>{
     const old=refs[mode].current, audio=refs[next].current
     const t=old?.currentTime || 0;old?.pause()

@@ -72,6 +72,7 @@ def test_stale_preview_rejected_and_existing_edits_preserved(client,tmp_path):
     current=client.get(f'/api/projects/{pid}/stems',headers=h).json()[0]
     assert client.patch(f'/api/projects/{pid}/stems/{current["id"]}',headers=h,json={'expected_revision':current['revision'],'volume':.25}).status_code==200
     assert client.post(f'/api/candidates/{cid2}/apply',headers=h).status_code==409
+    assert client.get(f'/api/projects/{pid}',headers=h).json()['latest_undoable_candidate_id'] is None
 
 
 def test_silence_fails_without_changing_project(client,tmp_path):
@@ -179,3 +180,4 @@ def test_manual_effects_on_unseparated_audio_and_stale_preview(client,tmp_path):
     assert wait(client,cid2,h)['status']=='completed'
     assert client.patch(f'/api/projects/{pid}/stems/{row["id"]}',headers=h,json={'expected_revision':row['revision'],'volume':.5}).status_code==200
     assert client.post(f'/api/candidates/{cid2}/apply',headers=h).status_code==409
+    assert client.get(f'/api/projects/{pid}',headers=h).json()['latest_undoable_candidate_id'] is None

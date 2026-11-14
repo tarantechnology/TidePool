@@ -17,6 +17,8 @@ LABELS = {
     'Boing': 'boing', 'Fart': 'fart', 'Splash, splatter': 'splash',
     'Whoosh, swoosh, swish': 'whoosh', 'Bang': 'bang', 'Sound effect': 'sound effect',
     'Giggle': 'laughter', 'Chatter': 'person speaking',
+    'Thump, thud': 'impact', 'Slap, smack': 'impact', 'Whack, thwack': 'impact', 'Smash, crash': 'impact',
+    'Quack': 'duck quacking',
 }
 
 @lru_cache(maxsize=1)
@@ -100,8 +102,36 @@ def discover(path, duration, start=0.0, end=None):
             frames.append((start,min(start+0.96,end),{names[j]:float(row[j]) for j in range(min(len(names),len(row))) if names[j] in LABELS}))
         if offset+length >= end: break
         offset += 29.28
-    return {'sources':group_frames(frames,duration), 'model':'yamnet', 'is_mock':False,
+    sources=group_frames(frames,duration)
+    for source in sources:
+        if source['label']=='impact':
+            try:
+                refined=impact_onsets(path,source['intervals'])
+                if refined: source['intervals']=refined;source['interval_scores']=[source['score']]*len(refined)
+            except (OSError,subprocess.SubprocessError): pass
+    return {'sources':sources, 'model':'yamnet', 'is_mock':False,
             'notice':'Suggestions are approximate classifier windows, not separated layers or calibrated confidence.'}
+
+
+def impact_onsets(path, intervals):
+    """Propose transient locations within classified impact regions; not source identity."""
+    import numpy as np
+    hits=[]
+    for span in intervals:
+        start=float(span['start']);end=float(span['end'])
+        for offset in np.arange(start,end,10.0):
+            length=min(10.0,end-offset)
+            data=subprocess.run(['ffmpeg','-v','error','-ss',str(offset),'-t',str(length),'-i',str(path),'-vn','-ac','1','-ar','8000','-f','f32le','pipe:1'],capture_output=True,check=True)
+            samples=np.frombuffer(data.stdout,dtype='<f4');n=len(samples)//80
+            if not n: continue
+            rms=np.sqrt(np.mean(samples[:n*80].reshape(n,80)**2,axis=1)); floor=max(.003,float(np.median(rms))*1.4)
+            for i in range(1,len(rms)):
+                if rms[i]>floor and rms[i]>rms[i-1]*1.7:
+                    t=float(offset+i*.01)
+                    if hits and t-hits[-1]['start']<.2: continue
+                    hits.append({'start':round(max(0,t-.02),3),'end':round(min(end,t+.35),3)})
+                    if len(hits)>=20:return hits
+    return [h for h in hits if h['end']>h['start']]
 
 
 # Deliberately explicit mappings: do not pretend a generic event detector understands

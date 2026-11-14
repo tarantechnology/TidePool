@@ -184,15 +184,15 @@ provenance, fixed splits/seeds, metrics, regression gate and staged rollback pro
 Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
 invalid visual guidance fails instead of silently changing to text-only inference.
 
-## Optional AudioSep backend
+## AudioSep backend
 
-AudioSep is an alternative **text-only** separator. It uses the AudioSep base checkpoint and
+AudioSep is the default **text-only** separator when `AUDIO_BACKEND` is unset. It uses the AudioSep base checkpoint and
 CLAP text encoder; it is not SAM Audio and has no visual conditioning, time-anchor
 conditioning, independent candidates or judge-ranked retries. The editor reports those
 limitations. A timed mute is still an edit applied after separation. AudioSep may also
 extract speech, music or other sounds; review the target and edited mix before applying.
 
-The runtime is optional and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
+The runtime must be installed separately and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
 prepared [upstream AudioSep checkout](https://github.com/Audio-AGI/AudioSep), its Python
 and PyTorch/torchaudio dependencies, and the official AudioSep and CLAP checkpoints. The
 upstream repository is MIT licensed; check the terms for model weights and dependencies

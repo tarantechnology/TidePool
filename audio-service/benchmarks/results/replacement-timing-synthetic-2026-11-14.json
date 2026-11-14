@@ -1,0 +1,174 @@
+{
+  "seed": 20261114,
+  "caveat": "Synthetic cropped bursts; no human labels, no claim of natural-event detection quality.",
+  "cases": [
+    {
+      "id": "heldout-editor-dog-1",
+      "query": "dog barking",
+      "split": "heldout",
+      "source_hashes": {
+        "target": "f056b96a73584fd59fd337aa03ac0a299c00429280f5d599a77c4f48008cad00",
+        "background": "323ecc2ad5d76aadd916eb7a3d5f0bd38c1714842b2fdf6725d70f4236b34df3"
+      },
+      "reference_times": [
+        1.0849791666666666,
+        3.584979166666667,
+        6.084979166666667
+      ],
+      "energy_baseline": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 21,
+        "median_error_ms": 8.8,
+        "seconds": 0.003
+      },
+      "spectral_onsets": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 32,
+        "median_error_ms": 39.0,
+        "seconds": 0.106
+      },
+      "example_matching": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 0,
+        "median_error_ms": 39.0,
+        "seconds": 0.084
+      },
+      "flexsed": {
+        "expected": 3,
+        "covered": 3,
+        "regions": 3,
+        "max_score": 0.92,
+        "seconds": 2.271
+      }
+    },
+    {
+      "id": "heldout-editor-sneezing-1",
+      "query": "person sneezing",
+      "split": "heldout",
+      "source_hashes": {
+        "target": "3fc35dc6a6b5ab1a164bd2a25ecee66fd553f6e689302f31c16f6a278ac43ea0",
+        "background": "1d19fd6eb32e2d021abd7acb0d7565846f156b1b048fbc020cbe9d9b134e60f5"
+      },
+      "reference_times": [
+        1.100125,
+        3.600125,
+        6.100125
+      ],
+      "energy_baseline": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 15,
+        "median_error_ms": 3.9,
+        "seconds": 0.003
+      },
+      "spectral_onsets": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 28,
+        "median_error_ms": 4.1,
+        "seconds": 0.103
+      },
+      "example_matching": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 2,
+        "median_error_ms": 4.1,
+        "seconds": 0.118
+      },
+      "flexsed": {
+        "expected": 3,
+        "covered": 3,
+        "regions": 3,
+        "max_score": 0.765,
+        "seconds": 0.132
+      }
+    },
+    {
+      "id": "heldout-editor-crackling_fire-1",
+      "query": "fire crackling",
+      "split": "heldout",
+      "source_hashes": {
+        "target": "03ddaefce539d0e77caf40a2a47b6a98fe20c22db22c844350b24b4c185e85d0",
+        "background": "e040410fbeedbd33b7ac70dd974627a073e2762b853a2e9a54428569d8396eac"
+      },
+      "reference_times": [
+        1.2260208333333333,
+        3.726020833333333,
+        6.226020833333333
+      ],
+      "energy_baseline": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 21,
+        "median_error_ms": 0.0,
+        "seconds": 0.003
+      },
+      "spectral_onsets": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 28,
+        "median_error_ms": 0.0,
+        "seconds": 0.087
+      },
+      "example_matching": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 1,
+        "median_error_ms": 0.0,
+        "seconds": 0.089
+      },
+      "flexsed": {
+        "expected": 3,
+        "covered": 0,
+        "regions": 0,
+        "max_score": 0.396,
+        "seconds": 0.149
+      }
+    },
+    {
+      "id": "heldout-editor-clock_tick-1",
+      "query": "a ticking clock",
+      "split": "heldout",
+      "source_hashes": {
+        "target": "a761d16f91bfe6785032c2b172568f9d068b9ead20ce2959d136c7e03254cac6",
+        "background": "a2965ff82dfce5bbf731f0c9f52470b38926385949407e76d7c1b4ceef5cea70"
+      },
+      "reference_times": [
+        1.0344166666666668,
+        3.5344166666666665,
+        6.034416666666667
+      ],
+      "energy_baseline": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 27,
+        "median_error_ms": 0.0,
+        "seconds": 0.006
+      },
+      "spectral_onsets": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 31,
+        "median_error_ms": 18.4,
+        "seconds": 0.11
+      },
+      "example_matching": {
+        "matched": 3,
+        "expected": 3,
+        "false_positives": 7,
+        "median_error_ms": 18.4,
+        "seconds": 0.088
+      },
+      "flexsed": {
+        "expected": 3,
+        "covered": 0,
+        "regions": 0,
+        "max_score": 0.068,
+        "seconds": 0.087
+      }
+    }
+  ]
+}

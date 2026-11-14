@@ -20,3 +20,12 @@ def test_pass_safeguards_default_on_for_the_real_backend_only(monkeypatch):
     monkeypatch.setenv("AUDIO_PASS_MAX_RATIO_DB", "-6"); monkeypatch.setenv("AUDIO_PASS_MIN_SIMILARITY", "0.8")
     env = Settings(backend="mock")
     assert (env.pass_max_ratio_db, env.pass_min_similarity) == (-6.0, 0.8)
+def test_default_backend_is_audiosep(monkeypatch):
+    from sam_audio_service.config import Settings
+
+    monkeypatch.delenv("AUDIO_BACKEND", raising=False)
+    monkeypatch.delenv("AUDIO_MODEL_ID", raising=False)
+    settings = Settings()
+    assert settings.backend == "audiosep"
+    assert settings.model_id == "audiosep-base-4M"
+

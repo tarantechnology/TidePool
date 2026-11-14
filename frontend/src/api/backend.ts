@@ -322,6 +322,7 @@ export interface ProjectInfo {
   metadata?: { has_video: boolean; duration: number; audio_quality?:{findings:string[]} } | null
   latest_job?: { id: string; status: string } | null
   latest_visual_job?: { id: string; status: string } | null
+  latest_undoable_candidate_id?: string | null
   last_completed_job_id?: string | null
   visual_metadata?: unknown
 }
@@ -429,7 +430,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -499,7 +500,14 @@ export async function adjustDirectorPreview(config:BackendConfig,candidateId:str
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/director-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,enabled})})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {stage?:string|null;provenance?:{changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface ReplacementRecovery {asset_id:string;effect_label:string;source_prompt:string;mode:'add';intervals:Array<{start:number;end:number}>}
+export interface ReplacementEvent {id:string;group:number|null;source_peak:number;source_onset:number;offset:number;enabled:boolean}
+export type ReplacementAdjustment = {operation:'alignment';alignment:'peak'|'onset'} | {operation:'toggle';event_id:string;enabled:boolean} | {operation:'move';event_id:string;time:number} | {operation:'add';time:number}
+export async function adjustReplacementPreview(config:BackendConfig,candidateId:string,adjustment:ReplacementAdjustment):Promise<string> {
+  const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/replacement-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adjustment)})
+  return ((await response.json()) as {candidate_id:string}).candidate_id
+}
+export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})
@@ -530,4 +538,24 @@ export async function startRefine(config:BackendConfig,projectId:string,stemId:s
   const body=(await res.json()) as {job_id?:unknown}
   if(typeof body.job_id!=='string' || !body.job_id)throw new Error('Backend did not return a refine job')
   return body.job_id
+}
+
+export interface SoundEffectAsset {asset_id:string;duration:number;source:string}
+export async function uploadSoundEffect(config:BackendConfig,projectId:string,file:File):Promise<SoundEffectAsset> {
+  const data=new FormData();data.append('file',file)
+  return (await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/sound-effects/upload`,{method:'POST',body:data})).json()) as SoundEffectAsset
+}
+export async function generateSoundEffect(config:BackendConfig,projectId:string,prompt:string):Promise<string> {
+  const result=await request(config,`/api/projects/${encodeURIComponent(projectId)}/sound-effects/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})})
+  return ((await result.json()) as {job_id:string}).job_id
+}
+export async function getSoundEffectJob(config:BackendConfig,id:string):Promise<{status:string;error?:string;result?:SoundEffectAsset}> {
+  return (await (await request(config,`/api/sound-effect-jobs/${encodeURIComponent(id)}`)).json()) as {status:string;error?:string;result?:SoundEffectAsset}
+}
+export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/replacement-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json()) as {candidate_id:string}).candidate_id
+}
+
+export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text})})).json()) as {candidate_id:string}).candidate_id
 }

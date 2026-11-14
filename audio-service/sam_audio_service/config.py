@@ -45,7 +45,7 @@ def _opt_int(name: str) -> int | None:
 class Settings:
     # "mock" is a deterministic DSP stand-in for local development and CI. It is NOT
     # source separation. "sam" loads the real SAM Audio checkpoints.
-    backend: str = field(default_factory=lambda: os.getenv("AUDIO_BACKEND", "mock"))
+    backend: str = field(default_factory=lambda: os.getenv("AUDIO_BACKEND", "audiosep"))
     model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID", "facebook/sam-audio-large"))
     # "auto" picks cuda > mps > cpu.
     device: str = field(default_factory=lambda: os.getenv("AUDIO_DEVICE", "auto"))

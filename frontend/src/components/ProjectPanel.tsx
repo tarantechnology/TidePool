@@ -1,7 +1,8 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects } from '../api/backend'
+import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
+
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { musicCommand, separationCommand } from '../separationCommand'
@@ -9,11 +10,14 @@ import { separationSettings } from '../agent/separationSettings'
 import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
+import { replacementFollowup } from '../agent/replacementFollowup'
+import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
+
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
 import { HttpStemSource } from '../api/stemSources'
@@ -23,6 +27,7 @@ import { SoundGuidance } from './SoundGuidance'
 import { ProcessingRange } from './ProcessingRange'
 import type { ProcessingRangeValue } from './ProcessingRange'
 import { CandidateComparison } from './CandidateComparison'
+import { ReplacementPanel } from './ReplacementPanel'
 import { GuidedByChip, ObjectsPanel } from './ObjectsPanel'
 import { PassesSelect } from './PassesSelect'
 import { DropLoader } from './DropLoader'
@@ -96,11 +101,22 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [candidateWarnings,setCandidateWarnings]=useState<string[]>([])
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
-  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'>('separation')
+  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'>('separation')
   const [cinematicStyle,setCinematicStyle]=useState<CinematicStyle>('cinematic')
   const [directorRequest,setDirectorRequest]=useState('Make the whole video more cinematic')
   const [directorGoal,setDirectorGoal]=useState<DirectorIntent>('cinematic')
   const [directorChanges,setDirectorChanges]=useState<DirectorChange[]>([])
+  const [replacementPeaks,setReplacementPeaks]=useState<number[]>([])
+  const [replacementCount,setReplacementCount]=useState<number|null>(null)
+  const [replacementMode,setReplacementMode]=useState<'replace'|'add'>('replace')
+  const [replacementEvents,setReplacementEvents]=useState<ReplacementEvent[]>([])
+  const [replacementRecovery,setReplacementRecovery]=useState<ReplacementRecovery|null>(null)
+  const [replacementAlignment,setReplacementAlignment]=useState<'peak'|'onset'>('peak')
+  const [replacementAddTime,setReplacementAddTime]=useState('')
+  const [previewSeek,setPreviewSeek]=useState<{time:number;id:number}|null>(null)
+  const [replacementOpen,setReplacementOpen]=useState(false)
+  const [replacementSource,setReplacementSource]=useState('')
+  const [replacementEffect,setReplacementEffect]=useState('')
   const [effectsOpen,setEffectsOpen]=useState(false)
   const [effectsStems,setEffectsStems]=useState<SavedStem[]>([])
   const [effectsStem,setEffectsStem]=useState('')
@@ -129,6 +145,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const attachedVideo = useRef<File | null>(null)
   const mounted = useRef(true)
   const busyRef = useRef(false)
+  const pendingReplacement = useRef('')
   const restored = useRef(false)
   useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
@@ -166,18 +183,21 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     for (;;) {
       if(!mounted.current)throw new Error('Preview cancelled')
       const job=await getCandidate(cfg,id)
-      if(job.status==='failed') { try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${projectId}`) } catch { /* Ignore unavailable storage. */ }; throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.') }
+      if(job.status==='failed') { if(job.recovery) setReplacementRecovery(job.recovery); try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${projectId}`) } catch { /* Ignore unavailable storage. */ }; throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.') }
       if(job.status==='completed') {
+        setReplacementRecovery(null)
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : 'separation')
-        if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
+        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
+        if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='replacement') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
         if (job.provenance?.kind==='cinematic' || job.provenance?.kind==='director') { setCinematicSteps(job.provenance.steps || []); setCinematicStyle(job.provenance.style || 'cinematic'); if(job.provenance.kind==='director') { setDirectorRequest(job.provenance.request || 'Make the whole video more cinematic');setDirectorGoal(job.provenance.intent || 'cinematic');setDirectorChanges(job.provenance.changes || []) } }
+        if(job.provenance?.kind==='replacement') {setReplacementPeaks(job.provenance.peak_times || []);setReplacementCount(job.provenance.requested_count ?? null);setReplacementMode(job.provenance.mode || 'replace');setReplacementEvents(job.provenance.events || []);setReplacementAlignment(job.provenance.alignment || 'peak')}
         setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
         setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
       }
-      setMessage(jobProgressMessage({state:job.status === 'queued' ? 'queued' : 'processing',progress:job.progress,stage:job.stage ?? undefined},Date.now()-began,'Separating the sound'));await new Promise(resolve=>setTimeout(resolve,1000))
+      setMessage(job.status === 'queued' ? 'Waiting for processing…' : job.stage==='finding' ? 'Finding the sound…' : job.stage==='generating' ? 'Generating the replacement sound…' : job.stage==='separating' ? 'Replacing the sound…' : jobProgressMessage({state:'processing',progress:job.progress,stage:job.stage ?? undefined},Date.now()-began,'Separating the sound'));await new Promise(resolve=>setTimeout(resolve,1000))
+
     }
   }
   /** Ask the router what the upload is, in the background; a song gets "Split into tracks" offered. */
@@ -209,7 +229,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const cfg = {baseUrl, token:credential.trim()}
     const info = await getProject(cfg, id.trim())
     attachedVideo.current = null; setFile(null)
-    setUndoId(''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
+    setUndoId(info.latest_undoable_candidate_id || ''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
+
     setToken(cfg.token); setProject(info); rememberProject(info.project_id, cfg.token)
     setJobId(info.last_completed_job_id || ''); setSettingsStems([]); setMessages([])
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav'); setSelection(null); onClearSelection(); setVisualName(''); setSelectionName('')
@@ -254,7 +275,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
-    setMockStems(null);setJobId(''); setUndoId(''); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+    setMockStems(null);setJobId(''); setUndoId('');setRouting(null);setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
@@ -311,6 +333,20 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const id=await adjustDirectorPreview(config,candidateId,change.target_stem_id,!change.enabled)
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`, JSON.stringify({id,sound:'Creative audio'})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(config,project.project_id,id)
+  })
+  const adjustReplacement = (adjustment:ReplacementAdjustment) => run(async () => {
+    if (!project || !candidateId) return
+    setMessage('Updating sound placements…')
+    const id=await adjustReplacementPreview(config,candidateId,adjustment)
+    try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`, JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview remains available. */ }
+    await waitCandidate(config,project.project_id,id)
+  })
+  const previewRecovery = () => run(async () => {
+    if (!project || !replacementRecovery) return
+    await flush();setMessage('Preparing an add-only preview…')
+    const id=await createReplacementPreview(config,project.project_id,replacementRecovery)
+    try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`, JSON.stringify({id,sound:'Added sound'})) } catch { /* Preview remains available. */ }
+    setPrompt('Added sound');await waitCandidate(config,project.project_id,id)
   })
   const openEffects = () => run(async () => {
     if (!project) return
@@ -395,7 +431,22 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       const cfg={baseUrl,token:currentToken}
       const hasStems=Boolean(currentJob)
       // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
+      const replacementText=replacementFollowup(pendingReplacement.current,text) || text
+      const replacement=requestsSoundReplacement(replacementText)
+      if (replacement) {
+        setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
+        pendingReplacement.current=''
+        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText)
+        try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
+        try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
+          if (error instanceof Error && /example timestamp/i.test(error.message)) pendingReplacement.current=replacementText
+          throw error
+        }
+        return {kind:'replacement',description:null,remove:false,actions:[],message:'Replacement preview ready. Compare before applying.'}
+      }
+      pendingReplacement.current=''
       const local=separationCommand(text), music=musicCommand(text)
+
       const directCinematic = cinematicCommand(text, candidateKind==='cinematic'||candidateKind==='director')
       const directCreative = creativeCommand(text)
       const directTimestamp = local?.processingTime !== undefined
@@ -592,10 +643,20 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         </div>
         <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); if (project) { try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ } } setMessage('Preview discarded.') }}>Discard</button>
       </div>
-      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl} showTarget={candidateKind==='separation'}/>
+      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl} showTarget={candidateKind==='separation' || candidateKind==='replacement' || candidateKind==='known-effect-replacement'} seekTo={previewSeek}/>
       {candidateKind==='separation' && processingRange && <div className="mt-2 text-xs text-muted">Processed {processingRange.start.toFixed(2)}–{processingRange.end.toFixed(2)} seconds. <button type="button" className="text-accent underline" onClick={()=>{setCandidateId('');setOpenStep('sound');setMessage('Adjust the processing range, then preview again.')}}>Adjust range</button></div>}
       {(candidateKind==='cinematic' || candidateKind==='director') && <div className="mt-2 text-xs text-muted"><p>{candidateKind==='director'?'Planned changes':'Whole-mix treatment'}: {cinematicSteps.join(' · ')}. No new music or sounds are added.</p>{candidateKind==='director' && directorChanges.map(change=><div key={change.target_stem_id} className="mt-2 flex items-center justify-between gap-2"><span>{change.enabled ? change.action : 'Disabled'}: {change.label} ({change.intervals.map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')})</span><button type="button" disabled={busy} className={secondary} onClick={()=>toggleDirectorChange(change)}>{change.enabled?'Disable':'Enable'}</button></div>)}{candidateWarnings.map(w=><p key={w} className="mt-1">{w}</p>)}<div className="mt-2 flex flex-wrap gap-1">{(['subtle','cinematic','dramatic'] as const).map(style=><button key={style} type="button" disabled={busy || style===cinematicStyle} className={secondary} onClick={()=>cinematic(style)}>{style==='cinematic'?'Balanced':style==='dramatic'?'More dramatic':'Subtle'}</button>)}</div></div>}
+      {candidateKind==='replacement' && <div className="mt-3 space-y-2 text-xs text-muted">
+        <p>{replacementMode==='add'?'Added effects':'Detected sound placements'}: {replacementEvents.filter(e=>e.enabled).length || replacementPeaks.length} enabled.{replacementCount!==null ? ` Requested ${replacementCount} sound${replacementCount===1?'':'s'} at each placement.` : ''}</p>
+        {replacementEvents.length>0 && <><div className="flex flex-wrap gap-1" role="group" aria-label="Alignment"><button type="button" className={secondary} disabled={busy || replacementAlignment==='peak'} onClick={()=>adjustReplacement({operation:'alignment',alignment:'peak'})}>Align peaks</button><button type="button" className={secondary} disabled={busy || replacementAlignment==='onset'} onClick={()=>adjustReplacement({operation:'alignment',alignment:'onset'})}>Align attacks</button></div>
+          <p>Listen to each match. {replacementMode==='replace'?'Disabling it restores the separated original at that point.':'Disabling it removes the added effect.'}</p>
+          <div className="max-h-44 space-y-1 overflow-y-auto">{replacementEvents.map((event,index)=>{const t=(replacementAlignment==='onset'?event.source_onset:event.source_peak)+event.offset;return <div key={event.id} className="flex flex-wrap items-center gap-1 rounded-lg bg-surface-2 p-1"><span className="w-16 font-mono">{t.toFixed(2)}s</span><button type="button" className={secondary} onClick={()=>setPreviewSeek({time:Math.max(0,t-.25),id:Date.now()})}>Listen</button><button type="button" className={secondary} disabled={busy || !event.enabled} aria-label={`Move sound ${index+1} earlier`} onClick={()=>adjustReplacement({operation:'move',event_id:event.id,time:Math.max(0,t-.03)})}>−30ms</button><button type="button" className={secondary} disabled={busy || !event.enabled} aria-label={`Move sound ${index+1} later`} onClick={()=>adjustReplacement({operation:'move',event_id:event.id,time:t+.03})}>+30ms</button><button type="button" className={secondary} disabled={busy} onClick={()=>adjustReplacement({operation:'toggle',event_id:event.id,enabled:!event.enabled})}>{event.enabled?'Disable':'Enable'}</button></div>})}</div>
+          <div className="flex items-end gap-1"><label className="flex-1">Add placement at (seconds)<input className={field} type="number" min={0} max={durationSeconds || 0} step="0.01" value={replacementAddTime} onChange={e=>setReplacementAddTime(e.target.value)}/></label><button type="button" className={secondary} disabled={busy || !replacementAddTime.trim()} onClick={()=>adjustReplacement({operation:'add',time:Number(replacementAddTime)})}>Add</button></div>
+          <p>After applying, each effect is its own timeline layer, so you can adjust its volume or timing separately.</p></>}
+        {candidateWarnings.map(w=><p key={w}>{w}</p>)}{error && <p role="alert" className="text-red-600">{error}</p>}<p>Compare the mix and listen for missing background sounds before applying.</p>
+      </div>}
       {candidateKind==='effects' && <p className="mt-2 text-xs text-muted">Effects are rendered into the selected layer on apply. Undo restores the previous audio. Listen for clipping.</p>}
+      {candidateKind==='known-effect-replacement' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       <div className="mt-3 flex items-center gap-2">
         <button className={`${button} flex-1 py-2 text-sm`} disabled={busy} onClick={useRetry}>Apply to timeline</button>
         {candidateKind==='separation' && <button className={secondary} disabled={busy || !capabilities?.quality} title={capabilities?.quality ? 'Deep dive: a slower, higher-quality pass' : (capabilities?.reason || '')} onClick={() => void process(true)}>{FEATURES.quality}</button>}
@@ -623,6 +684,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
           summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
           <div className="space-y-3">
+            {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
             {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">The current separator does not support visual object guidance.</p>}
@@ -677,6 +739,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       {busy && <p className="flex items-center gap-2 text-accent"><DropLoader size={22}/>{message || 'Working…'}</p>}
       {!busy && message && !error && <p role="status" className="text-muted">{message}</p>}
       {error && <p role="alert" className="break-words text-red-600">{error}</p>}
+      {replacementRecovery && <button type="button" className={`${secondary} mt-2`} disabled={busy} onClick={previewRecovery}>Preview adding the effect without removing the original</button>}
     </div>}
 
     <details className="border-t border-line text-xs">

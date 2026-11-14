@@ -66,12 +66,17 @@ def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(
     original_before=client.get(f'/api/projects/{pid}/original',headers=h).content
     monkeypatch.setattr(detector,'status',lambda:{'available':True,'selection_only':True})
     monkeypatch.setenv('VISION_SERVICE_URL','http://vision.test')
+    monkeypatch.delenv('OBJECT_ANALYSIS_FPS', raising=False)
     def remote(url,files,data,**kwargs):
         proxy=files['video'][1]
+        # Verify the real proxy's cadence; original media/audio must stay native.
+        info=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0',
+            '-show_entries','stream=r_frame_rate,nb_frames','-of','json',proxy.name],text=True))['streams'][0]
+        assert info['r_frame_rate']=='10/1' and int(info['nb_frames'])==10
         import hashlib
         digest=hashlib.sha256(proxy.read()).hexdigest()
         return httpx.Response(200,request=httpx.Request('POST',url),json={'selection_only':True,'video_id':data['video_id'],
-            'source_sha256':digest,'analysis_id':'sam-test','frames':[],'analyzed_frames':15,'processed_duration_seconds':1})
+            'source_sha256':digest,'analysis_id':'sam-test','frames':[],'analyzed_frames':10,'processed_duration_seconds':1})
     monkeypatch.setattr(object_selection.httpx,'post',remote)
     r=client.post(f'/api/projects/{pid}/visual-analyze',headers=h,json={'concept':'dog'})
     assert r.status_code==202 and r.json()['prepared'] is False
@@ -79,6 +84,21 @@ def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(
     assert client.get(f'/api/projects/{pid}/original-audio',headers=h).content==audio_before
     assert client.get(f'/api/projects/{pid}/original',headers=h).content==original_before
     assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==stems_before
+
+
+@pytest.mark.parametrize('value,expected', [(None,10), ('15',15), ('7.5',7.5)])
+def test_selection_cadence_can_restore_detail(monkeypatch,value,expected):
+    from app.object_selection import analysis_fps
+    monkeypatch.delenv('OBJECT_ANALYSIS_FPS',raising=False)
+    if value is not None:monkeypatch.setenv('OBJECT_ANALYSIS_FPS',value)
+    assert analysis_fps()==expected
+
+
+@pytest.mark.parametrize('value', ['0', '-1', '31', 'nan', 'inf', 'fast'])
+def test_invalid_selection_cadence_is_rejected(monkeypatch,value):
+    from app.object_selection import analysis_fps
+    monkeypatch.setenv('OBJECT_ANALYSIS_FPS',value)
+    with pytest.raises(ValueError):analysis_fps()
 
 
 def test_clicking_an_existing_sound_reuses_audio_and_undo_preserves_all_layers(client,tmp_path,monkeypatch):

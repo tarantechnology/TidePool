@@ -24,7 +24,16 @@ def status():
                 'model': 'sam3.1', 'device': 'cuda', 'weights_cached': None, 'selection_only': True}
 
 
+def analysis_fps():
+    # Selection needs responsive outlines; audio/export retain their native cadence.
+    fps = float(os.getenv('OBJECT_ANALYSIS_FPS', '10'))
+    if not 1 <= fps <= 30:
+        raise ValueError('OBJECT_ANALYSIS_FPS must be between 1 and 30')
+    return fps
+
+
 def detect(source, output_dir, video_id, concept):
+    fps = analysis_fps()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     source_hash = file_sha256(source)
@@ -37,7 +46,7 @@ def detect(source, output_dir, video_id, concept):
         raise ValueError('Object selection needs aligned audio/video start times; the original was preserved.')
     proxy = output_dir/'analysis.mp4'
     run('ffmpeg','-v','error','-y','-i',str(source),'-map','0:v:0','-an',
-        '-vf','setpts=PTS-STARTPTS,fps=15,scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-vf',f'setpts=PTS-STARTPTS,fps={fps},scale=trunc(iw/2)*2:trunc(ih/2)*2',
         '-t','30','-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p',str(proxy))
     try:
         with proxy.open('rb') as stream:

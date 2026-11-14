@@ -38,10 +38,15 @@ can remain resident; only one GPU-service instance should own these requests.
 Cache keys include analysis-video bytes, concept, checkpoint identity, and adapter
 implementation. A repeated analysis reads cached masks without loading SAM again.
 
-The app makes a silent 15 FPS analysis proxy, preserving the extracted original
+The app makes a silent 10 FPS analysis proxy, preserving the extracted original
 audio, project source and existing layer files. Masks use proxy-frame timestamps
 and normalized coordinates for the displayed video. Nonaligned audio/video starts
 are rejected explicitly. The original video stream is retained for export.
+`OBJECT_ANALYSIS_FPS=15` on the app backend restores the earlier, finer tracking
+cadence; values from 1 to 30 are accepted. The default updates outlines every
+100 ms, so fast motion may be less precise between observations. Resolution,
+checkpoint, confidence threshold, and the 30-second coverage limit are unchanged.
+Audio edits still use the original audio across the requested scope.
 
 Selections carry analysis/frame/detection/track IDs. The backend validates them
 against stored observations and original media identity, retains context in
@@ -53,11 +58,27 @@ ordinary separation path instead of this reuse optimization.
 
 ## Verified movie demo on the L4
 
-The user's 20.6-second movie clip produced one SAM dog track, observed in 262 of
-308 analysis frames. Cold analysis took 150.48 seconds; peak SAM allocated memory
-was 9,461,733,888 bytes. These are execution/coverage measurements, not mask
+At the earlier 15 FPS cadence, the user's 20.6-second movie clip produced one SAM
+dog track, observed in 262 of 308 analysis frames. Cold analysis took 150.48
+seconds; peak SAM allocated memory was 9,461,733,888 bytes. These are execution/coverage measurements, not mask
 accuracy against labeled ground truth. Object analysis preserved the original
 extracted WAV bytes exactly.
+
+The 10 FPS speed trial processed 206 frames in 99.15 seconds inside the SAM
+pipeline (105.37 seconds through the proxy/HTTP path), versus 140.80 seconds in
+the earlier pipeline run: about 30% less model-pipeline time. Peak SAM allocated
+memory fell to 8,607,673,344 bytes. One dog track was observed in 176 frames,
+including the opening frame. At nearest timestamps (within 33.4 ms), there was
+one presence disagreement out of 206 samples: an extra mask at the 5.6-second
+scene cut. Mean mask IoU when both runs had a mask was 0.926; this measures output
+agreement, not ground-truth accuracy. Outlines at fast motion/cuts can differ.
+
+An 8 FPS trial was faster (79.37 seconds), but missed the opening half-second and
+was not chosen. An additional outer bfloat16 context gave no meaningful gain;
+the official SAM 3.1 predictor already enables it internally. That redundant
+setting was removed. Trial reports and inspected mask comparisons are on the Mac
+under `~/Downloads/TidePool-SAM-Speed/`. Timings are single runs on the L4 and vary
+with startup, GPU load, transfers and queuing.
 
 Real AudioSep previews from a typed `dog barking` mute and from the selected dog
 produced sample-identical 48 kHz stereo edited WAVs (maximum difference 0.0).

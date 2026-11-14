@@ -10,7 +10,7 @@ export interface PromptOutcome {
 }
 
 /** Shown wherever AI commands are offered but cannot run yet. */
-export const NO_PROJECT_HINT = 'Upload a video in Project to use AI commands'
+export const NO_PROJECT_HINT = 'Upload a video (step 1) to start giving commands'
 
 /**
  * The outcome for a plan that carries no local edit: a separation the backend

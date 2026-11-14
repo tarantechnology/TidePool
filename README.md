@@ -12,7 +12,7 @@ docker compose up --build
 
 Open **http://localhost:5173**. The API documentation is at http://localhost:8000/docs. Data persists in `./storage`. The first build installs CPU vision dependencies; the first visual analysis downloads detector weights to `./storage/vision`. A network connection and sufficient disk space are needed.
 
-1. Choose an MP4, MOV, WAV or MP3 and click **Create & upload**. Copy the project ID and access token shown in the project panel; they are needed to restore the project later.
+1. Choose an MP4, MOV, WAV or MP3 to upload it. Copy the project ID and access token shown in the project panel; they are needed to restore the project later.
 2. Enter comma-separated sound descriptions and start processing. The default local inference adapter **copies the entire audio into each test stem**; it does not separate sounds. This mode is useful for exercising the editor without a GPU.
 3. Play and edit the layers, then choose MP4, WAV or MP3 and export. For video object selection, run visual analysis, pause the video, and click a detected object. A sound prompt is still required.
 4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
@@ -70,7 +70,7 @@ The cloud Compose configuration has been checked syntactically; that Compose dep
 
 ## APIs and tests
 
-FastAPI serves `/docs` and `/openapi.json`. Project media and edits require `Authorization: Bearer <project token>`; the token is shown once at creation. The UI keeps credentials in memory, so save them securely before closing the page. Jobs and exports run asynchronously; uploads and first preview conversion can take time.
+FastAPI serves `/docs` and `/openapi.json`. Project media and edits require `Authorization: Bearer <project token>`; the token is shown once at creation. The UI stores the current project credentials in this tab’s session storage to restore it after a refresh. Copy the project ID and token securely from the Upload panel to resume after closing the tab; anyone with the token can access the project. Jobs and exports run asynchronously; uploads and first preview conversion can take time.
 
 With Python 3.11+, FFmpeg and ffprobe installed, run backend tests using `pip install -r requirements.txt pytest` and `pytest -q`. Run editor checks with `cd frontend && npm ci && npm run verify`. Vision's optional tests are documented in [vision/README.md](vision/README.md). An optional Playwright browser smoke test is in `tests/test_editor_browser.py`; point `SOUNDCANVAS_BROWSER_URL` at a running editor configured with fake inference and install Playwright plus Chromium to run it.
 

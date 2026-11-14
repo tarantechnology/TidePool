@@ -58,6 +58,6 @@ describe('plannerFailure', () => {
 
 describe('NO_PROJECT_HINT', () => {
   it('tells the user where to upload a video', () => {
-    expect(NO_PROJECT_HINT).toBe('Upload a video in Project to use AI commands')
+    expect(NO_PROJECT_HINT).toBe('Upload a video (step 1) to start giving commands')
   })
 })

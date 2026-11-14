@@ -12,7 +12,7 @@ interface Props {
 }
 
 const FIELD =
-  'h-7 w-full rounded-md border border-line bg-white/[0.03] px-2 font-mono text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-accent/50'
+  'h-7 w-full rounded-md border border-line bg-tint/[0.03] px-2 font-mono text-[11px] text-fg outline-none placeholder:text-faint focus:border-accent/50'
 
 /**
  * Follows a processing job on the backend and loads its stems when it finishes.
@@ -62,11 +62,11 @@ export function JobStatusCard({ baseUrl, onLoadStems }: Props) {
   }
 
   return (
-    <div className="shrink-0 rounded-xl border border-line bg-ink-900/60 p-3 backdrop-blur">
+    <div className="shrink-0 rounded-xl border border-line bg-surface/60 p-3 backdrop-blur">
       <div className="mb-2 flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">Job</span>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">Job</span>
         {job && (
-          <span className={`font-mono text-[10px] ${job.state === 'failed' ? 'text-red-400' : 'text-accent'}`}>
+          <span className={`font-mono text-[10px] ${job.state === 'failed' ? 'text-red-600' : 'text-accent'}`}>
             {job.state}
             {job.progress !== undefined && ` ${job.progress}%`}
           </span>
@@ -87,7 +87,7 @@ export function JobStatusCard({ baseUrl, onLoadStems }: Props) {
             <button
               type="button"
               onClick={cancel}
-              className="h-7 shrink-0 rounded-md border border-line px-2.5 font-mono text-[11px] text-zinc-400 transition-colors hover:border-line-strong hover:text-zinc-100"
+              className="h-7 shrink-0 rounded-md border border-line px-2.5 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-fg"
             >
               Cancel
             </button>
@@ -95,7 +95,7 @@ export function JobStatusCard({ baseUrl, onLoadStems }: Props) {
             <button
               type="submit"
               disabled={!jobId.trim() || !token}
-              className="h-7 shrink-0 rounded-md bg-accent px-2.5 font-mono text-[11px] font-medium text-black disabled:bg-white/[0.06] disabled:text-zinc-600"
+              className="h-7 shrink-0 rounded-md bg-accent px-2.5 font-mono text-[11px] font-medium text-white disabled:bg-tint/[0.06] disabled:text-faint"
             >
               Track
             </button>
@@ -103,7 +103,7 @@ export function JobStatusCard({ baseUrl, onLoadStems }: Props) {
         </div>
       </form>
       {(error || job?.error) && (
-        <div className="mt-2 break-words font-mono text-[10px] text-red-400">{error || job?.error}</div>
+        <div className="mt-2 break-words font-mono text-[10px] text-red-600">{error || job?.error}</div>
       )}
     </div>
   )

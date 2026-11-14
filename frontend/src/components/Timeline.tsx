@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import type { MouseEvent, PointerEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
 import { isAudible, MAX_GAIN, MAX_KEYFRAMES, stemStart } from '../edits'
@@ -8,9 +8,15 @@ import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../k
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
+import { FEATURES } from '../features'
 
-const ACCENT = '#3dff8b'
+const ACCENT = '#5b9be3'
 const COLS = 'grid grid-cols-[15rem_minmax(0,1fr)]'
+const LANE_MIN = 44
+const LANE_MAX = 260
+const clampLane = (h: number) => Math.min(LANE_MAX, Math.max(LANE_MIN, h))
+/** Below this a lane drops its volume row. */
+const COMPACT_BELOW = 88
 
 interface Props {
   engine: AudioEngine
@@ -36,14 +42,14 @@ function Playhead({ engine, duration }: { engine: AudioEngine; duration: number 
     <>
       {/* Dim the part of the timeline that has not played yet. */}
       <div
-        className="pointer-events-none absolute right-0 bottom-0 top-8 bg-black/40"
+        className="pointer-events-none absolute right-0 bottom-0 top-8 bg-tint/[0.06]"
         style={{ left: `${pct}%` }}
       />
       <div
-        className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent shadow-[0_0_12px_2px_rgb(61_255_139/0.5)]"
+        className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent shadow-[0_0_12px_2px_rgb(43_123_214/0.5)]"
         style={{ left: `${pct}%` }}
       >
-        <div className="absolute top-1 left-1/2 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 font-mono text-[10px] font-medium text-black">
+        <div className="absolute top-1 left-1/2 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 font-mono text-[10px] font-medium text-white">
           {t.toFixed(1)}
         </div>
       </div>
@@ -100,6 +106,31 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
 
 export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
+  // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
+  // every lane at once, and dragging a lane's bottom edge sizes just that lane.
+  const scroller = useRef<HTMLDivElement>(null)
+  const [fitHeight, setFitHeight] = useState(96)
+  const [allHeight, setAllHeight] = useState<number | null>(null)
+  const [laneSizes, setLaneSizes] = useState<Record<string, number>>({})
+  const laneCount = stems.length
+  useEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    const fit = () => setFitHeight(Math.round(clampLane((el.clientHeight - 32) / Math.max(1, laneCount))))
+    fit()
+    const observer = new ResizeObserver(fit); observer.observe(el)
+    return () => observer.disconnect()
+  }, [laneCount])
+  const laneHeight = (id: string) => laneSizes[id] ?? allHeight ?? fitHeight
+  const fitted = allHeight === null && Object.keys(laneSizes).length === 0
+  const resizeLane = (id: string, e: PointerEvent<HTMLDivElement>) => {
+    e.preventDefault(); e.stopPropagation()
+    const startY = e.clientY, startH = laneHeight(id)
+    const el = e.currentTarget; el.setPointerCapture(e.pointerId)
+    const move = (ev: globalThis.PointerEvent) => setLaneSizes((s) => ({ ...s, [id]: Math.round(clampLane(startH + ev.clientY - startY)) }))
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up) }
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up)
+  }
   const step = tickStep(duration)
   const majors: number[] = []
   for (let t = 0; t < duration; t += step) majors.push(t)
@@ -143,26 +174,35 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
-      {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-300">{limitMessage}</div>}
+    <div ref={scroller} className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+      {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
-        <div className={`${COLS} h-8 border-b border-line bg-white/[0.02]`}>
-          <div className="flex items-center border-r border-line px-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-            Layers
+        <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
+          <div className="flex items-center gap-2 border-r border-line px-4">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>
+            <label className="ml-auto flex items-center gap-1.5" title="Layer height">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-subtle" aria-hidden="true"><path d="M2 5h12M2 11h12" /></svg>
+              <input type="range" aria-label="Layer height" min={LANE_MIN} max={LANE_MAX} step={2}
+                value={allHeight ?? fitHeight} onChange={(e) => { setLaneSizes({}); setAllHeight(Number(e.target.value)) }}
+                className="fader w-16" style={{ ['--pos' as string]: `${(((allHeight ?? fitHeight) - LANE_MIN) / (LANE_MAX - LANE_MIN)) * 100}%` } as CSSProperties} />
+            </label>
+            <button type="button" disabled={fitted} onClick={() => { setLaneSizes({}); setAllHeight(null) }}
+              title="Fit every layer to the timeline's height"
+              className="rounded-md px-1.5 py-0.5 text-[10px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:text-subtle disabled:hover:bg-transparent">Fit</button>
           </div>
           <div className="relative">
             {minors.map((t) => (
               <div
                 key={`m${t}`}
-                className="absolute bottom-0 h-1.5 border-l border-white/10"
+                className="absolute bottom-0 h-1.5 border-l border-tint/10"
                 style={{ left: `${(t / duration) * 100}%` }}
               />
             ))}
             {majors.map((t) => (
               <div
                 key={t}
-                className="absolute bottom-0 h-3 border-l border-white/25 pl-1.5 font-mono text-[10px] leading-3 text-zinc-500"
+                className="absolute bottom-0 h-3 border-l border-tint/25 pl-1.5 font-mono text-[10px] leading-3 text-subtle"
                 style={{ left: `${(t / duration) * 100}%` }}
               >
                 <span className="absolute -top-4">{t}s</span>
@@ -178,7 +218,13 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
           if (!track || !peaks) return null
           const audible = isAudible(tracks, track)
           return (
-            <div key={stem.id} className={`${COLS} h-24 border-b border-line`}>
+            <div key={stem.id} className={`${COLS} relative border-b border-line`} style={{ height: laneHeight(stem.id) }}>
+              {/* Drag this layer's bottom edge to make it taller or shorter. */}
+              <div role="separator" aria-orientation="horizontal" aria-label={`Resize ${stem.label}`} title="Drag to resize this layer, double-click to fit"
+                onPointerDown={(e) => resizeLane(stem.id, e)} onDoubleClick={() => setLaneSizes((s) => { const next = { ...s }; delete next[stem.id]; return next })}
+                className="group absolute inset-x-0 -bottom-1 z-20 flex h-2 cursor-row-resize items-center justify-center">
+                <span className="h-0.5 w-full bg-accent/0 transition-colors group-hover:bg-accent/50" />
+              </div>
               <TrackHeader
                 stem={stem}
                 track={track}
@@ -186,12 +232,13 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 onAction={onAction}
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
+                compact={laneHeight(stem.id) < COMPACT_BELOW}
               />
-              <div className="relative overflow-hidden bg-gradient-to-b from-white/[0.02] to-transparent">
+              <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">
                 {majors.map((t) => (
                   <div
                     key={t}
-                    className="absolute top-0 bottom-0 border-l border-white/[0.04]"
+                    className="absolute top-0 bottom-0 border-l border-tint/[0.04]"
                     style={{ left: `${(t / duration) * 100}%` }}
                   />
                 ))}
@@ -209,7 +256,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                   <div
                     key={`${a}-${b}`}
                     data-mute-range
-                    className="absolute inset-y-0 border-x border-line-strong bg-black/50"
+                    className="absolute inset-y-0 border-x border-line-strong bg-tint/[0.08]"
                     style={{
                       left: `${(Math.max(a, 0) / duration) * 100}%`,
                       width: `${((Math.min(b, duration) - Math.max(a, 0)) / duration) * 100}%`,
@@ -219,7 +266,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 {track.automation.length > 0 && (
                   <>
                     <div
-                      className="absolute right-0 left-0 border-t border-dashed border-white/20"
+                      className="absolute right-0 left-0 border-t border-dashed border-tint/20"
                       style={{ top: `${(1 - 1 / MAX_GAIN) * 100}%` }}
                     />
                     <svg
@@ -229,7 +276,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                     >
                       <polyline
                         fill="none"
-                        stroke="white"
+                        stroke="#0e2440"
                         strokeWidth={1.5}
                         vectorEffect="non-scaling-stroke"
                         points={track.automation
@@ -263,7 +310,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
               const track = tracks.find((t) => t.stemId === stem.id)
               if (!track || !engine.getPeaks(stem.id)) return null
               return (
-                <div key={stem.id} data-lane={stem.id} className="relative h-24 border-b border-transparent">
+                <div key={stem.id} data-lane={stem.id} className="relative border-b border-transparent" style={{ height: laneHeight(stem.id) }}>
                   {track.automation.map((k, idx) => (
                     <KeyframeMarker
                       key={idx}

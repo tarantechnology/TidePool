@@ -17,9 +17,9 @@ export function Transport({ engine, playing, duration }: Props) {
   const t = useEngineTime(engine)
   const disabled = !engine
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-line bg-white/[0.03] p-1 pr-5 backdrop-blur">
+    <div className="flex items-center gap-1.5 rounded-full border border-line bg-tint/[0.03] p-1 pr-5 backdrop-blur">
       <button
-        className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+        className="flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-tint/[0.06] hover:text-fg disabled:opacity-40"
         disabled={disabled}
         title="Stop"
         onClick={() => engine?.stop()}
@@ -29,7 +29,7 @@ export function Transport({ engine, playing, duration }: Props) {
         </svg>
       </button>
       <button
-        className="glow-accent flex h-8 w-8 items-center justify-center rounded-full bg-accent text-black transition-transform hover:scale-105 disabled:opacity-40"
+        className="glow-accent flex h-8 w-8 items-center justify-center rounded-full bg-accent text-white transition-transform hover:scale-105 disabled:opacity-40"
         disabled={disabled}
         title={playing ? 'Pause (Space)' : 'Play (Space)'}
         onClick={() => (playing ? engine?.pause() : void engine?.play())}
@@ -45,8 +45,8 @@ export function Transport({ engine, playing, duration }: Props) {
           </svg>
         )}
       </button>
-      <div className="ml-3 font-mono text-[13px] tabular-nums text-zinc-100">
-        {fmt(t)} <span className="text-zinc-600">/ {fmt(duration)}</span>
+      <div className="ml-3 font-mono text-[13px] tabular-nums text-fg">
+        {fmt(t)} <span className="text-faint">/ {fmt(duration)}</span>
       </div>
     </div>
   )

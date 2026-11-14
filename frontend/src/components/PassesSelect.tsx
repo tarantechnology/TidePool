@@ -21,7 +21,7 @@ export function PassesSelect({ value, choices, onChange, disabled, className }: 
           </option>
         ))}
       </select>
-      <span className="text-zinc-400">{PASSES_HELP}</span>
+      <span className="text-muted">{PASSES_HELP}</span>
     </label>
   )
 }

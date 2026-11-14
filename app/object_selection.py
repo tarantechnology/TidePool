@@ -18,6 +18,8 @@ def status():
         data = response.json()
         return {'available': data.get('available') is True, 'reason': data.get('reason'),
                 'model': data.get('model'), 'device': data.get('device'),
+                'automatic': data.get('automatic') is True,
+                'discovery_model': data.get('discovery_model'),
                 'weights_cached': data.get('weights_cached') is True, 'selection_only': True}
     except (httpx.HTTPError, ValueError, AttributeError):
         return {'available': False, 'retryable': True, 'reason': 'Object selection service is unreachable; check the GPU tunnel and retry.',

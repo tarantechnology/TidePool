@@ -167,6 +167,9 @@ export function objectTracks(metadata: VisualMetadata): ObjectTrack[] {
     }
   }
   return [...byTrack.values()]
+    // Suppress one/two-frame class flicker from the fast automatic scan. SAM
+    // observations remain available at their native cadence, including brief ones.
+    .filter(row => metadata.discovery_mode !== 'automatic' || row.frames >= 3)
     .map(({ labels, ...row }) => {
       // A tracker can relabel an object between frames; show the label it had most often.
       let label = row.label, best = 0

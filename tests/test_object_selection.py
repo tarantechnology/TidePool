@@ -51,7 +51,8 @@ def test_stale_or_unobserved_object_is_rejected(client,tmp_path,override):
     assert r.status_code==422
 
 
-def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(client,tmp_path,monkeypatch):
+@pytest.mark.parametrize('analysis_request', [{'concept':'dog'}, {}])
+def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(client,tmp_path,monkeypatch,analysis_request):
     import subprocess
     from app import object_selection,detector,core
     import httpx
@@ -64,10 +65,11 @@ def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(
     audio_before=client.get(f'/api/projects/{pid}/original-audio',headers=h).content
     stems_before=client.get(f'/api/projects/{pid}/stems',headers=h).json()
     original_before=client.get(f'/api/projects/{pid}/original',headers=h).content
-    monkeypatch.setattr(detector,'status',lambda:{'available':True,'selection_only':True})
+    monkeypatch.setattr(detector,'status',lambda:{'available':True,'selection_only':True,'automatic':True})
     monkeypatch.setenv('VISION_SERVICE_URL','http://vision.test')
     monkeypatch.delenv('OBJECT_ANALYSIS_FPS', raising=False)
     def remote(url,files,data,**kwargs):
+        assert data['concept']==analysis_request.get('concept','auto')
         proxy=files['video'][1]
         # Verify the real proxy's cadence; original media/audio must stay native.
         info=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0',
@@ -78,12 +80,14 @@ def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(
         return httpx.Response(200,request=httpx.Request('POST',url),json={'selection_only':True,'video_id':data['video_id'],
             'source_sha256':digest,'analysis_id':'sam-test','frames':[],'analyzed_frames':10,'processed_duration_seconds':1})
     monkeypatch.setattr(object_selection.httpx,'post',remote)
-    r=client.post(f'/api/projects/{pid}/visual-analyze',headers=h,json={'concept':'dog'})
+    r=client.post(f'/api/projects/{pid}/visual-analyze',headers=h,json=analysis_request)
     assert r.status_code==202 and r.json()['prepared'] is False
     assert wait(client,'/api/visual-jobs/'+r.json()['job_id'],h)['status']=='completed'
     assert client.get(f'/api/projects/{pid}/original-audio',headers=h).content==audio_before
     assert client.get(f'/api/projects/{pid}/original',headers=h).content==original_before
     assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==stems_before
+    monkeypatch.setattr(detector,'status',lambda:{'available':True,'selection_only':True,'automatic':False})
+    assert client.post(f'/api/projects/{pid}/visual-analyze',headers=h,json={}).status_code==503
 
 
 @pytest.mark.parametrize('value,expected', [(None,10), ('15',15), ('7.5',7.5)])

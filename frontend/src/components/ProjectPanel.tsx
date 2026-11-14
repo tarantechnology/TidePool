@@ -12,7 +12,7 @@ import { cinematicCommand } from '../agent/cinematic'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -266,6 +266,18 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await loadVideo(cfg, info)
     suggestRoute(cfg, created.project_id)
     setMessage(info.metadata?.has_video ? 'Uploaded. Pick a sound to separate.' : 'Uploaded. Split it into tracks, or pick a sound to separate.')
+    if (info.metadata?.has_video) {
+      try {
+        const available = await getCapabilities(cfg, info.project_id)
+        if (available.vision?.available && available.vision.automatic) {
+          const started = await startVisualAnalysis(cfg, info.project_id)
+          setResumeVisual({projectId:info.project_id,jobId:started.jobId})
+          setMessage('Uploaded. Finding people and objects…')
+        }
+      } catch {
+        setMessage('Uploaded. Automatic detection could not start; retry Find people and objects.')
+      }
+    }
   })
   const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection) => {
     await flush()
@@ -452,6 +464,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   }}))
   const visualAnalyzed = (metadata: VisualMetadata) => {
     onVisual(metadata); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('Analysis complete')
+    setMessage('Objects ready. Click an outline, then describe its sound.')
   }
   /** After the backend re-encoded a compatible copy: reload the video, and the original audio if nothing was separated yet. */
   const reloadPreparedMedia = async () => {

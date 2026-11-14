@@ -2,7 +2,8 @@ import type { VisualFrame, VisualMetadata, VisualObject } from './api/backend'
 
 export function objectSound(label:string):string {
   if (/^(dog|puppy)$/i.test(label.trim())) return 'dog barking'
-  if (/^(person|people)$/i.test(label.trim())) return 'person speaking'
+  // Appearance identifies an object, not its audible action or voice.
+  if (/\b(person|people|man|woman|boy|girl|guy|hoodie)\b/i.test(label)) return ''
   return label.trim()
 }
 

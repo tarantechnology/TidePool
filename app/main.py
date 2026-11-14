@@ -254,7 +254,7 @@ def get_visual(pid: str, authorization: str | None=Header(None)):
     return json.loads(p['visual'])
 
 class ObjectAnalysisRequest(BaseModel):
-    concept: str = Field(default='dog',min_length=1,max_length=80)
+    concept: str = Field(default='auto',min_length=1,max_length=80)
 
 @app.post('/api/projects/{pid}/visual-analyze',status_code=202)
 def analyze_visual(pid: str, body: ObjectAnalysisRequest = ObjectAnalysisRequest(), authorization: str | None=Header(None)):
@@ -266,6 +266,8 @@ def analyze_visual(pid: str, body: ObjectAnalysisRequest = ObjectAnalysisRequest
         return JSONResponse({'detail':vision['reason'],'code':'vision_unavailable'},status_code=502 if vision.get('retryable') else 503)
     if vision.get('selection_only'):
         if not body.concept.strip(): raise HTTPException(422,'Enter an object to find.')
+        if body.concept.strip()=='auto' and not vision.get('automatic'):
+            raise HTTPException(503,'Automatic object discovery is unavailable. Find a specific object with SAM instead.')
         job=start(pid,'vision',{'object_selection':True,'concept':body.concept.strip(), 'source_sha256':file_sha256(p['original'])})
         return {'job_id':job,'status':'queued','prepared':False}
     prepare=False

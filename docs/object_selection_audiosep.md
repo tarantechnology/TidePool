@@ -1,10 +1,25 @@
-# Click the dog, mute its barking
+# Find people and objects, then choose their sound
 
-Upload a video, open **Pick a sound**, and press **Find dog in video**. The
-object description defaults to `dog` and can be changed. SAM 3.1 analyzes the
-first 30 seconds on the GPU. Click its dog outline or the dog in the object list;
-the sound field starts as `dog barking`. Choose **Mute**, compare the preview,
-then **Apply to timeline** and export. The close button hides the object actions.
+Upload a video and automatic discovery starts without an object prompt. Open
+**Pick a sound** to see people and common objects found by the cached YOLO26n
+segmentation model. **Find people and objects** reruns the scan. Click a dog
+outline or list row; the sound field starts as `dog barking`. Choose **Mute**,
+compare the preview, then **Apply to timeline** and export.
+
+For finer masks, press **Refine person**, **Refine dog**, or another discovered
+category. This uses the existing SAM 3.1 path without typing the category. It
+replaces the current observations with SAM's tracks; select an outline again.
+**Find a specific object with SAM** retains the optional custom-description path.
+These models run sequentially behind the shared GPU inference lock.
+
+Person selections leave **Sound to edit** empty: describe the audible action,
+such as `a man imitating a dog barking`. Clothing and person masks do not identify
+a voice. Mute stays disabled until a sound description is supplied. The close
+button hides the object actions. Automatic labels and track IDs can be wrong or
+fragment across cuts; track counts are not verified counts of distinct people.
+The automatic picker hides tracks seen fewer than three times to reduce brief
+class flicker; this can miss objects visible only very briefly. SAM search keeps
+its original observations.
 
 SAM supplies tracked masks for selection. AudioSep receives the ordinary text
 prompt and original audio, using the same suppression and inference profile as
@@ -25,11 +40,19 @@ remote launcher enables the prepared SAM runtime when these paths exist:
   at revision `daa63191845a41281374e725f4c9e51c7a824460`
 - `AUDIO_OBJECT_SOURCE_ROOT`: the SoundCanvas source checkout
 - `AUDIO_OBJECT_CACHE`: `/workspace/cache/soundcanvas-objects` by default
+- `AUDIO_OBJECT_DISCOVERY_MODEL`: `/workspace/checkpoints/yolo26n-seg.pt`
+  (explicit cached segmentation checkpoint for automatic discovery)
 
 `AUDIO_OBJECT_ENABLE=0` disables launcher setup. Missing paths report unavailable;
 no checkpoint is automatically downloaded or substituted. The remote local-app
 launcher configures `VISION_SERVICE_URL` for the default AudioSep setup. Other
 deployment modes may configure it explicitly. Keep application endpoints private.
+The `automatic` capability is advertised only when discovery weights are present.
+The app launches discovery once per new video upload; reopening an existing
+project loads its stored observations. An unavailable automatic runtime leaves
+the explicit SAM search available. Cache results are separated by source, model,
+implementation and search concept. Automatic class changes on one native tracker
+ID receive distinct selection IDs, so a dog row cannot turn into a person row.
 
 SAM runs in its prepared interpreter in a subprocess, with grounding batch one,
 compilation/FA3 disabled, and CPU video offload. Its subprocess holds the same
@@ -57,6 +80,20 @@ Explicit processing ranges, anchors, quality retries and extra passes use the
 ordinary separation path instead of this reuse optimization.
 
 ## Verified movie demo on the L4
+
+Automatic discovery on the user's `IMG_1758.MOV` found tracked people, including
+the opening frame, in 29.95 seconds end to end (9.02 seconds in the detector
+pipeline). The movie found both people and a dog in the opening frame, in 19.54
+seconds end to end (7.79 seconds in the pipeline). Both scans preserved the
+extracted original audio bytes. These are individual execution measurements,
+not recognition-accuracy scores. Transient false labels and fragmented tracks
+were observed. The full 80-class scan is a quick selection aid; SAM refinement
+remains available for more precise masks and custom concepts.
+
+Browser upload automatically discovered people without an object prompt. Person
+selection required an audible description and successfully generated a real
+AudioSep preview. No listening or speaker-isolation accuracy is claimed for it.
+Artifacts: `~/Downloads/TidePool-Automatic-Objects/`.
 
 At the earlier 15 FPS cadence, the user's 20.6-second movie clip produced one SAM
 dog track, observed in 262 of 308 analysis frames. Cold analysis took 150.48

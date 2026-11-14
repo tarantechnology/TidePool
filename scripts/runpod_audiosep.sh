@@ -16,6 +16,7 @@ if [ "${AUDIO_OBJECT_ENABLE:-1}" = 1 ]; then
   export AUDIO_OBJECT_PYTHON="${AUDIO_OBJECT_PYTHON:-$AUDIOSEP_WORKSPACE/venvs/soundcanvas-vision/bin/python}"
   export AUDIO_OBJECT_CHECKPOINT="${AUDIO_OBJECT_CHECKPOINT:-$HF_HOME/hub/models--facebook--sam3.1/snapshots/daa63191845a41281374e725f4c9e51c7a824460/sam3.1_multiplex.pt}"
   export AUDIO_OBJECT_SOURCE_ROOT="${AUDIO_OBJECT_SOURCE_ROOT:-$AUDIOSEP_PROJECT_ROOT}"
+  export AUDIO_OBJECT_DISCOVERY_MODEL="${AUDIO_OBJECT_DISCOVERY_MODEL:-$AUDIOSEP_WORKSPACE/checkpoints/yolo26n-seg.pt}"
 fi
 AUDIOSEP_PORT="${AUDIO_PORT:-8011}"
 AUDIOSEP_PIDFILE="$AUDIOSEP_WORKSPACE/locks/tidepool-audiosep-$AUDIOSEP_PORT.pid"
@@ -58,7 +59,9 @@ case "${1:-start}" in
     if pid=$(owned_pid); then echo "AudioSep is already running as $pid"; exit 0; fi
     python - "$AUDIOSEP_PORT" <<'PY'
 import socket,sys
-with socket.socket() as s:s.bind(('127.0.0.1',int(sys.argv[1])))
+with socket.socket() as s:
+    s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+    s.bind(('127.0.0.1',int(sys.argv[1])))
 PY
     cd "$AUDIOSEP_PROJECT_ROOT"
     nohup env PYTHONPATH="$AUDIOSEP_PROJECT_ROOT/audio-service${PYTHONPATH:+:$PYTHONPATH}" \

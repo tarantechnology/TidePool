@@ -19,6 +19,8 @@ interface Props {
   src: string | null
   onPick: (file: File) => void
   onDuration: (duration: number) => void
+  /** Width over height of the loaded clip, so the layout can fit it. */
+  onAspect?: (aspect: number) => void
   onError: (message: string) => void
   visual: VisualMetadata | null
   onSelection: (selection: VisualSelection) => void
@@ -28,7 +30,7 @@ interface Props {
   seekTo?: { time: number; n: number } | null
 }
 
-export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, onSelection, selection, onVisualAction, seekTo }: Props) {
+export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onVisualAction, seekTo }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
   const picker = useRef<HTMLInputElement>(null)
@@ -114,7 +116,7 @@ export function VideoPanel({ engine, src, onPick, onDuration, onError, visual, o
           playsInline
           preload="auto"
           className="h-full w-full object-contain"
-          onLoadedMetadata={(e) => onDuration(e.currentTarget.duration)}
+          onLoadedMetadata={(e) => { const v = e.currentTarget; onDuration(v.duration); if (v.videoWidth && v.videoHeight) onAspect?.(v.videoWidth / v.videoHeight) }}
           onError={() => onError('This browser could not play the video.')}
         />
         {overlay && <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">

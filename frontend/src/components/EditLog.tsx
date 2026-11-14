@@ -1,30 +1,23 @@
 import type { EditAction } from '../types'
 
+/** What the command bar changed, newest last, in plain words. */
+function describe(a: EditAction): string {
+  const { type, stemId, ...rest } = a
+  const what = type.replace(/_/g, ' ')
+  const detail = Object.entries(rest).map(([k, v]) => `${k} ${Array.isArray(v) ? `${v.length} points` : String(v)}`).join(', ')
+  return `${what} on ${stemId}${detail ? ` (${detail})` : ''}`
+}
+
 export function EditLog({ log }: { log: EditAction[] }) {
+  if (log.length === 0) return <p className="text-xs text-subtle">Edits made from the command bar show up here.</p>
   return (
-    <aside className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-surface/60 backdrop-blur">
-      <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">Edit list</span>
-        <span className="rounded-full border border-line px-1.5 font-mono text-[10px] text-muted">{log.length}</span>
-      </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
-        {log.length === 0 ? (
-          <div className="font-mono text-[11px] text-faint">Edits from the prompt bar appear here.</div>
-        ) : (
-          log.map((a, i) => {
-            const { type, stemId, ...rest } = a
-            return (
-              <div key={i} className="rounded-lg border border-line bg-tint/[0.02] px-2.5 py-2 font-mono text-[11px]">
-                <div className="flex items-center gap-2">
-                  <span className="text-accent">{type}</span>
-                  <span className="text-subtle">{stemId}</span>
-                </div>
-                <div className="mt-1 break-all leading-relaxed text-subtle">{JSON.stringify(rest)}</div>
-              </div>
-            )
-          })
-        )}
-      </div>
-    </aside>
+    <ol className="space-y-1.5 text-xs">
+      {log.map((a, i) => (
+        <li key={i} className="flex gap-2 rounded-lg bg-surface-2 px-2 py-1.5 text-fg-2">
+          <span className="w-4 shrink-0 text-right font-medium text-accent">{i + 1}</span>
+          <span className="min-w-0 break-words">{describe(a)}</span>
+        </li>
+      ))}
+    </ol>
   )
 }

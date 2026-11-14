@@ -42,7 +42,7 @@ export default function Landing() {
             <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_rgb(43_123_214/0.9)]" />
             Prompt-driven audio editing, early prototype
           </div>
-          <h1 className="mx-auto max-w-3xl text-balance text-fg text-5xl leading-[1.04] font-semibold tracking-tight sm:text-7xl">
+          <h1 className="mx-auto max-w-3xl text-balance font-display text-5xl leading-[1.02] font-bold tracking-[-0.035em] text-fg sm:text-7xl">
             Edit sound with a sentence.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">

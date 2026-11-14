@@ -118,14 +118,14 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
   const progress = run.phase === 'detecting' ? run.progress : undefined
   const unavailable = run.phase === 'unavailable' || (vision !== undefined && !vision.available && !status.running)
 
+  // Without a detector there is nothing to show; step 2's instruction already points to the bar.
+  if (unavailable) return null
+
   return (
     <section ref={section} aria-label="Objects" className="space-y-2 text-xs">
       <div className="flex items-center justify-between gap-2">
         <h3 className="flex items-center gap-1.5 font-medium text-fg">Objects in the video <FeatureTag name={FEATURES.visual} /></h3>
       </div>
-      {unavailable ? (
-        <p role="status" className="leading-snug text-subtle" title={status.text}>Object detection isn't set up on this server, so describe the sound in the bar below instead.</p>
-      ) : <>
       <p role="status" className={`flex items-start gap-1.5 rounded-full border px-2 py-1 leading-snug ${tones[status.tone]}`}>
         <span aria-hidden="true" className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot[status.tone]}`} />
         <span className="min-w-0 break-words">{status.text}</span>
@@ -142,7 +142,6 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
           Find objects in video
         </button>
       )}
-      </>}
       {run.phase === 'failed' && run.status === 422 && !status.running && (canPrepare ? (
         <div className="space-y-1">
           <p className="text-muted">This server did not re-encode the video itself. Prepare a compatible copy here and detection runs again; the uploaded file is kept.</p>

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent, PointerEvent } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
@@ -101,6 +101,18 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
 
 export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
+  // Lanes share the timeline's height, so one or two layers don't leave the bottom empty.
+  const scroller = useRef<HTMLDivElement>(null)
+  const [laneHeight, setLaneHeight] = useState(96)
+  const laneCount = stems.length
+  useEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    const fit = () => setLaneHeight(Math.round(Math.min(240, Math.max(96, (el.clientHeight - 32) / Math.max(1, laneCount)))))
+    fit()
+    const observer = new ResizeObserver(fit); observer.observe(el)
+    return () => observer.disconnect()
+  }, [laneCount])
   const step = tickStep(duration)
   const majors: number[] = []
   for (let t = 0; t < duration; t += step) majors.push(t)
@@ -144,7 +156,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+    <div ref={scroller} className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
       {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
@@ -179,7 +191,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
           if (!track || !peaks) return null
           const audible = isAudible(tracks, track)
           return (
-            <div key={stem.id} className={`${COLS} h-24 border-b border-line`}>
+            <div key={stem.id} className={`${COLS} border-b border-line transition-[height] duration-300`} style={{ height: laneHeight }}>
               <TrackHeader
                 stem={stem}
                 track={track}
@@ -264,7 +276,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
               const track = tracks.find((t) => t.stemId === stem.id)
               if (!track || !engine.getPeaks(stem.id)) return null
               return (
-                <div key={stem.id} data-lane={stem.id} className="relative h-24 border-b border-transparent">
+                <div key={stem.id} data-lane={stem.id} className="relative border-b border-transparent transition-[height] duration-300" style={{ height: laneHeight }}>
                   {track.automation.map((k, idx) => (
                     <KeyframeMarker
                       key={idx}

@@ -18,7 +18,13 @@ interface Props {
 
 export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
   const [text, setText] = useState('')
-  const [history, setHistory] = useState<Entry[]>([])
+  const [last, setLast] = useState<Entry | null>(null)
+  // The reply describes the moment it was made, so it fades once that moment has passed.
+  useEffect(() => {
+    if (!last) return
+    const timer = window.setTimeout(() => setLast(null), last.ok ? 6000 : 12000)
+    return () => window.clearTimeout(timer)
+  }, [last])
   const [pending, setPending] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   const reason = disabled ? disabledReason : ''
@@ -37,28 +43,25 @@ export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
     setPending(true)
     try {
       const res = await onRun(prompt)
-      setHistory((h) => [...h.slice(-2), { prompt, ...res }])
+      setLast({ prompt, ...res })
       setText('')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      setHistory((h) => [...h.slice(-2), { prompt, message, ok: false }])
+      setLast({ prompt, message, ok: false })
     } finally {
       setPending(false)
     }
   }
 
   return (
-    <div className="relative z-10 shrink-0 px-4 pt-1 pb-4">
+    <div className="relative z-10 shrink-0 px-1 pt-2 pb-3">
       <div className="mx-auto max-w-3xl">
-        {history.length > 0 && (
-          <div className="mb-2 space-y-0.5 px-1 text-[11px]">
-            {history.map((h, i) => (
-              <div key={i} className={h.ok ? 'text-muted' : 'text-amber-700'}>
-                <span className="text-faint">&gt; {h.prompt}</span>
-                <span className="ml-2">{h.message}</span>
-              </div>
-            ))}
-          </div>
+        {last && (
+          <p className={`rise-in mb-2 px-1 text-[11px] ${last.ok ? 'text-muted' : 'text-amber-700'}`} role="status">
+            <span className="text-subtle">{last.prompt}</span>
+            <span className="mx-1.5 text-subtle">·</span>
+            {last.message}
+          </p>
         )}
         <form
           onSubmit={submit}
@@ -89,7 +92,6 @@ export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
             )}
           </button>
         </form>
-        {reason && <p className="mt-2 px-1 text-[11px] text-faint">{reason}</p>}
       </div>
     </div>
   )

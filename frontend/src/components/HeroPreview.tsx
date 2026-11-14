@@ -106,11 +106,11 @@ export function HeroPreview() {
               <div className="font-mono text-[9px] uppercase tracking-wider text-subtle">{row.kind}</div>
             </div>
             <div className="relative h-14 px-2 sm:h-[4.5rem]">
-              <div className="flex h-full items-center gap-[2px]">
+              <div className="flex h-full items-center gap-px sm:gap-[2px]">
                 {row.data.map((v, i) => (
                   <span
                     key={i}
-                    className="flex-1 rounded-full bg-accent/80"
+                    className={`min-w-px flex-1 rounded-full bg-accent/80 ${i % 3 ? 'max-sm:hidden' : ''}`}
                     style={{ height: `${v * 100}%`, opacity: 0.55 + 0.45 * v }}
                   />
                 ))}

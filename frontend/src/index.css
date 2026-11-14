@@ -2,6 +2,8 @@
 
 @theme {
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Display: a grotesque with ink traps and soft, wet-looking joins, for the wordmark and the headline only. */
+  --font-display: "Bricolage Grotesque", "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /*
@@ -17,8 +19,8 @@
   --color-fg: #0e2440;
   --color-fg-2: #2a4262;
   --color-muted: #536a86;
-  --color-subtle: #6f839c;
-  --color-faint: #97a9bf;
+  --color-subtle: #5c728e;
+  --color-faint: #62788f;
   --color-tint: #1d5a9e;
   --color-line: rgb(29 90 158 / 0.12);
   --color-line-strong: rgb(29 90 158 / 0.22);
@@ -89,12 +91,6 @@ body {
   -webkit-mask-image: radial-gradient(ellipse at center, #000 25%, transparent 72%);
 }
 
-.text-gradient {
-  background: linear-gradient(180deg, #0e2440 30%, #2270c8);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
 
 .glow-accent {
   box-shadow:

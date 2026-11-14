@@ -71,6 +71,8 @@ export default function Editor() {
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null)
   const [working, setWorking] = useState<string | null>(null)
+  const [videoAspect, setVideoAspect] = useState<number | null>(null)
+  const portrait = videoSrc !== null && videoAspect !== null && videoAspect < 0.9
   const [layout, setLayout] = useState(readLayout)
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* layout just won't persist */ } }, [layout])
@@ -100,7 +102,7 @@ export default function Editor() {
     const mock = new MockStemSource()
     let cancelled = false
     eng.subscribe(() => setPlaying(eng.isPlaying()))
-    mock
+    const loading = mock
       .load()
       .then((loadedStems) => eng.replaceStems(loadedStems))
       .then((loaded) => {
@@ -118,7 +120,9 @@ export default function Editor() {
     return () => {
       cancelled = true
       eng.dispose()
-      mock.dispose()
+      // Revoking the mock's object URLs while the engine is still fetching them fails those
+      // fetches (React's dev double-mount does exactly that), so wait for the load to settle.
+      void loading.finally(() => mock.dispose())
     }
   }, [])
 
@@ -368,13 +372,18 @@ export default function Editor() {
       {status === 'error' ? (
         <div className="relative z-10 flex flex-1 items-center justify-center p-8 text-sm text-red-600">{error}</div>
       ) : (
-        <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col">
-          <div className="flex min-h-[140px] shrink-0 px-3 pt-3" style={{ height: `${layout.top * 100}%` }}>
+        <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 p-3 pb-0">
+          {/* Left: the clip and its layers. A portrait clip stands beside the timeline; a landscape one sits above it. */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className={`flex min-h-0 flex-1 ${portrait ? 'flex-row gap-3' : 'flex-col'}`}>
+              <div className={portrait ? 'flex h-full shrink-0' : 'flex min-h-[140px] shrink-0'}
+                style={portrait ? { aspectRatio: String(videoAspect), maxWidth: '45%' } : { height: `${layout.top * 100}%` }}>
             <VideoPanel
               engine={engine}
               src={videoSrc}
               onPick={onPickVideo}
               onDuration={setVideoDuration}
+              onAspect={setVideoAspect}
               onError={setLoadError}
               visual={visual}
               onSelection={setVisualSelection}
@@ -382,15 +391,12 @@ export default function Editor() {
               seekTo={seekTo}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
-            <Splitter direction="column" label="Resize the video and the steps panel"
-              onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
-            <div className="flex min-h-0 shrink-0 flex-col" style={{ width: layout.panel }}>
-              <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
-            </div>
-          </div>
-          <Splitter direction="row" label="Resize the video and the timeline"
-            onDrag={(y) => setTop(y - (mainRef.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop(layout.top * (mainRef.current?.clientHeight ?? 800) + d)} onReset={() => setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top }))} />
-          <div className="shadow-card relative mx-3 mb-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
+              </div>
+              {!portrait && (
+                <Splitter direction="row" label="Resize the video and the timeline"
+                  onDrag={(y) => setTop(y - (mainRef.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop(layout.top * (mainRef.current?.clientHeight ?? 800) + d)} onReset={() => setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top }))} />
+              )}
+          <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
               <Timeline
                 engine={engine}
@@ -420,6 +426,14 @@ export default function Editor() {
               </div>
             )}
             <div ref={setPreviewSlot} className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center [&>*]:pointer-events-auto" />
+          </div>
+            </div>
+                </div>
+          <Splitter direction="column" label="Resize the steps panel"
+            onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
+          {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
+          <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
           </div>
         </main>
       )}

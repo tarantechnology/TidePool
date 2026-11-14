@@ -25,6 +25,7 @@ def create_backend(settings: Settings) -> Backend:
             ode_method=settings.ode_method,
             ode_step_size=settings.ode_step_size,
             frame_size=settings.frame_size,
+            visual_batch_size=settings.visual_batch_size,
             ffmpeg=settings.ffmpeg,
             ffprobe=settings.ffprobe,
             ffmpeg_timeout=settings.ffmpeg_timeout,

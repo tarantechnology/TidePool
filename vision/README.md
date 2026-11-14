@@ -1,8 +1,10 @@
 # SoundCanvas Part 2 — Vision
 
+**Runpod update (2026-11-13):** official SAM 3.1 and SAM 2.1 video inference now run on the L4, preserving schema 1.0 and YOLO fallback. Real SAM Audio Small TV text/visual/temporal comparisons also ran. [GPU results, adapters and reproduction](docs/RUNPOD.md) distinguish execution from unverified isolation quality.
+
 Independent, working CV pipeline: MP4/image decoding, real YOLO detection, ByteTrack tracking, optional YOLO instance masks, click selection and versioned JSON. This package does not separate audio. See [validation evidence](docs/VALIDATION.md), [integration contract](docs/CONTRACT.md) and [SAM feasibility](docs/SAM.md).
 
-[Issue #4 integration](docs/ISSUE4.md) adds project-owned video resolution, stored-mask/selection pairing, job diagnostics and an upload → edit → MP4 example. Real YOLO/browser and mock-audio integration tests pass; genuine visual-guided SAM Audio isolation is still blocked. The report includes the exact local runtime/dependency diagnosis and reproduction commands.
+[Issue #4 integration](docs/ISSUE4.md) adds project-owned video resolution, stored-mask/selection pairing, job diagnostics and an upload → edit → MP4 example. The historical report includes real YOLO/browser and mock-audio integration tests and the earlier local dependency blockers. The Runpod results linked above now establish real visual-guided model execution; isolation quality remains unverified.
 
 ## Setup
 
@@ -19,7 +21,7 @@ python -m playwright install chromium
 cd vision
 ```
 
-The backend and vision dependencies are separate; root `requirements.txt` and the backend Docker image do not install YOLO. On Windows use `.venv\Scripts\activate`, and install FFmpeg on PATH. CPU is the validated device. `--device mps` is available but was not benchmarked.
+The backend and vision dependencies are separate; root `requirements.txt` and the backend Docker image do not install YOLO. On Windows use `.venv\Scripts\activate`, and install FFmpeg on PATH. CPU and Runpod CUDA inference are validated; see the measured GPU results above. `--device mps` is available but was not benchmarked.
 
 ## Reproduce real inference
 
@@ -82,9 +84,9 @@ GitHub runs deterministic vision tests separately from backend CI. Manually disp
 - [x] Persistent tracking with per-analysis scope; controlled loss/reappearance experiments.
 - [x] Optional real YOLO instance masks and aligned CV tensors for SAM Audio preparation.
 - [x] Official SAM 3 / SAM Audio feasibility review; explicit mock integration.
-- [ ] SAM 3 inference and quantitative comparison: CUDA/access/checkpoint blockers.
-- [ ] Full SAM Audio processor/model run and visual-guided audio isolation: no model/service locally; requires Person 1.
-- [ ] Shared original-video resolver for the existing WAV+JSON audio HTTP boundary; cross-team approval of schema/model revision remains pending.
+- [x] Official SAM 3.1 CUDA inference and YOLO/SAM 2.1 comparisons; pixel-ground-truth accuracy remains unmeasured.
+- [x] Real SAM Audio Small TV text/visual/temporal inference and backend MP4 export on Runpod; isolation quality remains unverified.
+- [x] Trusted original-video resolver and native-mask handoff through the existing WAV+JSON boundary; cross-team quality review remains pending.
 - [ ] Natural occlusion identity accuracy benchmark, automatic sound association and similar-speaker separation.
 
 Only visible objects are detected. Track IDs can change, predicted classes can be wrong, and a detection does not establish a sound source. CFR timing is supported; normalize variable frame rate, edit lists, nonzero audio/video offsets and rotation before processing/upload so all workstreams share the same timeline. OpenCV's decoded orientation/dimensions are authoritative; no explicit VFR/PTS reconciliation is implemented. Masks are model estimates, not ground truth. License terms for Ultralytics and any future SAM deployment require the team's own review.

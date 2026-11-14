@@ -38,6 +38,7 @@ def api(tmp_path, monkeypatch):
     from app.main import app
     monkeypatch.setattr(core, 'ROOT', tmp_path)
     monkeypatch.setattr(core, 'DB', tmp_path/'db.sqlite')
+    monkeypatch.delenv('VISION_ADAPTER', raising=False)
     monkeypatch.delenv('VISION_MODEL', raising=False)
     monkeypatch.delenv('VISION_DEVICE', raising=False)
     monkeypatch.delenv('YOLO_CONFIG_DIR', raising=False)
@@ -103,6 +104,25 @@ def test_capabilities_report_missing_detector(api, monkeypatch):
                               'weights_cached': False, 'device': 'cpu'}
     assert 'preview' in body  # Existing capability fields are unchanged.
     assert probe.calls == []  # find_spec short-circuits; nothing is spawned or downloaded.
+
+
+def test_sam_adapter_reuses_detector_boundary(api, monkeypatch, tmp_path):
+    import app.detector as detector
+    monkeypatch.setenv('VISION_ADAPTER', 'sam3.1')
+    monkeypatch.setenv('VISION_MODEL', str(tmp_path/'sam3.1_multiplex.pt'))
+    monkeypatch.setenv('VISION_CONCEPT', 'dog')
+    probe = Detector()
+    monkeypatch.setattr(detector, '_spawn', probe)
+    source = tmp_path/'source.mp4'; source.write_bytes(b'boundary-only')
+    result = detector.detect(source, tmp_path/'out', 'asset:test')
+    args = probe.calls[0]['args']
+    assert args[args.index('--adapter')+1] == 'sam3.1'
+    assert args[args.index('--concept')+1] == 'dog'
+    assert result['video_id'] == 'asset:test'
+    monkeypatch.setenv('VISION_ADAPTER', 'sam2.1')
+    monkeypatch.delenv('VISION_SEED_OBJECTS', raising=False)
+    with pytest.raises(detector.DetectorError, match='user-supplied points'):
+        detector.detect(source, tmp_path/'out2', 'asset:test')
 
 
 def test_capabilities_report_installed_detector_once_and_weights(api, monkeypatch, tmp_path):

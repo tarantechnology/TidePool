@@ -106,6 +106,8 @@ class Settings:
     ode_step_size: float = field(default_factory=lambda: _float("AUDIO_ODE_STEP_SIZE", 2 / 32))
     # Frames and masks are pre-resized to this; the vision encoder resizes to 336 anyway.
     frame_size: int = field(default_factory=lambda: _int("AUDIO_FRAME_SIZE", 336))
+    # Limits the official PE vision encoder microbatch without changing resolution/weights.
+    visual_batch_size: int | None = field(default_factory=lambda: _opt_int("AUDIO_VISUAL_BATCH_SIZE"))
 
     ffmpeg: str = field(default_factory=lambda: os.getenv("AUDIO_FFMPEG", "ffmpeg"))
     ffprobe: str = field(default_factory=lambda: os.getenv("AUDIO_FFPROBE", "ffprobe"))
@@ -134,6 +136,8 @@ class Settings:
             self.chunk_seconds = 10.0
 
     def validate(self) -> None:
+        if self.visual_batch_size is not None and self.visual_batch_size <= 0:
+            raise ValueError('AUDIO_VISUAL_BATCH_SIZE must be positive')
         if self.backend not in {"mock", "sam"}:
             raise ValueError(f"AUDIO_BACKEND must be 'mock' or 'sam', got {self.backend!r}")
         if self.stereo_mode not in {"duplicate", "per_channel"}:

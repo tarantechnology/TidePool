@@ -1,5 +1,7 @@
 # Audio integration handoff (Person 1 → Persons 2, 3, 4)
 
+**Runpod update (2026-11-13):** real SAM 3.1 knife masks and SAM Audio Small TV text/visual/temporal inference run on an L4. Schema 1.0 and the audio HTTP API remain unchanged. Optional `AUDIO_VISUAL_BATCH_SIZE` limits the existing PE encoder microbatch. [Results and reproduction](../vision/docs/RUNPOD.md) report measured execution separately from unverified object-sound correctness and speech/music preservation.
+
 **Issue #4 implementation update (2026-11-07):** the backend now validates frozen
 CV selections, attaches stored native-frame detections and a project-owned
 `source.original_ref`/SHA256/FPS, propagates model warnings/errors, and enforces

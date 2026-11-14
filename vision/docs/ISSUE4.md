@@ -1,5 +1,7 @@
 # Issue #4: project-owned visual/audio handoff
 
+**Runpod update, 2026-11-13:** official SAM 3.1 tracked knife masks on a licensed 12-second vegetable-cutting video. Real SAM Audio Small TV completed text-only, visual-only, text+visual and text+visual+candidate-span comparisons on the same four-second interval. All returned non-silent target/residual stems; visual improvement and preservation of speech/music remain unverified. See [measured GPU results and commands](RUNPOD.md). Keep Issue #4 open.
+
 **Update, 2026-11-12:** A normalized four-second excerpt of a real uploaded video passed object tracking, mask handoff, SAM Audio Large CUDA inference, muting and MP4 export. A seeded comparison produced a near-silent visual target, so this demonstrates execution only; it does not demonstrate that the selected object was correctly isolated or that visual guidance improves on text. The service now warns on near-silent visual results. Keep [Issue #4](https://github.com/AkhilNam/SoundCanvas/issues/4) open pending representative ground-truth and listening evaluation.
 
 The historical notes below document the 2026-11-07 validation and blockers at that time.

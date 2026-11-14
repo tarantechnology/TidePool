@@ -16,8 +16,11 @@ class InferenceError(RuntimeError):
         self.retryable = retryable
 
 
-# What the fake adapter's pretend splitter offers (the 4-stem Demucs vocabulary).
+# What the fake adapter's pretend splitter offers (the 4-stem Demucs vocabulary), and the
+# instrument tags and descriptive name it pretends to hear in each, so the UI can be exercised.
 FAKE_STEMS = ('vocals', 'drums', 'bass', 'other')
+FAKE_TAGS = {'vocals': [('Female singing', 0.82), ('Choir', 0.11)], 'drums': [('Drum kit', 0.9), ('Hi-hat', 0.41)],
+             'bass': [('Bass guitar', 0.77), ('Synthesizer', 0.18)], 'other': [('Piano', 0.71), ('Strings', 0.34), ('Synthesizer', 0.12)]}
 
 
 def fake_music_stems(audio, directory, requested, report):
@@ -35,8 +38,10 @@ def fake_music_stems(audio, directory, requested, report):
     for name in names + (['residual'] if residual else []):
         path = directory / (uid() + '.wav')
         run('ffmpeg','-v','error','-y','-i',str(audio),'-af',f'volume={share}','-c:a','pcm_f32le',str(path))
-        results.append({'name':name if name == 'residual' else name.title(),'path':path,'role':'residual' if name == 'residual' else 'target',
-                        'prompt':None,'label':name})
+        tags = [{'label':t,'score':s} for t,s in FAKE_TAGS.get(name, [])] or None
+        # Like the service: "other" is named for its top tag; the label stays canonical.
+        title = 'residual' if name == 'residual' else tags[0]['label'] if name == 'other' else name.title()
+        results.append({'name':title,'path':path,'role':'residual' if name == 'residual' else 'target','prompt':None,'label':name,'tags':tags})
     return results
 
 
@@ -131,8 +136,18 @@ def separate(audio, directory, payload, report=None):
         stems.append({'name': name, 'path': path, 'role': item.get('role'), 'source_stem_id': item.get('stem_id'),
                       'prompt': item.get('prompt'), 'label': item.get('label'), 'sample_rate': item.get('sample_rate'),
                       'channels': item.get('channels'), 'format': item.get('format'), 'spans': item.get('spans'),
-                      'refinement': item.get('refinement') if isinstance(item.get('refinement'), dict) else None})
+                      'refinement': item.get('refinement') if isinstance(item.get('refinement'), dict) else None,
+                      'tags': tags_of(item.get('tags'))})
     return stems
+
+def tags_of(raw):
+    """The service's instrument tags, at most three well-formed ones, or None."""
+    if not isinstance(raw, list): return None
+    tags = [{'label': t['label'].strip()[:80], 'score': float(t['score'])} for t in raw
+            if isinstance(t, dict) and isinstance(t.get('label'), str) and t['label'].strip()
+            and type(t.get('score')) in (int, float) and math.isfinite(t['score'])]
+    return sorted(tags, key=lambda t: -t['score'])[:3] or None
+
 
 def read_wav(path):
     """Decode a PCM/float WAV into (float64 samples [frames, channels], sample_rate)."""

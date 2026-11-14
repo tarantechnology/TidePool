@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendStem } from './backend'
-import { createCandidate, describeRouting, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
+import { createCandidate, describeRouting, tagLine, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
 import { buildVisualPrompt, NO_VISUAL_PROMPT } from './separation'
 
 const config = { baseUrl: 'http://api.test:8000', token: 'tok' }
@@ -97,6 +97,15 @@ describe('toStem', () => {
     expect(toStem(row({ label: 'Dog barking' }), 'blob:x').label).toBe('Dog barking')
     expect(toStem(row({ label: '   ' }), 'blob:x').label).toBe('dog barking')
     expect(toStem(row({}), 'blob:x').label).toBe('dog barking')
+  })
+
+  it('keeps instrument tags, best first, and shows the ones the name does not already say', () => {
+    const stem = toStem(row({ name: 'Piano', label: 'other', role: 'target', tags: [{ label: 'Piano', score: 0.7 }, { label: ' Strings ', score: 0.3 }, { label: '', score: 0.1 }] }), 'blob:x')
+    expect(stem.label).toBe('Piano')
+    expect(stem.tags).toEqual(['Piano', 'Strings'])
+    expect(tagLine(stem.label, stem.tags)).toBe('Strings')
+    expect(tagLine('Vocals', ['Female singing', 'Choir'])).toBe('Female singing · Choir')
+    expect(toStem(row({ tags: null }), 'blob:x')).not.toHaveProperty('tags')
   })
 
   it('shows a music stem by its display name, not its canonical label', () => {

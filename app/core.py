@@ -30,7 +30,7 @@ def connect():
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
-                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'))
+                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'))
 JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():
@@ -89,6 +89,7 @@ def stem(row):
     d['automation'], d['mute_ranges'] = json.loads(d['automation']), json.loads(d['mute_ranges'])
     d['spans'] = json.loads(d['spans']) if d.get('spans') else None
     d['refinement'] = json.loads(d['refinement']) if d.get('refinement') else None
+    d['tags'] = json.loads(d['tags']) if d.get('tags') else None
     d.pop('path')
     d['audio_url'] = f"/api/projects/{d['project_id']}/stems/{d['id']}/audio"
     return d

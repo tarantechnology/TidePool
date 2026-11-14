@@ -126,7 +126,8 @@ def work_once():
                               result.get('role'),result.get('source_stem_id'),result.get('prompt'),result.get('label'),
                               result.get('sample_rate'),result.get('channels'),result.get('format'),
                               json.dumps(spans) if spans is not None else None,
-                              json.dumps(result['refinement']) if result.get('refinement') is not None else None))
+                              json.dumps(result['refinement']) if result.get('refinement') is not None else None,
+                              json.dumps(result['tags']) if result.get('tags') else None))
             with connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 if baseline is not None and {r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))} != baseline:
@@ -135,10 +136,10 @@ def work_once():
                     current=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,append['id'])).fetchone()
                     if not current or current['revision'] != append['revision']: raise ValueError('Residual stem changed during separation; existing stems were preserved. Reload and retry.')
                     db.execute('DELETE FROM stems WHERE project_id=? AND id=?',(pid,append['id']))
-                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,start_offset,volume,muted,solo,automation,mute_ranges) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [(*item,current['start_offset'],current['volume'],current['muted'],current['solo'],current['automation'],current['mute_ranges']) for item in items])
+                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,tags,start_offset,volume,muted,solo,automation,mute_ranges) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [(*item,current['start_offset'],current['volume'],current['muted'],current['solo'],current['automation'],current['mute_ranges']) for item in items])
                 else:
                     db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
-                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',items)
+                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,tags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',items)
                 if payload.get('edit_scope',{}).get('action','keep') != 'keep':
                     from .guidance import edit_target
                     for item in items:

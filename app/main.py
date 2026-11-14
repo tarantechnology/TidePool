@@ -305,7 +305,8 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     p=auth(pid,authorization)
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
     body.has_project_stems=bool(rows)
-    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration']} for r in rows]
+    # A music split's canonical label and instrument tags let "remove the piano" find the "other" track.
+    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration'],'canonical_label':r['label'],'tags':[t['label'] for t in json.loads(r['tags'])] if r['tags'] else None} for r in rows]
     body.tracks=[{'stemId':r['id'],'gain':r['volume'],'muted':bool(r['muted']),'solo':bool(r['solo']),'automation':[{'t':k['time'],'value':k['value']} for k in json.loads(r['automation'])]} for r in rows]
     if p['metadata']: body.duration=json.loads(p['metadata'])['duration']
     parsed=parse(body.prompt)

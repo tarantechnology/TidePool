@@ -77,6 +77,13 @@ describe('muteExistingStem', () => {
       .toEqual([{ type: 'set_mute', stemId: 'v', muted: true }])
   })
 
+  it('mutes the descriptive "other" track for "remove the piano" and "remove other"', () => {
+    const named = [...split.slice(0, 3), { ...saved('p', 'Piano', 'target', 'other'), tags: [{ label: 'Piano', score: 0.7 }, { label: 'Strings', score: 0.3 }] }]
+    for (const description of ['piano', 'other', 'strings']) {
+      expect(muteExistingStem(plan({ kind: 'separate', description, remove: true }), named)?.actions, description).toEqual([{ type: 'set_mute', stemId: 'p', muted: true }])
+    }
+  })
+
   it('leaves isolating, timed removals and unknown sounds to a separation', () => {
     expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: false }), split)).toBeNull()
     expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: true, edit_scope: { action: 'mute', interval: { start: 1, end: 2 } } }), split)).toBeNull()

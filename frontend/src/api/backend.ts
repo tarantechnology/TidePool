@@ -37,6 +37,8 @@ export interface BackendStem {
   format?: string
   /** Sent by backends that run multi-pass separation. Absent or null otherwise. */
   refinement?: BackendRefinement | null
+  /** Instruments heard in a music stem, highest score first. Absent or null otherwise. */
+  tags?: Array<{ label: string; score: number }> | null
 }
 
 export interface BackendRefinement {
@@ -222,6 +224,7 @@ export function toStem(stem: BackendStem, url: string): Stem {
   const refinement = toRefinement(stem.refinement)
   // The backend has no kind field, and kinds are not guessed from names.
   const label = stem.label?.trim()
+  const tags = Array.isArray(stem.tags) ? stem.tags.map((t) => (typeof t?.label === 'string' ? t.label.trim() : '')).filter(Boolean) : []
   return {
     id: stem.id,
     // A music split labels stems canonically ("vocals") and names them for display ("Vocals").
@@ -232,7 +235,13 @@ export function toStem(stem: BackendStem, url: string): Stem {
     startOffset: stem.start_offset ?? 0,
     muteRanges: stem.mute_ranges ?? [],
     ...(refinement ? { refinement } : {}),
+    ...(tags.length ? { tags } : {}),
   }
+}
+
+/** The tags worth showing beside a track's name: "Strings · Synthesizer" for a track named Piano. */
+export function tagLine(name: string, tags: readonly string[] = []): string {
+  return tags.filter((t) => t.toLowerCase() !== name.trim().toLowerCase()).join(' · ')
 }
 
 export interface StemPatch {

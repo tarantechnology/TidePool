@@ -346,9 +346,20 @@ function percentEdit(
   return timedEdit(stem, track, { scale: factor }, from, to, `${stem.label} ${change}${where}.`)
 }
 
+/**
+ * Whether an instrument tag names the sound: "piano" is the tag Piano, and a
+ * word of four letters or more may shorten a tag word ("synth" is Synthesizer).
+ */
+export function tagMatches(tag: string, wanted: string): boolean {
+  const norm = (v: string) => v.trim().replace(/\s+/g, ' ').toLowerCase()
+  const t = norm(tag), w = norm(wanted).replace(/^the /, '')
+  return t === w || (w.length >= 4 && !w.includes(' ') && t.split(/[^a-z0-9]+/).some((word) => word.startsWith(w)))
+}
+
 export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): ParseResult {
   const q = text.toLowerCase().trim()
-  const stem = stems.find((s) => q.includes(s.label.toLowerCase()))
+  // A music stem is also found by its instrument tags: "turn down the synth" finds the track tagged Synthesizer.
+  const stem = stems.find((s) => q.includes(s.label.toLowerCase())) ?? stems.find((s) => s.tags?.some((tag) => q.split(/\s+/).some((word) => tagMatches(tag, word))))
   if (!stem) {
     const names = stems.map((s) => s.label).join(', ')
     return { actions: [], message: `No stem matched. Mention one of: ${names}.` }

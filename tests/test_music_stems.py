@@ -42,7 +42,8 @@ def test_fake_full_split_returns_named_stems_that_sum_to_the_mix(client, tmp_pat
     pid,h=project(client,tmp_path)
     jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'music_stems'}).json()['job_id']
     job=wait(client,'/api/jobs/'+jid,h); assert job['status']=='completed',job
-    assert [(s['name'],s['role'],s['label']) for s in job['stems']]==[('Vocals','target','vocals'),('Drums','target','drums'),('Bass','target','bass'),('Other','target','other')]
+    assert [(s['name'],s['role'],s['label']) for s in job['stems']]==[('Vocals','target','vocals'),('Drums','target','drums'),('Bass','target','bass'),('Piano','target','other')]
+    assert job['stems'][3]['tags'][0]=={'label':'Piano','score':0.71} and job['stems'][0]['tags'][0]['label']=='Female singing'
     assert job['inference']['model']['is_mock'] is True and any('no source separation' in w for w in job['inference']['warnings'])
     assert job['routing']['mode']=='music_stems' and job['routing']['stems']==['vocals','drums','bass','other']
     with core.connect() as db: paths=[r['path'] for r in db.execute('SELECT path FROM stems WHERE project_id=?',(pid,))]
@@ -198,7 +199,7 @@ def test_mp3_song_upload_route_split_gives_four_tracks(client, tmp_path):
     info=client.get(f'/api/projects/{pid}',headers=h).json()
     assert info['last_completed_job_id']==jid
     tracks=client.get(f'/api/projects/{pid}/stems',headers=h).json()
-    assert [t['name'] for t in tracks]==['Vocals','Drums','Bass','Other']
+    assert [t['name'] for t in tracks]==['Vocals','Drums','Bass','Piano'] and all(t['tags'] for t in tracks)
     assert all(client.get(t['audio_url'],headers=h).status_code==200 for t in tracks)
 
 
@@ -244,3 +245,55 @@ def test_progress_estimate_eases_toward_ninety():
     assert expected_seconds(240,{'options':{'mode':'music_stems'}})==pytest.approx(32)
     assert expected_seconds(240,{'prompts':[],'options':{}})==pytest.approx(32)  # auto with no prompts is a split
     assert expected_seconds(10,{'prompts':['a','b'],'options':{'passes':2}})==pytest.approx(60)
+
+
+def test_service_tags_are_persisted_and_sanitised(client, tmp_path, monkeypatch):
+    import app.media as media
+    pid,h=project(client,tmp_path)
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://mock.invalid/separate')
+    tags=[{'label':'Strings','score':0.3},{'label':'Piano','score':0.8},{'label':'','score':0.9},{'label':'Synth','score':'high'},{'label':'Organ','score':0.1},{'label':'Harp','score':0.05}]
+    def mock_post(url, files, data, **kwargs):
+        raw=base64.b64encode(files['audio'][1].read()).decode()
+        return httpx.Response(200,request=httpx.Request('POST',url),json={'stems':[
+            {'name':'Piano & Strings','label':'other','role':'target','audio_base64':raw,'tags':tags},
+            {'name':'Vocals','label':'vocals','role':'target','audio_base64':raw,'tags':None}]})
+    monkeypatch.setattr(media.httpx,'post',mock_post)
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'music_stems','stems':['other','vocals']}).json()['job_id']
+    assert wait(client,'/api/jobs/'+jid,h)['status']=='completed'
+    other,vocals=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert other['name']=='Piano & Strings' and other['label']=='other'
+    assert other['tags']==[{'label':'Piano','score':0.8},{'label':'Strings','score':0.3},{'label':'Organ','score':0.1}]
+    assert vocals['tags'] is None
+
+
+def test_planner_sees_canonical_labels_and_tags(client, tmp_path, monkeypatch):
+    import app.agent as agent
+    pid,h=project(client,tmp_path)
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'music_stems'}).json()['job_id']
+    piano=wait(client,'/api/jobs/'+jid,h)['stems'][3]
+    monkeypatch.setenv('OPENAI_API_KEY','not-a-real-key')
+    sent={}
+    plan={'kind':'edit','description':None,'remove':False,'message':'Muted the piano.','guidance':{'anchors':[]},'edit_scope':{'action':'keep','interval':None},
+          'use_visual':False,'separation_mode':None,'stems':None,'actions':[{'type':'set_mute','stemId':piano['id'],'muted':True}]}
+    class MockResponse:
+        is_error=False
+        def json(self): return {'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(plan)}]}]}
+    def post(url, **kwargs):
+        sent.update(json.loads(kwargs['json']['input'])); return MockResponse()
+    monkeypatch.setattr(agent.httpx,'post',post)
+    r=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'remove the piano','stems':[],'tracks':[],'duration':1})
+    assert r.status_code==200 and r.json()['actions'][0]['stemId']==piano['id']
+    context=next(s for s in sent['stems'] if s['id']==piano['id'])
+    assert context['label']=='Piano' and context['canonical_label']=='other' and context['tags']==['Piano','Strings','Synthesizer']
+    assert 'tags' in agent.INSTRUCTIONS
+
+
+def test_existing_database_gains_tags_column(tmp_path, monkeypatch):
+    import sqlite3
+    import app.core as core
+    path=tmp_path/'legacy.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE stems(id TEXT PRIMARY KEY)'); db.execute("INSERT INTO stems(id) VALUES('old')")
+    monkeypatch.setattr(core,'DB',path)
+    core.init(); core.init()
+    with core.connect() as db: assert db.execute("SELECT tags FROM stems WHERE id='old'").fetchone()['tags'] is None

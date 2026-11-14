@@ -1,6 +1,7 @@
 import { Tip } from './Tip'
 import type { CSSProperties } from 'react'
 import { refinementBadge } from '../api/refine'
+import { tagLine } from '../api/backend'
 import { MAX_GAIN, toDb } from '../edits'
 import type { EditAction, Stem, StemKind, TrackState } from '../types'
 
@@ -41,7 +42,10 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
     <div className={`relative z-30 flex min-h-0 flex-col justify-center border-r border-line px-4 ${compact ? 'gap-0' : 'gap-2.5'}`}>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium tracking-tight">{stem.label}</div>
+          <div className="truncate text-[13px] font-medium tracking-tight" title={stem.tags?.length ? `Heard: ${stem.tags.join(', ')}` : undefined}>
+            {stem.label}
+            {tagLine(stem.label, stem.tags) && <span className="ml-1.5 text-[11px] font-normal text-subtle">{tagLine(stem.label, stem.tags)}</span>}
+          </div>
           <div className="flex items-center gap-1.5">
             <select
               title="Stem kind"

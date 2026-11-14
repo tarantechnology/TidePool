@@ -1,3 +1,4 @@
+import { tagMatches } from '../edits'
 import { MUSIC_STEMS } from './backend'
 import type { SavedStem } from './backend'
 
@@ -66,6 +67,7 @@ export function musicStemName(description: string): string | null {
 export const matchesDescription = (stem: SavedStem, wanted: string): boolean => {
   const music = musicStemName(wanted)
   return [stem.prompt, stem.label, stem.name].some((value) => typeof value === 'string' && (normalizeStemName(value) === wanted || (music !== null && musicStemName(value) === music)))
+    || (stem.tags ?? []).some((t) => typeof t?.label === 'string' && tagMatches(t.label, wanted))
 }
 
 /**

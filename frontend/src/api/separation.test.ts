@@ -136,3 +136,22 @@ describe('music splits', () => {
     expect(canRemove(found)).toBe(true)
   })
 })
+
+describe('instrument tags', () => {
+  const tags = (...labels: string[]) => labels.map((label, i) => ({ label, score: 0.9 - i / 10 }))
+  const split = [
+    stem({ id: 'v', name: 'Vocals', role: 'target', label: 'vocals', tags: tags('Female singing') }),
+    stem({ id: 'd', name: 'Drums', role: 'target', label: 'drums', tags: tags('Drum kit') }),
+    stem({ id: 'o', name: 'Synth & Strings', role: 'target', label: 'other', tags: tags('Synthesizer', 'Strings', 'Piano') }),
+  ]
+
+  it('finds the descriptive "other" track by its tags and by its canonical label', () => {
+    for (const words of ['piano', 'the strings', 'synth', 'Synth & Strings', 'other']) {
+      const found = findRemoveTargets(split, words)
+      expect(found.target?.id, words).toBe('o')
+      expect(canRemove(found), words).toBe(true)
+    }
+    expect(findRemoveTargets(split, 'kit').target).toBeNull()  // too short to shorten a tag word
+    expect(findRemoveTargets(split, 'trumpet').target).toBeNull()
+  })
+})

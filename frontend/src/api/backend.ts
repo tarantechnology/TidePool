@@ -59,6 +59,8 @@ export interface BackendJob {
   status: string
   progress?: number
   error?: string | null
+  /** What a running process job is doing: `splitting` or `separating`. */
+  stage?: string | null
   stems?: BackendStem[]
   /** Read from get_job in app/main.py. INTEGRATION.md does not list this field. */
   project_id?: string
@@ -478,7 +480,7 @@ export async function adjustDirectorPreview(config:BackendConfig,candidateId:str
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/director-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,enabled})})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {provenance?:{changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface CandidateInfo {stage?:string|null;provenance?:{changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})

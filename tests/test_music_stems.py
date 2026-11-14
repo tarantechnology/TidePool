@@ -202,3 +202,72 @@ def test_planner_never_pairs_a_song_split_with_a_timestamp(monkeypatch):
     # A timestamped prompted separation is still allowed.
     plan,_=planned(monkeypatch,{'separation_mode':'prompted','description':'dog barking','processing_time':4},'remove the dog barking at 4s')
     assert (plan['kind'],plan['processing_time'],plan['separation_mode'])==('separate',4,'prompted')
+
+
+def test_mp3_song_upload_route_split_gives_four_tracks(client, tmp_path):
+    pid,h=project(client,tmp_path,'song.mp3')
+    route=client.get(f'/api/projects/{pid}/route',headers=h).json()
+    assert route['mode']=='music_stems'
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'music_stems'}).json()['job_id']
+    job=wait(client,'/api/jobs/'+jid,h); assert job['status']=='completed',job
+    assert job['progress']==100 and job['stage'] is None
+    info=client.get(f'/api/projects/{pid}',headers=h).json()
+    assert info['last_completed_job_id']==jid
+    tracks=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [t['name'] for t in tracks]==['Vocals','Drums','Bass','Other']
+    assert all(client.get(t['audio_url'],headers=h).status_code==200 for t in tracks)
+
+
+def test_progress_advances_while_the_separation_call_blocks(client, tmp_path, monkeypatch):
+    import time
+    import app.worker as worker
+    from app.media import separate
+    pid,h=project(client,tmp_path)
+    monkeypatch.setattr(worker,'TICK_SECONDS',0.05)
+    monkeypatch.setattr(worker,'expected_seconds',lambda duration, payload: 0.5)
+    def slow(*args, **kwargs):
+        time.sleep(1.0); return separate(*args, **kwargs)
+    monkeypatch.setattr(worker,'separate',slow)
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'music_stems'}).json()['job_id']
+    seen=[]
+    for _ in range(100):
+        job=client.get('/api/jobs/'+jid,headers=h).json()
+        if job['status']=='completed': break
+        if job['status']=='processing': seen.append((job['progress'],job['stage']))
+        time.sleep(.03)
+    assert job['status']=='completed' and job['progress']==100 and job['stage'] is None
+    assert any(stage=='splitting' and 5<progress<=90 for progress,stage in seen), seen
+    progress=[p for p,_ in seen]
+    assert progress==sorted(progress)
+
+
+def test_ticker_never_overwrites_a_finished_job(client, tmp_path):
+    import time
+    import app.core as core
+    import app.worker as worker
+    pid,h=project(client,tmp_path)
+    jid=client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'music_stems'}).json()['job_id']
+    assert wait(client,'/api/jobs/'+jid,h)['status']=='completed'
+    with worker.ticking(jid,'splitting',1): time.sleep(.6)
+    with core.connect() as db: row=db.execute('SELECT progress,stage FROM jobs WHERE id=?',(jid,)).fetchone()
+    assert (row['progress'],row['stage'])==(100,None)
+
+
+def test_progress_estimate_eases_toward_ninety():
+    from app.worker import eased, expected_seconds
+    values=[eased(t,10) for t in range(0,200)]
+    assert values[0]==5 and values==sorted(values) and max(values)<=90 and 75<=eased(10,10)<=80
+    assert expected_seconds(240,{'options':{'mode':'music_stems'}})==pytest.approx(32)
+    assert expected_seconds(240,{'prompts':[],'options':{}})==pytest.approx(32)  # auto with no prompts is a split
+    assert expected_seconds(10,{'prompts':['a','b'],'options':{'passes':2}})==pytest.approx(60)
+
+
+def test_candidate_status_reports_its_stage_only_while_processing(client, tmp_path):
+    import app.core as core
+    pid,h=project(client,tmp_path)
+    cid=client.post(f'/api/projects/{pid}/cinematic-preview',headers=h,json={}).json()['candidate_id']
+    assert wait(client,'/api/candidates/'+cid,h)['status'] in ('completed','failed')  # the worker is done with it
+    with core.connect() as db: db.execute("UPDATE jobs SET status='processing',stage='rendering' WHERE id=?",(cid,))
+    assert client.get(f'/api/candidates/{cid}',headers=h).json()['stage']=='rendering'
+    with core.connect() as db: db.execute("UPDATE jobs SET status='failed',stage='rendering' WHERE id=?",(cid,))
+    assert client.get(f'/api/candidates/{cid}',headers=h).json()['stage'] is None

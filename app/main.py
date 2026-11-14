@@ -54,7 +54,8 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload')
-    if kind!='vision': d.pop('stage',None)
+    # Process jobs report 'splitting' or 'separating' while the audio service runs.
+    if kind not in ('vision','process'): d.pop('stage',None)
     output=json.loads(d.pop('output')) if d['output'] else None
     d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':
@@ -507,6 +508,7 @@ def director_adjust(cid: str, body: DirectorAdjustment, authorization: str | Non
 def candidate_status(cid: str,authorization: str | None=Header(None)):
     row=candidate_record(cid,authorization); output=json.loads(row['output']) if row['output'] else None
     return {'id':cid,'project_id':row['project_id'],'status':row['status'],'progress':row['progress'],'error':row['error'],
+        'stage':row['stage'] if row['status']=='processing' else None,
         'audio_url':f'/api/candidates/{cid}/audio' if output else None,
         'mix_url':f'/api/candidates/{cid}/audio?part=mix' if output and 'mix' in output else None,
         'original_url':f'/api/candidates/{cid}/audio?part=original' if output and 'original' in output else None,

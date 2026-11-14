@@ -67,3 +67,22 @@ done and measured, then merge the PR.
 - Do not ask permission for reversible steps; report test output faithfully.
 - Never print the Hugging Face token; access to facebook/sam-audio-small, -base, -large and
   -judge is approved on the owner's account (TaranTech).
+
+## Update 2026-11-13 (late): GPU host findings
+- A RunPod A40 (46 GB) is set up: `/workspace/soundcanvas` (branch pushed over SSH, the repo is
+  private), venv `/workspace/venv`, HF cache `/workspace/hf` (sam-audio-large cached), speech
+  cache `/workspace/say-cache`. `bash scripts/runpod_setup.sh start|stop|status|bench`.
+- Linux has no `say`: `SOUNDCANVAS_SAY_CACHE` + `audio-service/benchmarks/say-cache/` (rendered on
+  the Mac, rsync'ed) give identical real-speech fixtures; without it the fixtures are synthetic
+  tones that the large model does not treat as speech (meaningless speech numbers).
+- Large model, real speech, "man speaking" on `competing_voices`: the draws disagree on WHICH
+  speaker is the man (window 0: draw 0 = the woman, draw 1 = the man), and later windows often
+  return the whole mixture. K=1 gives -8 dB; overlap-consistent K=2 locks onto whatever draw 0
+  was (-45 dB when it was the wrong voice). With K>=3 the first window takes the medoid (majority),
+  which picked the right voice in the diagnostic. Quality profile should use K=3, not 2.
+- Multi-pass safeguards landed (`AUDIO_PASS_MAX_RATIO_DB` -3, `AUDIO_PASS_MIN_SIMILARITY` 0.6):
+  a second "guitar" pass hallucinated the drums (19.6 -> 0.9 dB) before them.
+- Synthetic-voice large-model sweep (music_mix is the valid row): mask +5.7 dB; residual threshold
+  0.5 (`refine_residual_threshold`) +3.0 dB SI-SDRi and -3.3 dB target-in-residual; thresholds on
+  the target side cost SI-SDRi; the frame gate never triggers (drop it).
+- Pending: real-speech `quality-v1` and `leakage-v2` on the A40 (`/workspace/bench/real-*`).

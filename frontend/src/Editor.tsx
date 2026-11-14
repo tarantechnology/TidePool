@@ -76,7 +76,21 @@ export default function Editor() {
   const [layout, setLayout] = useState(readLayout)
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* layout just won't persist */ } }, [layout])
-  const setTop = (px: number) => { const h = mainRef.current?.clientHeight ?? 800; setLayout((l) => ({ ...l, top: clamp(px / h, 0.18, 0.78) })) }
+  const setTop = (px: number) => { setAutoTop(false); const h = stage.current?.clientHeight ?? 800; setLayout((l) => ({ ...l, top: clamp(px / h, 0.18, 0.78) })) }
+  // A widescreen clip gets a video box exactly its shape at the full width, with the timeline
+  // taking what's left (at least TIMELINE_MIN). Dragging the handle switches this off until reset.
+  const [autoTop, setAutoTop] = useState(true)
+  const stage = useRef<HTMLDivElement>(null)
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = stage.current
+    if (!el) return
+    const measure = () => setStageSize({ width: el.clientWidth, height: el.clientHeight })
+    measure()
+    const observer = new ResizeObserver(measure); observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  const fittedTop = videoAspect && stageSize.width > 0 ? Math.max(140, Math.min(stageSize.width / videoAspect, stageSize.height - TIMELINE_MIN)) : null
   const setPanel = (px: number) => setLayout((l) => ({ ...l, panel: clamp(px, 260, 560) }))
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
@@ -375,9 +389,9 @@ export default function Editor() {
         <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 p-3 pb-0">
           {/* Left: the clip and its layers. A portrait clip stands beside the timeline; a landscape one sits above it. */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className={`flex min-h-0 flex-1 ${portrait ? 'flex-row gap-3' : 'flex-col'}`}>
+            <div ref={stage} className={`flex min-h-0 flex-1 ${portrait ? 'flex-row gap-3' : 'flex-col'}`}>
               <div className={portrait ? 'flex h-full shrink-0' : 'flex min-h-[140px] shrink-0'}
-                style={portrait ? { aspectRatio: String(videoAspect), maxWidth: '45%' } : { height: `${layout.top * 100}%` }}>
+                style={portrait ? { aspectRatio: String(videoAspect), maxWidth: '45%' } : autoTop && fittedTop !== null && videoSrc && videoAspect ? { height: fittedTop, width: Math.min(stageSize.width, fittedTop * videoAspect), alignSelf: 'center' } : { height: `${layout.top * 100}%` }}>
             <VideoPanel
               engine={engine}
               src={videoSrc}
@@ -394,7 +408,7 @@ export default function Editor() {
               </div>
               {!portrait && (
                 <Splitter direction="row" label="Resize the video and the timeline"
-                  onDrag={(y) => setTop(y - (mainRef.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop(layout.top * (mainRef.current?.clientHeight ?? 800) + d)} onReset={() => setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top }))} />
+                  onDrag={(y) => setTop(y - (stage.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop((autoTop && fittedTop !== null && videoSrc ? fittedTop : layout.top * (stage.current?.clientHeight ?? 800)) + d)} onReset={() => { setAutoTop(true); setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top })) }} />
               )}
           <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
@@ -444,6 +458,8 @@ export default function Editor() {
 }
 
 const LAYOUT_KEY = 'tidepool.layout'
+/** The least height the timeline keeps when a widescreen clip sizes the video box. */
+const TIMELINE_MIN = 200
 const DEFAULT_LAYOUT = { top: 0.4, panel: 336 }
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 function readLayout(): typeof DEFAULT_LAYOUT {

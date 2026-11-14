@@ -69,13 +69,16 @@ def main():
     p.add_argument('--input-dir', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--audiosep-root', type=Path, required=True)
+    p.add_argument('--chunk-seconds', type=float, default=0., help='0 for one window; 10 for longer clips')
     args = p.parse_args()
     if args.output.exists():
         p.error('Use a fresh output directory')
     source = args.input_dir.resolve()
     audio = decode(path=source/'mixture.wav', max_channels=2)
-    if audio.sample_rate != 48000 or audio.frames != 576000:
-        p.error('Expected the exact 12-second, 48 kHz controlled mixture')
+    if audio.sample_rate != 48000 or not audio.frames:
+        p.error('Expected a nonempty 48 kHz mixture.wav')
+    if not np.isfinite(args.chunk_seconds) or args.chunk_seconds < 0:
+        p.error('chunk-seconds must be finite and nonnegative')
     # Load the shared lease without importing vision's optional OpenCV package.
     guard_spec = importlib.util.spec_from_file_location('soundcanvas_gpu_guard', ROOT/'vision/soundcanvas_cv/gpu_guard.py')
     guard = importlib.util.module_from_spec(guard_spec)
@@ -88,17 +91,18 @@ def main():
     model_id = 'audiosep-base-4M'
     backend = AudioSepBackend(str(args.audiosep_root), model_id, device='cuda')
     settings = Settings(backend='audiosep', model_id=model_id, device='cuda',
-                        chunk_seconds_env=0, chunk_batch_env=1, refine='off',
+                        chunk_seconds_env=args.chunk_seconds, chunk_batch_env=1, refine='off',
                         load_span_predictor=False, load_rankers=False)
     engine = Engine(settings, backend)
     report = {
         'source_commit': '8a5cb33', 'backend':'audiosep', 'is_mock':False,
+        'runner_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'inference_verified':False, 'prompt':'dog barking', 'visual_guidance':False,
-        'interval':[0,12], 'sample_count':audio.frames, 'sample_rate':audio.sample_rate,
+        'interval':[0,audio.duration], 'sample_count':audio.frames, 'sample_rate':audio.sample_rate,
         'input_sha256':hashlib.sha256((source/'mixture.wav').read_bytes()).hexdigest(),
         'gpu':torch.cuda.get_device_name(), 'torch':torch.__version__,
         'cuda_runtime':torch.version.cuda, 'dtype':'float32', 'seed':42,
-        'passes':1, 'refine':'off', 'chunk_seconds':0, 'chunk_batch':1,
+        'passes':1, 'refine':'off', 'chunk_seconds':args.chunk_seconds, 'chunk_batch':1,
         'listening_evaluation':'Pending human review; no winner or sound-quality claim',
         'packages':{name:importlib.metadata.version(name) for name in
                     ['torch','torchaudio','pytorch-lightning','transformers','numpy']},
@@ -115,7 +119,7 @@ def main():
         start = time.perf_counter()
         result = engine.separate(audio, SeparationMetadata.model_validate({
             'prompts':['dog barking'],
-            'options':{'seed':42,'passes':1,'chunk_seconds':0,'chunk_batch':1,
+            'options':{'seed':42,'passes':1,'chunk_seconds':args.chunk_seconds,'chunk_batch':1,
                        'refine':'off','residual':'mixture_minus_targets'},
         }))
         torch.cuda.synchronize()
@@ -144,10 +148,13 @@ def main():
         report['residual_rms'] = float(np.sqrt(np.mean(residual**2)))
         report['reconstruction_max_abs'] = float(np.max(np.abs(target+residual-audio.samples)))
         report['output_peak'] = float(np.max(np.abs(residual)))
-        refs = {name:read_wav(source/'references'/f'{name}.wav')[0][:,0]
-                for name in ['speaker_a','speaker_b','barking']}
-        report['metrics'] = reference_metrics(residual.mean(axis=0), audio.samples.mean(axis=0), refs)
-        report['barking_target_si_sdri_db'] = float(si_sdr_improvement(target, refs['barking'], audio.samples))
+        if all((source/'references'/f'{name}.wav').is_file() for name in ['speaker_a','speaker_b','barking']):
+            refs = {name:read_wav(source/'references'/f'{name}.wav')[0][:,0]
+                    for name in ['speaker_a','speaker_b','barking']}
+            report['metrics'] = reference_metrics(residual.mean(axis=0), audio.samples.mean(axis=0), refs)
+            report['barking_target_si_sdri_db'] = float(si_sdr_improvement(target, refs['barking'], audio.samples))
+        else:
+            report['objective_separation_metrics'] = 'Unavailable: real clip has no isolated source references'
         report['inference_verified'] = True
     except Exception as exc:
         # Avoid including resource URLs or authentication material in shared artifacts.

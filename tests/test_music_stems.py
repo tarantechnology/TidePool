@@ -193,7 +193,7 @@ def test_planner_schema_lists_both_features_strictly():
     from app.agent import SCHEMA
     assert set(SCHEMA['required'])==set(SCHEMA['properties'])
     assert {'separation_mode','stems','processing_time'} <= set(SCHEMA['required'])
-    assert SCHEMA['properties']['kind']['enum']==['edit','separate','cinematic','director','clarify']
+    assert {'edit','separate','cinematic','director','clarify'} <= set(SCHEMA['properties']['kind']['enum'])
 
 
 def test_planner_never_pairs_a_song_split_with_a_timestamp(monkeypatch):

@@ -326,10 +326,16 @@ class Engine:
             if stem.ndim != 2 or stem.shape[0] != mixture.shape[0]:
                 raise InferenceFailure(f"stem splitter returned {name} with shape {stem.shape} for a mixture of shape {mixture.shape}")
             raw[name] = fit_length(stem, audio.frames)
-        split = mixture_consistency(mixture, {name: raw[name] for name in splitter.stems})
+        split = mixture_consistency(mixture, {name: raw[name] for name in splitter.stems})  # in place, no extra copies
 
         def total(names: list[str]) -> np.ndarray:
-            return np.sum([split[n] for n in names], axis=0, dtype=np.float32)
+            """One stem is returned as-is; several are accumulated into a single new buffer."""
+            if len(names) == 1:
+                return split[names[0]]
+            acc = split[names[0]].copy()
+            for name in names[1:]:
+                acc += split[name]
+            return acc
 
         stems = [StemArrays(r.name, "target", total(components(r.canonical, splitter.stems)), None, r.canonical, None) for r in decision.requests]
         if decision.residual and options.residual != "none":

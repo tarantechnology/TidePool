@@ -62,10 +62,37 @@ def test_mixture_consistency_sums_exactly_and_follows_energy():
     rng = np.random.default_rng(0)
     mix = rng.standard_normal((2, 48_000)).astype(np.float32) * 0.3
     stems = {"vocals": mix * 0.5, "drums": mix * 0.2, "silent": np.zeros_like(mix)}  # 0.3 of the mix is missing
+    before = {n: s.copy() for n, s in stems.items()}
     fixed = mixture_consistency(mix, stems)
     assert np.max(np.abs(sum(fixed.values()) - mix)) < 1e-4
-    assert not np.any(fixed["silent"])  # a silent stem takes none of the error
-    assert np.mean(np.abs(fixed["vocals"] - stems["vocals"])) > np.mean(np.abs(fixed["drums"] - stems["drums"]))
+    assert np.max(np.abs(fixed["silent"])) < 1e-6  # a silent stem takes ~none of the error
+    assert np.mean(np.abs(fixed["vocals"] - before["vocals"])) > np.mean(np.abs(fixed["drums"] - before["drums"]))
+    assert fixed["vocals"] is stems["vocals"]  # float32 stems are corrected in place, not copied
+
+
+def test_mixture_consistency_uses_short_time_energy():
+    rng = np.random.default_rng(1)
+    n = 96_000
+    vocals = rng.standard_normal((2, n)).astype(np.float32) * 0.2
+    vocals[:, : n // 2] = 0.0  # instrumental break in the first half
+    drums = rng.standard_normal((2, n)).astype(np.float32) * 0.2
+    mix = (vocals + drums) * 1.1  # 10% missing everywhere
+    fixed = mixture_consistency(mix, {"vocals": vocals.copy(), "drums": drums.copy()})
+    assert np.max(np.abs(fixed["vocals"][:, : n // 2 - 2048])) < 1e-6  # no leaked error during the break
+    assert np.max(np.abs(fixed["vocals"] + fixed["drums"] - mix)) < 1e-4
+
+
+def test_mixture_consistency_long_input_stays_float32():
+    rng = np.random.default_rng(2)
+    n = 48_000 * 40 + 123  # several processing blocks plus a ragged tail
+    mix = rng.standard_normal((2, n)).astype(np.float32) * 0.3
+    stems = {name: (mix * w).astype(np.float32) for name, w in (("vocals", 0.4), ("drums", 0.3), ("bass", 0.1), ("other", 0.1))}
+    fixed = mixture_consistency(mix, stems)
+    assert all(s.dtype == np.float32 and s.shape == mix.shape for s in fixed.values())
+    total = fixed["vocals"].copy()
+    for name in ("drums", "bass", "other"):
+        total += fixed[name]
+    assert np.max(np.abs(total - mix)) < 1e-4
 
 
 def test_mixture_consistency_all_silent_splits_equally():

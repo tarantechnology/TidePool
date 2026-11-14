@@ -48,20 +48,46 @@ def fit_length(samples: np.ndarray, n: int) -> np.ndarray:
     return np.pad(samples, [(0, 0)] * (samples.ndim - 1) + [(0, n - samples.shape[-1])])
 
 
-def mixture_consistency(mixture: np.ndarray, stems: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """Spread ``mixture - sum(stems)`` over the stems in proportion to their energy.
+# Short-time frame for the consistency weights, the frames per processing block (~11 s at
+# 48 kHz), and an energy floor so a frame where every stem is silent splits the error evenly.
+CONSISTENCY_FRAME = 2048
+CONSISTENCY_BLOCK_FRAMES = 256
+ENERGY_FLOOR = 1e-10
 
-    Afterwards the stems sum to the mixture (up to float32 rounding), so unmuting every
-    track reproduces the upload. Weights are per channel; a channel where every stem is
-    silent gets the error split equally.
+
+def mixture_consistency(mixture: np.ndarray, stems: dict[str, np.ndarray], frame: int = CONSISTENCY_FRAME) -> dict[str, np.ndarray]:
+    """Spread ``mixture - sum(stems)`` over the stems in proportion to their short-time energy.
+
+    Afterwards the stems sum to the mixture (up to float32 rounding), so unmuting every track
+    reproduces the upload. Weights are per channel and per ``frame`` samples, so a stem that is
+    silent in a section (vocals in an instrumental break) receives ~no error there.
+
+    Works in float32 and in place: float32 writable stems are updated and returned as-is (others
+    are converted once). Processing runs in ~11 s blocks, so the extra memory is a few
+    block-sized buffers, not a copy of every stem.
     """
-    if not stems:
-        return {}
-    names = list(stems)
-    stack = np.stack([np.asarray(stems[n], dtype=np.float64) for n in names])  # (S, C, T)
-    error = np.asarray(mixture, dtype=np.float64) - stack.sum(axis=0)
-    energy = np.square(stack).sum(axis=2, keepdims=True)  # (S, C, 1)
-    total = energy.sum(axis=0, keepdims=True)
-    weights = np.where(total > 0, energy / np.where(total > 0, total, 1.0), 1.0 / len(names))
-    fixed = (stack + weights * error[None]).astype(np.float32)
-    return {n: fixed[i] for i, n in enumerate(names)}
+    out: dict[str, np.ndarray] = {}
+    for name, stem in stems.items():
+        arr = np.asarray(stem, dtype=np.float32)
+        out[name] = arr if arr.flags.writeable else arr.copy()
+    if not out:
+        return out
+    mix = np.asarray(mixture, dtype=np.float32)
+    channels, length = mix.shape
+    block = frame * CONSISTENCY_BLOCK_FRAMES
+    for start in range(0, length, block):
+        end = min(start + block, length)
+        n = end - start
+        frames = -(-n // frame)
+        parts = [stem[:, start:end] for stem in out.values()]  # views, updated in place
+        error = mix[:, start:end].copy()
+        for part in parts:
+            error -= part
+        energy = np.stack([
+            np.square(np.pad(part, ((0, 0), (0, frames * frame - n)))).reshape(channels, frames, frame).sum(axis=-1)
+            for part in parts
+        ]) + ENERGY_FLOOR  # (stems, channels, frames)
+        weights = energy / energy.sum(axis=0, keepdims=True)
+        for part, weight in zip(parts, weights, strict=True):
+            part += np.repeat(weight, frame, axis=-1)[:, :n].astype(np.float32) * error
+    return out

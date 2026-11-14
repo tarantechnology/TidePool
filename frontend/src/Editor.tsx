@@ -268,7 +268,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'insert') return {message:plan.message,ok:true}
+      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'fx' || plan.kind === 'duck' || plan.kind === 'loudness' || plan.kind === 'insert') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
@@ -430,6 +430,7 @@ export default function Editor() {
                 onAction={dispatch}
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
+                onRemoveFx={(stemId, chip) => { void projectPanel.current?.removeFx(stemId, chip.id, chip.label).catch(() => { /* The panel shows the error. */ }) }}
               />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">

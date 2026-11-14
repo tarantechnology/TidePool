@@ -9,6 +9,11 @@ const ANCHOR = /\b(?:when(?:ever)?|every\s*time|each\s+time|the\s+(?:first|secon
 const MEME = /\b(?:vine\s*boom|bruh|record\s+scratch|sad\s+trombone|rimshot|ba[\s-]?dum|laugh(?:ter|\s+track)?|applause|crickets|air\s*horn|whoosh|riser|ding|ka-?ching|cash\s+register|buzzer|drum\s*roll|tada|ta-da|boing|slide\s+whistle|gasp|oof|dun\s+dun|sting|womp|fanfare)\b/i
 const REPLACE = /\b(?:replace|replacing|swap|substitute|instead\s+of)\b|\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b/i
 
+/** True when the text names a meme/editor sound from the library ("vine boom", "riser", "laugh track"). */
+export function namesSfxSound(text: string): boolean {
+  return MEME.test(text)
+}
+
 export function requestsSfxInsert(text: string): boolean {
   const t = text.trim()
   if (!t || REPLACE.test(t)) return false

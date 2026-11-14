@@ -173,7 +173,7 @@ def clarify(message, **extra):
 def empty_plan(kind, message):
     return {'kind': kind, 'description': None, 'remove': False, 'actions': [], 'message': message,
             'guidance': {'anchors': []}, 'edit_scope': {'action': 'keep', 'interval': None}, 'processing_time': None,
-            'separation_mode': None, 'stems': None, 'use_visual': False, 'inserts': None}
+            'separation_mode': None, 'stems': None, 'use_visual': False, 'inserts': None, 'fx': None}
 
 
 def fmt_time(seconds):

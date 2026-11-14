@@ -238,6 +238,24 @@ subsequent effect applications build on it. Earlier cinematic processing is
 already rendered and cannot be adjusted independently. Extreme boosts can clip;
 listen and adjust layer volume as needed.
 
+### Chat effects, ducking and loudness
+
+Command-bar asks such as "add reverb to the vocals", "make the drums sound like a
+phone", "slowed + reverb", "duck the music under the voice" or "normalize for YouTube"
+plan as `kind` `fx`, `duck` or `loudness` (OpenAI planner, or the rule-based
+`frontend/src/fxCommand.ts` without a key) and render through
+`POST /api/projects/{id}/fx-preview`, a candidate like every other preview. The body is
+`{op: chain|adjust|remove|duck|loudness, targets: [stem id…] | ["mix"], preset?, chain?,
+interval?, speed?, direction?, item_id?, base_candidate_id?, duck?: {source, depth_db?},
+loudness_lufs?}`. Effect types, presets and parameter ranges live in `app/fx_schema.py`;
+values are clamped there and never become filter strings from outside. Each applied effect
+is a chip in the stem's nullable `fx` column (API: `stem.fx.items`); the layer keeps its
+unprocessed audio so a chip can be removed or adjusted ("more"/"less") by re-rendering.
+Every render is limited to -1 dBTP and keeps length, rate and channels; the whole-song
+speed presets (slowed, nightcore, sped up) change every layer's length together and are
+refused for video projects. Ducking writes gain automation (at most 64 keyframes) and
+renders nothing; mix loudness is a linear gain capped by the mix's true peak.
+
 ## Add or replace sound effects
 
 Use **Add or replace sounds** in the editor or enter a command such as “replace every

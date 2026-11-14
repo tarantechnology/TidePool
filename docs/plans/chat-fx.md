@@ -70,6 +70,55 @@ plan kinds. Everything runs through the same candidate flow, so A/B compare, app
 | "earrape" / "deep fried" (meme distortion) | heavy saturation + bitcrush + limiter preset, with a loudness guard so it can't clip the export or hurt ears |
 | "make it sound like an old movie" | bandpass + crackle + mono + slight wow |
 
+### E. Generate new tracks that fit the song (P1, flagship demo)
+
+**Scope:** any instrument or free-text sound, not only violins. Examples: "add a piano part", "a funky bassline",
+"an 80s synth arpeggio", "a string pad", "a trumpet line in the chorus", "a choir", "a guitar riff". The project's
+existing separated tracks provide the musical context:
+
+- **Drums:** groove, swing and per-section density.
+- **Bass:** harmonic roots, transcribed.
+- **Vocals:** the melody, and where the voice is active, so the new part leaves space.
+- **Other tracks:** the registers already in use, so the part avoids crowded ranges.
+
+**Rendering:**
+
+- **Wide coverage:** a General MIDI soundfont with a permissive licence.
+- **Most-requested instruments:** higher-quality permissive samples.
+- **Synths:** a built-in numpy synth, which needs no licence.
+- **Free-text timbres:** the audio-generative path covers what samples can't, conditioned on the song and flagged with its licence.
+
+Ask: "add violins to the song", "put a string pad under the chorus", "add a piano part", "add a bassline".
+
+The new part has to fit the song's key, chords, tempo and groove, and sound like it was recorded in the same
+space.
+
+**Pipeline** (licence-clean and controllable):
+
+1. **Analyse.** Beats, downbeats and tempo come from beat_this (Phase B). Key and chords come from a chord recognizer
+   with a permissive licence; candidates to check are BTC / chord-recognition models, with a librosa chroma-template
+   fallback. The vocal melody is transcribed as MIDI from the separated vocals with Basic Pitch (Apache-2.0). Song sections
+   (verse/chorus) are found by self-similarity segmentation.
+2. **Compose** a part for the requested instrument and role (pad, counter-melody, ostinato, bassline), in its register,
+   following the chords, avoiding the vocal melody's range and rhythm. Candidates: the Anticipatory Music Transformer
+   (Stanford, Apache-2.0) for accompaniment infilling conditioned on melody + chords; a rule-based voice-leading arranger
+   (deterministic, a safe baseline); and the planner LLM only to pick role, density and sections.
+3. **Render** realistic audio. Orchestral and keys samples come from VSCO-2 Community Edition (CC0) via sfizz (BSD-2) or
+   FluidSynth (LGPL). For solo lines, DDSP timbre transfer (Magenta violin/flute/trumpet models, Apache-2.0) gives an
+   expressive monophonic line. Humanize timing and velocity slightly.
+4. **Mix in.** Loudness is matched relative to the song and the part is EQ-carved around the vocals. It goes into a reverb
+   matched to the song's estimated space, and is ducked lightly under the vocals. The result is a new layer (kind
+   `music`, name "Violins") delivered as a candidate preview with compare/apply/undo.
+
+**Experimental comparison** (not the default without a licence decision): audio-generative models conditioned on the song
+— MusicGen-melody / MusicGen-stereo (weights CC-BY-NC 4.0), Stable Audio Open 1.0 (Stability AI Community Licence),
+and any open stem-conditioned generator found (StemGen / Diff-A-Riff-style). These sound most "native" but come with
+non-commercial or revenue-capped terms and less control.
+
+**Contract** (audio-service): `POST /v1/analyze-music` returns {tempo, beats, downbeats, key, chords[{start,end,chord}],
+sections, melody_midi?}. `POST /v1/generate-part` takes {instrument, role, sections|interval, density, analysis}
+and returns audio plus the MIDI it rendered. App: planner `kind: 'generate'` → `generate-preview` candidate → a new layer.
+
 ### D. Stretch (P2)
 
 - Per-stem key change and tempo ("change the key to match", "double-time drums"), via rubberband per stem.
@@ -137,6 +186,7 @@ command bar → POST /api/projects/{pid}/agent (OpenAI planner, strict schema)
 | A2 | Editor: FX chips per track, "more/less", compare panel wiring, insert-layer rendering | agent: fx-editor |
 | B | Audio-service: `/v1/words` (faster-whisper), `/v1/enhance` (DeepFilterNet), `/v1/beats` (beat_this) on the A40, with benchmarks | agent: speech-ml |
 | C | SFX library (CC0 pack + manifest + licences), CLAP search, insert layers, word/beat anchors, comedy presets | agent: sfx |
+| E | Music analysis (key/chords/sections/melody) + part composer + sample/DDSP renderer + mix-in; benchmark vs MusicGen/Stable Audio | agent: generate |
 | Demo | A 60–90 s creator video: split → vocals reverb → duck music → bleep → vine boom on punchline → TikTok loudness → export | lead |
 
 ## Acceptance

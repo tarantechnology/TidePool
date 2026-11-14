@@ -5,7 +5,7 @@ import type { AudioEngine } from '../audio/engine'
 import { isAudible, MAX_GAIN, MAX_KEYFRAMES, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
-import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
+import type { EditAction, FxChip, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
 import { FEATURES } from '../features'
@@ -27,6 +27,8 @@ interface Props {
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
+  /** Preview a layer without one of its applied effects. Absent: chips are shown read-only. */
+  onRemoveFx?: (stemId: string, chip: FxChip) => void
 }
 
 function tickStep(duration: number): number {
@@ -104,7 +106,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, onRemoveFx }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
   // every lane at once, and dragging a lane's bottom edge sizes just that lane.
@@ -233,6 +235,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
+                onRemoveFx={onRemoveFx ? (chip) => onRemoveFx(stem.id, chip) : undefined}
               />
               <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">
                 {majors.map((t) => (

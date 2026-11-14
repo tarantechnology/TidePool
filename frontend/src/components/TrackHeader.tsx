@@ -1,9 +1,10 @@
 import { Tip } from './Tip'
+import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { refinementBadge } from '../api/refine'
 import { tagLine } from '../api/backend'
 import { MAX_GAIN, toDb } from '../edits'
-import type { EditAction, Stem, StemKind, TrackState } from '../types'
+import type { EditAction, FxChip, Stem, StemKind, TrackState } from '../types'
 
 interface Props {
   stem: Stem
@@ -15,6 +16,8 @@ interface Props {
   unsynced: boolean
   /** A short lane: keep the name and M/S, drop the volume row. */
   compact?: boolean
+  /** Preview this layer without one of its effects. */
+  onRemoveFx?: (chip: FxChip) => void
 }
 
 const KIND_LABEL: Record<Stem['kind'], string> = {
@@ -26,7 +29,40 @@ const KIND_LABEL: Record<Stem['kind'], string> = {
 }
 const KINDS = Object.keys(KIND_LABEL) as StemKind[]
 
-export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false }: Props) {
+/** The effects rendered into a layer, as small chips; clicking one offers to preview it removed. */
+function FxChips({ chips, label, onRemove }: { chips: FxChip[]; label: string; onRemove?: (chip: FxChip) => void }) {
+  const [open, setOpen] = useState<string | null>(null)
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1" aria-label={`Effects on ${label}`}>
+      {chips.map((chip) => (
+        <span key={chip.id} className="inline-flex items-center gap-0.5">
+          <button
+            type="button"
+            title={chip.scope === 'mix' ? `${chip.label} (whole mix)` : chip.label}
+            aria-expanded={open === chip.id}
+            disabled={!onRemove}
+            onClick={() => setOpen(open === chip.id ? null : chip.id)}
+            className="max-w-[7.5rem] truncate rounded-full border border-line bg-tint/[0.03] px-1.5 py-px text-[10px] text-muted transition-colors hover:border-line-strong hover:text-fg disabled:hover:border-line"
+          >
+            {chip.label}
+          </button>
+          {open === chip.id && onRemove && (
+            <button
+              type="button"
+              aria-label={`Remove ${chip.label} from ${label}`}
+              onClick={() => { setOpen(null); onRemove(chip) }}
+              className="rounded-full px-1 text-[10px] text-accent hover:underline"
+            >
+              Remove
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRemoveFx }: Props) {
   const btn = (active: boolean, activeCls: string) =>
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
       active ? activeCls : 'border-line bg-tint/[0.03] text-subtle hover:border-line-strong hover:text-fg'
@@ -77,6 +113,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
               </span>
             )}
           </div>
+          {!compact && stem.fx?.length ? <FxChips chips={stem.fx} label={stem.label} onRemove={onRemoveFx} /> : null}
         </div>
         <Tip side="bottom" label={track.muted ? 'Unmute' : 'Mute'} detail={track.muted ? 'Bring this layer back into the mix.' : 'Silence this layer. Everything else keeps playing.'}>
           <button

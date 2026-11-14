@@ -30,7 +30,7 @@ def connect():
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
-                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'))
+                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'), ('fx', 'TEXT'))
 JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():
@@ -93,15 +93,18 @@ def discard(pid, paths):
         directory=(project_dir(pid)/'stems').resolve()
         with connect() as db:
             current={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
-            keep={r['path'] for r in db.execute('SELECT path FROM stems WHERE project_id=?',(pid,))}
+            # A layer with effects keeps its unprocessed (dry) audio so a chip can be removed later.
+            from .fx import dry_path
+            def files(rows): return [p for r in rows for p in (r['path'],dry_path(r)) if p]
+            keep=set(files([dict(r) for r in db.execute('SELECT path,fx FROM stems WHERE project_id=?',(pid,))]))
             doomed=set(paths)
             for h in db.execute('SELECT h.previous_rows,h.applied_revisions FROM candidate_history h JOIN jobs j ON j.id=h.candidate_id WHERE j.project_id=? AND h.undone=0',(pid,)):
-                rows=[r['path'] for r in json.loads(h['previous_rows'])]
+                rows=files(json.loads(h['previous_rows']))
                 (keep if json.loads(h['applied_revisions'])==current else doomed).update(rows)
             for j in db.execute("SELECT output FROM jobs WHERE project_id=? AND kind='candidate' AND status='completed' AND id NOT IN (SELECT candidate_id FROM candidate_history)",(pid,)):
                 data=json.loads(j['output'] or 'null') or {}; snapshot=data.get('snapshot') or {}
                 if {r['id']:r['revision'] for r in snapshot.get('rows',[])}==current:
-                    keep.update([r['path'] for r in snapshot.get('rows',[])+data.get('proposed',[])]+[snapshot.get('source')])
+                    keep.update(files(snapshot.get('rows',[])+data.get('proposed',[]))+[snapshot.get('source')])
         for path in doomed-keep:
             path=Path(path).resolve()
             if path.parent==directory: path.unlink(missing_ok=True)
@@ -116,6 +119,8 @@ def stem(row):
     d['spans'] = json.loads(d['spans']) if d.get('spans') else None
     d['refinement'] = json.loads(d['refinement']) if d.get('refinement') else None
     d['tags'] = json.loads(d['tags']) if d.get('tags') else None
+    from .fx import public
+    d['fx'] = public(d)  # Chip labels only; never the dry audio's path.
     d.pop('path')
     d['audio_url'] = f"/api/projects/{d['project_id']}/stems/{d['id']}/audio"
     return d

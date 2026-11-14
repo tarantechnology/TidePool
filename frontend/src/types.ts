@@ -7,6 +7,9 @@
  */
 export type StemKind = 'dialogue' | 'sfx' | 'music' | 'ambience' | 'residual'
 
+/** One effect rendered into a layer (a chip), as app/fx.py reports it. */
+export interface FxChip { id: string; label: string; preset: string | null; scope: 'layer' | 'mix'; speed: number | null; kind?: string | null }
+
 /** One isolated audio layer, as produced by the audio pipeline. */
 export interface Stem {
   id: string
@@ -24,6 +27,8 @@ export interface Stem {
   refinement?: Refinement
   /** Instruments heard in a music stem, most likely first ("Piano", "Strings"). Read-only here. */
   tags?: string[]
+  /** Effects rendered into this layer, oldest first. Read-only here; removed through an effect preview. */
+  fx?: FxChip[]
 }
 
 /**

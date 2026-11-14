@@ -37,6 +37,7 @@ import { PassesSelect } from './PassesSelect'
 import { DropLoader } from './DropLoader'
 import { FEATURES } from '../features'
 import { FeatureTag } from './FeatureTag'
+import { LayerTips } from './LayerTips'
 
 const field = 'w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15'
 const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3] disabled:opacity-40'
@@ -100,6 +101,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [exploded, setExploded] = useState('')
   const [smartOrder, setSmartOrder] = useState(true)
   const [splitMusic, setSplitMusic] = useState(false)
+  const [confirmExplode, setConfirmExplode] = useState(false)
   /** What the model heard in this project's clip, once it has listened. */
   const [heard, setHeard] = useState<{projectId:string;sounds:HeardSound[];note:string}|null>(null)
   const [listening, setListening] = useState(false)
@@ -323,7 +325,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
-    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setHeard(null); explodeEdited.current=false; setExplodeText(DEFAULT_EXPLODE); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setConfirmExplode(false); setHeard(null); explodeEdited.current=false; setExplodeText(DEFAULT_EXPLODE); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
@@ -334,7 +336,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav')
     await loadVideo(cfg, info)
     suggestRoute(cfg, created.project_id)
-    setMessage(info.metadata?.has_video ? 'Uploaded. Pick a sound to separate.' : 'Uploaded. Split it into tracks, or pick a sound to separate.')
+    setMessage(info.metadata?.has_video ? 'Uploaded. Explode it into layers, or pull out one sound.' : 'Uploaded. Split it into tracks, or pull out one sound.')
   })
   const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime) => {
     await flush()
@@ -865,9 +867,30 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           {project && <details className="mt-2 text-xs"><summary className="cursor-pointer text-muted hover:text-fg">Share access</summary><p className="mt-1 text-muted">Saved to your projects in this browser. To open it on another computer, use “Open with an ID” on the projects page.</p><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e=>e.currentTarget.select()}/></label><p className="text-muted">Anyone with both can edit this project.</p></details>}
         </Step>
 
-        <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
+        <Step n={2} title="Split into layers" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
           summary={status('sound') === 'done' ? (prompt.trim() || (exploded ? `Exploded: ${exploded}` : undefined)) : undefined}>
           <div className="space-y-3">
+            {project && <div className="rounded-xl border border-line bg-surface p-3 text-xs">
+              <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">✺</span>Explode the whole clip<span className="ml-auto rounded-full bg-accent-soft px-1.5 py-px text-[10px] font-normal text-accent">Start here</span></p>
+              <p className="mt-0.5 text-muted">One layer per sound you list, plus a background layer for everything else. Each layer is named after its sound, and you can rename it later. {canListen ? 'Tidepool listens to the clip and fills in what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
+              {canListen && <div className="mt-2 flex items-center gap-2 text-[11px]">
+                {listening ? <span className="flex items-center gap-1.5 text-accent"><DropLoader size={16}/>Listening to the clip…</span>
+                  : heardHere?.sounds.length ? <span className="text-muted">Heard: {heardHere.sounds.map(h=>`${h.prompt} (${h.windows.map(w=>`${w*10}–${w*10+10}s`).slice(0,2).join(', ')}${h.windows.length>2?'…':''})`).join(' · ')}</span>
+                  : heardHere?.note ? <span className="text-muted">{heardHere.note}</span> : null}
+                <button type="button" className="ml-auto shrink-0 text-accent hover:underline disabled:opacity-40" disabled={busy || listening} onClick={()=>void listen()}>{heardHere ? 'Listen again' : 'Listen'}</button>
+              </div>}
+              <input className={`${field} mt-2`} aria-label="Sounds to explode into" value={explodeText} onChange={e=>{explodeEdited.current=true;setExplodeText(e.target.value)}} placeholder={DEFAULT_EXPLODE} disabled={busy}/>
+              {explodeOrder.length > 0 && <ol className="mt-2 flex flex-wrap items-center gap-1" aria-label="Explode order">{explodeOrder.map((sound,i)=><li key={sound} title={smartOrder ? `${TIER_LABEL[tierOf(sound)]}: ${(recipeMode ? RECIPE_WHY : TIER_WHY)[tierOf(sound)]}` : 'Your order'} className="flex items-center gap-1 rounded-full bg-accent-soft py-0.5 pr-2 pl-1 text-[11px] font-medium text-accent"><span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[9px] text-white">{i+1}</span>{sound}{smartOrder && <span className="font-normal text-accent/70">· {TIER_LABEL[tierOf(sound)]}</span>}</li>)}<li className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-subtle" title="Score, impacts and everything not listed stay together here.">background</li></ol>}
+              <label className="mt-2 flex items-center gap-1.5 text-[11px] text-muted" title={recipeMode ? 'Dialogue first with a speech model on the full mix, then rain and thunder from one storm pass split by pitch, then music, then short sounds from the cleanest leftovers.' : 'Background beds first, then short hits, then music, then voices last, so the most important layer comes from the cleanest leftovers.'}><input type="checkbox" className="accent-accent" checked={smartOrder} onChange={e=>setSmartOrder(e.target.checked)} disabled={busy}/>{recipeMode ? 'Smart order: dialogue, weather, music, then short sounds' : 'Smart order: backgrounds, hits, music, then voices'}</label>
+              {recipeMode && capabilities?.musicStems?.available && <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted" title="After the music is pulled out, the song splitter breaks it into its instruments (drums, bass, piano, guitar, voices and the rest), one layer each. Quiet instruments fold into the loudest so nothing is lost."><input type="checkbox" className="accent-accent" checked={splitMusic} onChange={e=>setSplitMusic(e.target.checked)} disabled={busy}/>Split the music into instruments</label>}
+              {confirmExplode && jobId ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+                <p><span className="font-medium">This replaces your current layers</span>, along with their volume changes and names. Undo (⌘Z) brings the old layers back.</p>
+                <div className="mt-2 flex gap-2"><button className={`${button} flex-1`} disabled={busy} onClick={()=>{setConfirmExplode(false);void explode()}}>Replace and explode</button><button className={secondary} onClick={()=>setConfirmExplode(false)}>Keep my layers</button></div>
+              </div>
+              : <button className={`${jobId ? secondary : button} mt-2 w-full py-2 font-medium`} disabled={busy || !project.metadata || parseExplodeList(explodeText).length === 0} onClick={()=>jobId ? setConfirmExplode(true) : void explode()}>Explode into {explodeOrder.length + 1} layers</button>}
+              {jobId && !confirmExplode && <p className="mt-1 text-[11px] text-subtle">This project already has layers. Exploding again starts over from the original audio.</p>}
+            </div>}
+            {project && <p className="flex items-center gap-2 pt-1 text-[11px] font-medium text-subtle"><span className="h-px flex-1 bg-line"/>or pull out one sound<span className="h-px flex-1 bg-line"/></p>}
             {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
@@ -888,23 +911,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
                 <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
               </div>
             </details>}
-            {project && <button className={`${button} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
-            {project && <div className="rounded-xl border border-line bg-surface p-3 text-xs">
-              <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">✺</span>Explode</p>
-              <p className="mt-0.5 text-muted">Split the whole clip into layers, one sound at a time, each taken from what is left. {canListen ? 'Tidepool listens to the clip and lists what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
-              {canListen && <div className="mt-2 flex items-center gap-2 text-[11px]">
-                {listening ? <span className="flex items-center gap-1.5 text-accent"><DropLoader size={16}/>Listening to the clip…</span>
-                  : heardHere?.sounds.length ? <span className="text-muted">Heard: {heardHere.sounds.map(h=>`${h.prompt} (${h.windows.map(w=>`${w*10}–${w*10+10}s`).slice(0,2).join(', ')}${h.windows.length>2?'…':''})`).join(' · ')}</span>
-                  : heardHere?.note ? <span className="text-muted">{heardHere.note}</span> : null}
-                <button type="button" className="ml-auto shrink-0 text-accent hover:underline disabled:opacity-40" disabled={busy || listening} onClick={()=>void listen()}>{heardHere ? 'Listen again' : 'Listen'}</button>
-              </div>}
-              <input className={`${field} mt-2`} aria-label="Sounds to explode into" value={explodeText} onChange={e=>{explodeEdited.current=true;setExplodeText(e.target.value)}} placeholder={DEFAULT_EXPLODE} disabled={busy}/>
-              {explodeOrder.length > 0 && <ol className="mt-2 flex flex-wrap items-center gap-1" aria-label="Explode order">{explodeOrder.map((sound,i)=><li key={sound} title={smartOrder ? `${TIER_LABEL[tierOf(sound)]}: ${(recipeMode ? RECIPE_WHY : TIER_WHY)[tierOf(sound)]}` : 'Your order'} className="flex items-center gap-1 rounded-full bg-accent-soft py-0.5 pr-2 pl-1 text-[11px] font-medium text-accent"><span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[9px] text-white">{i+1}</span>{sound}{smartOrder && <span className="font-normal text-accent/70">· {TIER_LABEL[tierOf(sound)]}</span>}</li>)}<li className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-subtle" title="Score, impacts and everything not listed stay together here.">background</li></ol>}
-              <label className="mt-2 flex items-center gap-1.5 text-[11px] text-muted" title={recipeMode ? 'Dialogue first with a speech model on the full mix, then rain and thunder from one storm pass split by pitch, then music, then short sounds from the cleanest leftovers.' : 'Background beds first, then short hits, then music, then voices last, so the most important layer comes from the cleanest leftovers.'}><input type="checkbox" className="accent-accent" checked={smartOrder} onChange={e=>setSmartOrder(e.target.checked)} disabled={busy}/>{recipeMode ? 'Smart order: dialogue, weather, music, then short sounds' : 'Smart order: backgrounds, hits, music, then voices'}</label>
-              {recipeMode && capabilities?.musicStems?.available && <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted" title="After the music is pulled out, the song splitter breaks it into its instruments (drums, bass, piano, guitar, voices and the rest), one layer each. Quiet instruments fold into the loudest so nothing is lost."><input type="checkbox" className="accent-accent" checked={splitMusic} onChange={e=>setSplitMusic(e.target.checked)} disabled={busy}/>Split the music into instruments</label>}
-              <button className={`${secondary} mt-2 w-full py-2 font-medium`} disabled={busy || !project.metadata || parseExplodeList(explodeText).length === 0} onClick={()=>void explode()}>Explode into {explodeOrder.length + 1} layers</button>
-              {jobId && <p className="mt-1 text-[11px] text-subtle">This replaces the current layers.</p>}
-            </div>}
+            {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
             {routing && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
             {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata} onClick={()=>void run(async()=>{if(project)await previewDirector(config,project,'Make the whole video more cinematic','cinematic','cinematic')})}>Preview cinematic audio</button>}
             {project && <div className="rounded-xl border border-line p-2 text-xs">
@@ -933,6 +940,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           {project && <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>}
         </Step>
       </ol>
+      {jobId && !candidateId && <LayerTips/>}
     </div>
 
     {(busy || message || error) && <div className="border-t border-line px-3 py-2 text-xs">

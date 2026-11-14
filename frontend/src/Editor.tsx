@@ -128,7 +128,9 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
     const observer = new ResizeObserver(measure); observer.observe(el)
     return () => observer.disconnect()
   }, [])
-  const fittedTop = videoAspect && stageSize.width > 0 ? Math.max(140, Math.min(stageSize.width / videoAspect, stageSize.height - TIMELINE_MIN)) : null
+  // The Mixer's tall sliders need more room than the Tide chart's lanes.
+  const timelineMin = laneView === 'mixer' ? MIXER_MIN : TIMELINE_MIN
+  const fittedTop = videoAspect && stageSize.width > 0 ? Math.max(140, Math.min(stageSize.width / videoAspect, stageSize.height - timelineMin)) : null
   const setPanel = (px: number) => setLayout((l) => ({ ...l, panel: clamp(px, 260, 560) }))
   const stemsRef = useRef<Stem[]>([])
   const picker = useRef<HTMLInputElement>(null)
@@ -328,6 +330,8 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
   }
 
   const dispatch = useCallback((action: EditAction, coalesceKey?: string) => {
+    // Changing a layer while listening to the original would be silent, so play the edit again.
+    setCompareOriginal(false)
     const now = Date.now()
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
     setSteps(dropRedo)
@@ -455,7 +459,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
     ? (label, work, reload) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); return projectPanel.current.withLayers(label, work, reload) }
     : null
   const setRuleAutomation = (stemId: string, keyframes: Keyframe[]) => dispatch({ type: 'set_automation', stemId, keyframes })
-  const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel)
+  const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel === 'Project stems' ? `Saved · ${baseStems.length} layer${baseStems.length === 1 ? '' : 's'}` : stemsLabel === VIDEO_AUDIO_LABEL ? 'Not split yet' : stemsLabel)
 
   return (
     <div
@@ -485,7 +489,9 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
         <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
           <Transport engine={engine} playing={playing} duration={duration} />
           {originalSrc && stemsLabel === 'Project stems' && (
-            <div className="flex rounded-full border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to">
+            <div className="flex items-center rounded-full border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to"
+              title="Original plays the untouched clip, so layer changes are silent. Edited plays your mix.">
+              <span className="pr-1 pl-2 text-subtle">Listen to</span>
               {([false, true] as const).map((orig) => (
                 <button key={String(orig)} aria-pressed={compareOriginal === orig} onClick={() => setCompareOriginal(orig)}
                   className={`rounded-full px-2.5 py-1 transition-colors ${compareOriginal === orig ? 'bg-accent text-white' : 'text-muted hover:text-fg'}`}>
@@ -503,7 +509,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
         <div className="flex shrink-0 items-center gap-1.5">
           <input ref={picker} type="file" accept="audio/*" multiple hidden onChange={onPick} />
           <button type="button" aria-pressed={moonOpen} disabled={status !== 'ready' || !hasLayers} onClick={() => setMoonOpen((o) => !o)}
-            title="Give a sound a meaning that holds for the whole clip"
+            title="Make a layer react every time something happens, like thunder that swells whenever someone lies"
             className={`mr-1 inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors disabled:opacity-40 ${moonOpen ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-fg-2 hover:border-line-strong hover:text-fg'}`}>
             <MoonIcon />{FEATURES.symbolism}
             {rules.list.length > 0 && <span className={`rounded-full px-1.5 text-[10px] ${moonOpen ? 'bg-white/25' : 'bg-accent-soft text-accent'}`}>{rules.list.length}</span>}
@@ -568,14 +574,25 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
                   onDrag={(y) => setTop(y - (stage.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop((autoTop && fittedTop !== null && videoSrc ? fittedTop : layout.top * (stage.current?.clientHeight ?? 800)) + d)} onReset={() => { setAutoTop(true); setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top })) }} />
               )}
           <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
+            {compareOriginal && originalSrc && stemsLabel === 'Project stems' && status === 'ready' && (
+              <div role="status" className="flex shrink-0 items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-900">
+                You are hearing the original clip, so layer changes are silent.
+                <button type="button" className="ml-auto font-medium text-accent hover:underline" onClick={() => setCompareOriginal(false)}>Hear my edit</button>
+              </div>
+            )}
+            {stemsLabel === MOCK_LABEL && status === 'ready' && hasLayers && (
+              <div role="status" className="flex shrink-0 items-center gap-2 border-b border-line bg-accent-soft/60 px-3 py-1.5 text-[11px] text-fg-2">
+                These are sample layers so you can try the controls. Upload a video or song in step 1 to get your own.
+              </div>
+            )}
             {engine && status === 'ready' && hasLayers ? (
               <>
                 {laneView === 'mixer' ? (
-                  <>
+                  <div className="relative flex min-h-0 flex-1 flex-col">
                   <div className="absolute top-1.5 left-3 z-30">{viewToggle}</div>
                   <Mixer stems={stems} tracks={tracks} onAction={dispatch} onRename={canRename ? renameLayer : undefined}
                     onDelete={canRename && stems.length > 1 ? deleteLayer : undefined} residualId={residual?.id ?? null} residualLabel={residual?.label ?? null} />
-                  </>
+                  </div>
                 ) : (
                   <>
                   <MotifStrip rules={rules.list} stems={stems} engine={engine} duration={duration} onOpen={openRule} />
@@ -602,7 +619,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
                   <>
                     <WaveIcon />
                     <p className="text-sm font-medium text-fg">Your layers will appear here</p>
-                    <p className="max-w-sm text-xs text-muted">Pick a sound in the video or describe it below. Each separated sound becomes its own layer you can mute, solo and automate.</p>
+                    <p className="max-w-sm text-xs text-muted">Explode the clip in step 2 to split it into one layer per sound. Each layer can be muted, soloed, renamed and shaped over time.</p>
                   </>
                 ) : (
                   <DropLoader size={56} label="Loading layers…" />
@@ -641,6 +658,8 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
 const LAYOUT_KEY = 'tidepool.layout'
 /** The least height the timeline keeps when a widescreen clip sizes the video box. */
 const TIMELINE_MIN = 200
+/** The same for the Mixer, so its sliders are not cut off. */
+const MIXER_MIN = 350
 const DEFAULT_LAYOUT = { top: 0.4, panel: 336 }
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 function readLayout(): typeof DEFAULT_LAYOUT {

@@ -125,7 +125,7 @@ export function MoonPullPanel(props: PanelProps) {
       <header className="flex items-start gap-2 border-b border-line px-4 pt-3 pb-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-semibold text-fg"><span className="text-accent"><MoonIcon size={16} /></span>{FEATURES.symbolism}</div>
-          <p className="mt-0.5 text-[11px] leading-snug text-muted">Give a sound a meaning and it keeps it for the whole clip, the way the moon pulls every tide the same way.</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted">Make a layer react every time something happens, the way the moon pulls every tide. Pick an idea, mark the moments (or take them from what is said), then apply.</p>
         </div>
         <button type="button" onClick={onClose} aria-label={`Close ${FEATURES.symbolism}`} className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-tint/[0.06] hover:text-fg">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>

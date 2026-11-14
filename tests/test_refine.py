@@ -322,3 +322,18 @@ def test_quality_profile_works_without_a_text_ranker(client, tmp_path, monkeypat
     monkeypatch.setenv('PREVIEW_REFINE','off'); assert 'refine' not in options('preview')
     monkeypatch.setenv('PREVIEW_REFINE','mask'); monkeypatch.setenv('PREVIEW_REFINE_THRESHOLD','0.3')
     assert options('preview')['refine_threshold']==0.3
+
+
+def test_audiosep_disables_unsupported_quality_and_anchors(client, tmp_path, monkeypatch):
+    import httpx
+    import app.media as media
+    pid, h = uploaded(client, tmp_path, .2)
+    monkeypatch.setenv('INFERENCE_ADAPTER', 'http')
+    monkeypatch.setenv('SAM_AUDIO_SERVICE_URL', 'http://mock.invalid/separate')
+    service = {'is_mock':False, 'independent_candidates':False,
+               'model':{'loaded':True, 'text_ranker_loaded':False},
+               'prompting_modes':{'visual':False,'span_anchors':False},
+               'defaults':{'candidate_select':'overlap'}, 'limits':{}}
+    monkeypatch.setattr(media.httpx, 'get', lambda url, **kwargs: httpx.Response(200, request=httpx.Request('GET',url), json=service))
+    caps = client.get(f'/api/projects/{pid}/capabilities', headers=h).json()
+    assert caps['quality'] is False and caps['visual'] is False and caps['span_anchors'] is False

@@ -183,3 +183,58 @@ See [the guided benchmark procedure](benchmarks/GUIDED.md) for the five-category
 provenance, fixed splits/seeds, metrics, regression gate and staged rollback procedure.
 Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
 invalid visual guidance fails instead of silently changing to text-only inference.
+
+## Optional AudioSep backend
+
+AudioSep is an alternative **text-only** separator. It uses the AudioSep base checkpoint and
+CLAP text encoder; it is not SAM Audio and has no visual conditioning, time-anchor
+conditioning, independent candidates or judge-ranked retries. The editor reports those
+limitations. A timed mute is still an edit applied after separation. AudioSep may also
+extract speech, music or other sounds; review the target and edited mix before applying.
+
+The runtime is optional and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
+prepared [upstream AudioSep checkout](https://github.com/Audio-AGI/AudioSep), its Python
+and PyTorch/torchaudio dependencies, and the official AudioSep and CLAP checkpoints. The
+upstream repository is MIT licensed; check the terms for model weights and dependencies
+separately. Model checkpoints are never included in this repository.
+
+The A40 integration was tested with upstream revision `944583f18b84589dc965de3ad77525c945334252`,
+Python 3.12, PyTorch/torchaudio 2.8, CUDA, and the two small compatibility changes in
+`patches/audiosep-checkpoint-compat.patch`. The patch prevents a second implicit CLAP load
+and removes a RoBERTa buffer that newer transformers no longer stores. To prepare a **new**
+checkout, follow upstream's environment and checkpoint instructions, then apply the patch:
+
+```bash
+# Run from the SoundCanvas repository root; do not overwrite an existing checkout.
+git clone https://github.com/Audio-AGI/AudioSep.git /path/to/AudioSep
+git -C /path/to/AudioSep checkout 944583f18b84589dc965de3ad77525c945334252
+git -C /path/to/AudioSep apply "$PWD/audio-service/patches/audiosep-checkpoint-compat.patch"
+# Install the service into the prepared AudioSep environment.
+python -m pip install -e ./audio-service
+```
+
+Place the upstream `audiosep_base_4M_steps.ckpt` and
+`music_speech_audioset_epoch_15_esc_89.98.pt` checkpoints under the checkout's
+`checkpoint/` directory, as instructed by upstream. The RoBERTa tokenizer/model must also
+be available through the Hugging Face cache or network. PyTorch's checkpoint loader is
+allow-listed for the NumPy scalar metadata in these weights; use trusted checkpoints only.
+Configure custom checkpoint locations using `AUDIO_AUDIOSEP_CHECKPOINT` and
+`AUDIO_AUDIOSEP_CLAP_CHECKPOINT` if needed.
+
+```bash
+export AUDIO_BACKEND=audiosep
+export AUDIO_AUDIOSEP_ROOT=/path/to/AudioSep
+export AUDIO_DEVICE=cuda
+python -m sam_audio_service
+```
+
+Point the project backend at `http://127.0.0.1:8001/separate` with
+`INFERENCE_ADAPTER=http` and `SAM_AUDIO_SERVICE_URL`. `/health` should report
+`backend: audiosep`, `is_mock: false`, `loaded: true`, and the intended device. The engine
+serializes model inference, processes 10-second windows with two seconds of overlap and a
+batch size of one by default, and constructs the residual from the original mixture. It
+resamples mono model input to 32 kHz and returns it to the 48 kHz service timeline; the
+residual retains the original channels. The service default mask refinement is off; an editor preview profile may explicitly request it. Real quality,
+latency and memory vary by recording; sample-accurate reconstruction does not guarantee
+correct isolation. Do not mistake the optional experimental spectral repairs for the
+standard AudioSep backend.

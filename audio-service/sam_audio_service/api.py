@@ -91,6 +91,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             "contract_version": CONTRACT_VERSION,
             "backend": backend.name,
             "is_mock": backend.is_mock,
+            "independent_candidates": backend.supports_independent_candidates,
             "model": engine.status(),
             "prompting_modes": {
                 "text": True,

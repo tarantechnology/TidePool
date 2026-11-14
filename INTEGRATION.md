@@ -123,3 +123,12 @@ These findings do not imply restoration of clipped or absent information. Visual
 is experimental: native frame/mask/track/source checks remain enforced, the UI displays the
 selected mask, and visible intervals no longer automatically create positive sound anchors.
 Unusable visual input fails explicitly; suspicious output offers a text-plus-time retry.
+
+### Optional AudioSep separator
+
+The audio service also supports `AUDIO_BACKEND=audiosep` with an externally prepared
+AudioSep checkout and official checkpoints. See [AudioSep setup](audio-service/README.md#optional-audiosep-backend).
+AudioSep is a real text-only model: visual conditioning, span anchors, independent
+candidates and the SAM judge are unavailable. Capabilities report these limits; the editor
+disables unsupported controls. Inference is still serialized and residuals are derived from
+the original mixture. This backend is opt-in and does not change the SAM default.

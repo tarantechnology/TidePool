@@ -80,6 +80,7 @@ class Backend(ABC):
     supports_visual: bool = False
     supports_spans: bool = False
     supports_span_prediction: bool = False
+    supports_independent_candidates: bool = True
     sample_rate: int = 48_000
 
     @abstractmethod

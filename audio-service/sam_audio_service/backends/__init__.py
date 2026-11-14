@@ -1,6 +1,8 @@
 """Inference backends. ``mock`` is a development stand-in; ``sam`` is the real model."""
 from __future__ import annotations
 
+import os
+
 from ..config import Settings
 from .base import Backend
 
@@ -10,6 +12,10 @@ def create_backend(settings: Settings) -> Backend:
         from .mock import MockBackend
 
         return MockBackend()
+    if settings.backend == "audiosep":
+        from .audiosep import AudioSepBackend
+
+        return AudioSepBackend(root=os.getenv('AUDIO_AUDIOSEP_ROOT', ''), model_id=settings.model_id, device=settings.device)
     if settings.backend == "sam":
         from .sam_audio import SamAudioBackend
 

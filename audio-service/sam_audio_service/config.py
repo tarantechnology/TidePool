@@ -138,6 +138,10 @@ class Settings:
     ffmpeg_timeout: int = field(default_factory=lambda: _int("AUDIO_FFMPEG_TIMEOUT", 600))
 
     def __post_init__(self) -> None:
+        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and 'AUDIO_MODEL_ID' not in os.environ:
+            self.model_id = 'audiosep-base-4M'
+        if self.backend == 'audiosep' and self.chunk_batch_env is None and self.chunk_workers is None:
+            self.chunk_batch = 1
         if self.chunk_batch_env is not None:
             if self.chunk_workers is not None and self.chunk_workers != self.chunk_batch_env:
                 # Silently ignoring the alias is how an operator ends up running a batch
@@ -156,7 +160,7 @@ class Settings:
         self.chunk_workers = self.chunk_batch  # keep the alias readable and in sync
         if self.chunk_seconds_env is not None:
             self.chunk_seconds = self.chunk_seconds_env
-        elif self.backend == "sam":
+        elif self.backend in {"sam", "audiosep"}:
             self.chunk_seconds = 10.0
         if self.pass_max_ratio_db_env is not None:
             self.pass_max_ratio_db = self.pass_max_ratio_db_env
@@ -175,8 +179,8 @@ class Settings:
     def validate(self) -> None:
         if self.visual_batch_size is not None and self.visual_batch_size <= 0:
             raise ValueError('AUDIO_VISUAL_BATCH_SIZE must be positive')
-        if self.backend not in {"mock", "sam"}:
-            raise ValueError(f"AUDIO_BACKEND must be 'mock' or 'sam', got {self.backend!r}")
+        if self.backend not in {"mock", "sam", "audiosep"}:
+            raise ValueError(f"AUDIO_BACKEND must be 'mock', 'sam' or 'audiosep', got {self.backend!r}")
         if self.stereo_mode not in {"duplicate", "per_channel"}:
             raise ValueError("AUDIO_STEREO_MODE must be 'duplicate' or 'per_channel'")
         if self.max_visual_interval_seconds <= 0:

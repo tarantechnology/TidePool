@@ -240,3 +240,11 @@ describe('visual job polling', () => {
     expect(runFromError(new Error('Backend returned 500'))).toEqual({ phase: 'failed', status: 500, error: 'the server returned HTTP 500' })
   })
 })
+
+describe('time guidance capabilities', () => {
+  it('preserves explicitly unsupported anchors and leaves older services unspecified', () => {
+    expect(toCapabilities({span_anchors: false}).spanAnchors).toBe(false)
+    expect(toCapabilities({span_anchors: true}).spanAnchors).toBe(true)
+    expect(toCapabilities({}).spanAnchors).toBeUndefined()
+  })
+})

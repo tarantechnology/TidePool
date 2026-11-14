@@ -110,3 +110,5 @@ The existing A40 profile remains SAM Audio Large, 10-second windows, 2-second ov
 batch two, one candidate, automatic spans disabled. Longer windows and independent stereo
 channels remain benchmark options. See [guided contracts](INTEGRATION.md#guided-candidates-current-contract)
 and [benchmark procedure](audio-service/benchmarks/GUIDED.md).
+
+SoundCanvas also supports an optional **AudioSep** text-only separator. See [AudioSep setup and limitations](audio-service/README.md#optional-audiosep-backend); its model code and checkpoints are installed separately.

@@ -374,7 +374,7 @@ export interface VisionCapability {available:boolean;reason:string|null;model:st
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
  */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;vision?:VisionCapability;max_passes?:number;refine?:boolean}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean}
 const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
 export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
@@ -387,6 +387,7 @@ export function toCapabilities(raw:unknown):Capabilities {
   const vision=toVisionCapability(c.vision)
   return {
     quality:c.quality===true,visual:c.visual===true,reason:typeof c.reason==='string'?c.reason:'',
+    ...(typeof c.span_anchors==='boolean'?{spanAnchors:c.span_anchors}:{}),
     ...(vision?{vision}:{}),
     ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
     ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),

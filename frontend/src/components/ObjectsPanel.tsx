@@ -154,7 +154,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
               const selected = selection?.track_id === t.trackId
               return (
                 <li key={t.trackId}>
-                  <button type="button" aria-pressed={selected} onClick={() => pick(t.trackId)}
+                  <button type="button" aria-pressed={selected} disabled={disabled} onClick={() => pick(t.trackId)}
                     className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-tint/[0.06] ${selected ? 'bg-tint/[0.08] ring-1 ring-accent/60' : ''}`}>
                     <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: trackColor(t.trackId).css }} />
                     <span className="min-w-0 flex-1 truncate text-fg">{t.label} <span className="text-subtle">#{t.trackId}</span></span>

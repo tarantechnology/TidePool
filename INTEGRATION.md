@@ -132,3 +132,89 @@ AudioSep is a real text-only model: visual conditioning, span anchors, independe
 candidates and the SAM judge are unavailable. Capabilities report these limits; the editor
 disables unsupported controls. Inference is still serialized and residuals are derived from
 the original mixture. This backend is opt-in and does not change the SAM default.
+
+## Cinematic mix preview
+
+`POST /api/projects/{id}/cinematic-preview` accepts a bearer token and an optional JSON
+`{"style":"subtle"|"cinematic"|"dramatic"}`. It queues a candidate and uses the existing
+candidate status, audio, apply and undo routes. The worker measures the current edited
+mix, rejects near silence, then renders bounded EQ, compression and peak-aware headroom
+on each existing layer. With no layers it creates one processed mix layer. It does not
+identify speech or music, add new sounds, execute model-generated code or normalize the
+comparison. Candidate provenance records measured levels, steps, source hashes, layer
+revisions and style. Apply checks revisions and source hashes; undo restores prior audio
+references and edits. The original project audio is never overwritten.
+
+The legacy cinematic endpoint remains available independently of the newer creative director.
+Source-specific constraints must be requested separately. This is a conservative treatment,
+not a guarantee of cinematic quality. Its sound affects all sources in a treated layer,
+so listen to the original/edited comparison before applying. It runs with FFmpeg and does
+not need GPU inference or a newly generated asset.
+
+
+## Creative director and local sound discovery
+
+Configure the optional CPU detector by installing `onnxruntime` and setting
+`SOUNDCANVAS_YAMNET_ONNX` to the YAMNet ONNX model and
+`SOUNDCANVAS_YAMNET_CLASSES` to its class-map CSV. The class map is from Google's
+YAMNet project; the ONNX conversion used for the Pod is
+[andrelgomes/yamnet-onnx](https://huggingface.co/andrelgomes/yamnet-onnx). Scores
+are classifier scores, not calibrated probabilities. Categories and window boundaries
+are approximate, and the detector does not separate sources. Without the model, explicit
+timestamp requests use a short fallback range and report it.
+
+An optional local visual language model can be enabled with
+`SOUNDCANVAS_VISION_LANGUAGE_MODEL` set to a local Qwen3-VL-2B-Instruct checkpoint.
+The worker samples four frames in a separate process, needs CUDA and at least 10 GiB
+free memory, and releases model memory after analysis. No frames leave the machine.
+Captions may be sent with sound labels and the user request to the configured OpenAI
+planner; avoid enabling this for media whose derived descriptions must remain local.
+The captions are unverified visual context, not evidence of a sound. Model dependencies
+include PyTorch, Pillow, and a Transformers version supporting Qwen3-VL; the model is
+optional and unavailable analysis does not prevent a preview.
+
+`POST /api/projects/{id}/director-preview` queues a revision-checked candidate. It
+combines the existing reversible FFmpeg mix treatment with at most two localized
+separator calls on detected events, using the current residual and rejecting suspicious
+targets. It never executes model-generated code. `POST /api/candidates/{id}/director-adjust`
+queues a new preview toggling a proposed event without running inference again. Both
+routes require the project token. Source hashes and stem revisions are checked on apply;
+existing candidate undo applies. Quality depends on the detector and separator; targets
+can include other sounds, so compare before applying. No separation quality improvement
+is implied by perfect mixture reconstruction.
+
+Candidate requests may supply `processing_time` or `processing_interval`, but not both.
+A timestamp is localized only among supported nearby detector categories; absent a useful
+match, a short time-centered fallback is used. FFmpeg supplies up to one second of
+context, then the full-length target is faded to zero outside the processing interval
+and the residual is derived from the original. Local range processing and visual
+guidance cannot currently be combined. Detector inference, analysis, rendering and
+separation run through the existing asynchronous worker.
+
+### A40 execution check (November 14, 2026)
+
+On a 48.7-second cooking video, a chopping request at 4.8 seconds returned in
+3.4 seconds end to end. YAMNet did not match a nearby event in that clip; the
+fallback edited 3.8–5.8 seconds, with AudioSep receiving 2.8–6.8 seconds. The
+service reported AudioSep on CUDA and `is_mock: false`. In a sample comparison, both
+channels of the edited mix were sample-identical to the original outside 3.8–5.8
+seconds. A cinematic preview of the
+same clip completed in 46.3 seconds, included a four-frame local Qwen3-VL caption,
+and proposed raising music in two detected intervals. The visual model reported
+approximately 4.26 GiB peak allocated GPU memory and 7.78 seconds after its imports.
+These are single execution measurements, not listening evaluations or evidence of
+improved separation quality. Visual descriptions and sound labels may be wrong. No
+held-out creative-quality benchmark has been run for this implementation.
+
+### Manual layer effects
+
+The layer effects preview applies bounded bass and treble shelves, an optional
+low-cut filter, and compression to one selected layer. An authenticated
+`POST /api/projects/{id}/effects-preview` queues the render and returns a
+revision-checked candidate. Compare and apply or discard it as with other
+previews; the candidate undo restores the previous audio if no intervening
+edits occurred. The sliders are preview-and-render controls, not live or
+persistent editable effect parameters: applying creates processed audio, so
+subsequent effect applications build on it. Earlier cinematic processing is
+already rendered and cannot be adjusted independently. Extreme boosts can clip;
+listen and adjust layer volume as needed.

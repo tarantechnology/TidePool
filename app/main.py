@@ -12,7 +12,7 @@ from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 from .core import MAX_UPLOAD, connect, digest, event, init, max_passes, probe, project_dir, run, stem, uid
-from .guidance import Guidance, SoundPrompt, EditScope, validate_timing, options, description
+from .guidance import Guidance, SoundPrompt, EditScope, Interval, validate_timing, options, description
 from .commands import parse
 from .agent import AgentRequest, AgentError, plan as agent_plan
 from .worker import enqueue, loop, stop
@@ -110,6 +110,8 @@ def with_passes(opts, passes):
     return opts if passes is None else {**opts,'passes':passes}
 
 class CandidateRequest(BaseModel):
+    processing_interval: Interval | None = None
+    processing_time: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     stem_id: str | None=None
     guidance: Guidance=Field(default_factory=Guidance)
     edit_scope: EditScope=Field(default_factory=EditScope)
@@ -290,6 +292,16 @@ def start(pid,kind,payload):
     try: return enqueue(pid,kind,payload)
     except sqlite3.IntegrityError: raise HTTPException(409,'A job of this type is already active')
 
+@app.post('/api/projects/{pid}/discover',status_code=202)
+def discover_sounds(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio'] or not p['metadata']: raise HTTPException(409,'Upload audio first')
+    return {'job_id':start(pid,'discovery',{'audio_sha256':file_sha256(p['audio'])}),'status':'queued'}
+
+@app.get('/api/discovery-jobs/{jid}')
+def discovery_job(jid: str, authorization: str | None=Header(None)):
+    return get_job(jid,'discovery',authorization)
+
 @app.post('/api/projects/{pid}/agent')
 def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
@@ -359,6 +371,13 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
     source=p['audio'] if body.stem_id or not rows else residuals[0]['path']
     try: validate_timing([],body.guidance,body.edit_scope,probe(source)['duration'])
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    if body.processing_interval and body.processing_time is not None: raise HTTPException(422, 'Choose a range or a timestamp, not both.')
+    duration=probe(source)['duration']
+    if body.processing_time is not None and body.processing_time > duration: raise HTTPException(422, 'Timestamp is outside the audio timeline.')
+    if body.processing_interval:
+        if body.processing_interval.end-body.processing_interval.start > 600: raise HTTPException(422, 'Choose a processing interval of at most 10 minutes.')
+        if body.processing_interval.end > duration+1e-6: raise HTTPException(422, 'Selection extends beyond the audio timeline.')
+    if (body.processing_interval or body.processing_time is not None) and body.visual_prompt: raise HTTPException(422, 'Visual guidance is not available for a selected audio range.')
     sound=description(body.prompt)
     if not sound or sound=='residual': raise HTTPException(422,'Enter a sound description; residual is a reserved layer name.')
     snapshot={'rows':[dict(r) for r in rows], 'source':source,
@@ -367,17 +386,93 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
              'profile':body.profile, 'options':{**with_passes(options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},
-             '_candidate':snapshot}
+             '_candidate':snapshot, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
 
+
+
+class LayerEffectsRequest(BaseModel):
+    stem_id: str | None = Field(default=None,max_length=100)
+    bass: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
+    treble: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
+    highpass: float = Field(default=0,ge=0,le=200,allow_inf_nan=False)
+    compression: float = Field(default=1,ge=1,le=6,allow_inf_nan=False)
+
+@app.post('/api/projects/{pid}/effects-preview',status_code=202)
+def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    if (rows and not any(r['id']==body.stem_id for r in rows)) or (not rows and body.stem_id is not None):
+        raise HTTPException(422,'Select a layer in this project.')
+    try:
+        source=safe_path(pid,p['audio'])
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    effects=body.model_dump(exclude={'stem_id'})
+    return {'candidate_id':start(pid,'candidate',{'_effects':True,'_candidate':snapshot,'stem_id':body.stem_id,'effects':effects}),'status':'queued'}
+
+class CinematicRequest(BaseModel):
+    style: Literal['subtle', 'cinematic', 'dramatic'] = 'cinematic'
+
+@app.post('/api/projects/{pid}/cinematic-preview',status_code=202)
+def cinematic_preview(pid: str, body: CinematicRequest = CinematicRequest(), authorization: str | None = Header(None)):
+    p = auth(pid, authorization)
+    if not p['audio']: raise HTTPException(409, 'Upload media first')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db: rows = [dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?', (pid,))]
+    try:
+        source = safe_path(pid, p['audio'])
+        hashes = {r['id']:file_sha256(safe_path(pid, r['path'])) for r in rows}
+        snapshot = {'rows':rows, 'source':str(source), 'source_sha256':file_sha256(source),
+                    'project_audio':p['audio'], 'stem_hashes':hashes}
+    except (ValueError, OSError) as exc: raise HTTPException(409, 'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_cinematic':True, '_candidate':snapshot, 'style':body.style}), 'status':'queued'}
+
+class DirectorRequest(BaseModel):
+    request: str = Field(min_length=1,max_length=1000)
+    intent: Literal['cinematic','dramatic','cool','funny'] = 'cinematic'
+    style: Literal['subtle','cinematic','dramatic'] = 'cinematic'
+
+@app.post('/api/projects/{pid}/director-preview',status_code=202)
+def director_preview(pid: str, body: DirectorRequest, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    try:
+        source=safe_path(pid,p['audio'])
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_director':True,'_candidate':snapshot,'style':body.style,'intent':body.intent,'request':body.request}),'status':'queued'}
 
 def candidate_record(cid, authorization):
     with connect() as db: row=db.execute("SELECT * FROM jobs WHERE id=? AND kind='candidate'",(cid,)).fetchone()
     if not row: raise HTTPException(404,'Candidate not found')
     auth(row['project_id'],authorization)
     return row
+
+class DirectorAdjustment(BaseModel):
+    stem_id: str = Field(min_length=1,max_length=100)
+    enabled: bool
+
+@app.post('/api/candidates/{cid}/director-adjust',status_code=202)
+def director_adjust(cid: str, body: DirectorAdjustment, authorization: str | None=Header(None)):
+    row=candidate_record(cid,authorization)
+    if row['status']!='completed' or not row['output']: raise HTTPException(409,'Preview is not ready.')
+    data=json.loads(row['output']); provenance=data.get('provenance') or {}
+    if provenance.get('kind')!='director' or not any(c.get('target_stem_id')==body.stem_id for c in provenance.get('changes',[])):
+        raise HTTPException(422,'This creative change is unavailable.')
+    refuse_during_refine(row['project_id'])
+    return {'candidate_id':start(row['project_id'],'candidate',{'_director_adjust':True,'parent_id':cid,'stem_id':body.stem_id,'enabled':body.enabled}), 'status':'queued'}
 
 @app.get('/api/candidates/{cid}')
 def candidate_status(cid: str,authorization: str | None=Header(None)):

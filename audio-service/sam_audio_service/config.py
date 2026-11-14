@@ -86,6 +86,28 @@ class Settings:
     candidates: int = field(default_factory=lambda: _int("AUDIO_CANDIDATES", 1))
     candidate_select: str = field(default_factory=lambda: os.getenv("AUDIO_CANDIDATE_SELECT", "overlap"))
 
+    # Music stems (stems/) and the model router (routing.py). The splitter is opt-in for every
+    # backend, the mock included: with it off, requests behave exactly as before music mode
+    # existed (an empty prompt list is still 400). "mock" = frequency bands for CI; "demucs" /
+    # "chain" (vocal model + Demucs) load real weights on first use.
+    stem_splitter: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_SPLITTER", "off"))
+    # Demucs model name (htdemucs, htdemucs_ft, htdemucs_6s). A name ending in "6s" also gives
+    # the mock splitter guitar and piano bands.
+    stem_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_MODEL", "htdemucs_ft"))
+    stem_vocal_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_VOCAL_MODEL", "model_bs_roformer_ep_317_sdr_12.9755.ckpt"))  # chain only
+    stem_model_dir: str | None = field(default_factory=lambda: os.getenv("AUDIO_STEM_MODEL_DIR") or None)  # chain only
+    # Demucs apply_model knobs: random-shift averaging (cost x shifts), segment overlap, and
+    # segment length in seconds (unset = the model's own; htdemucs caps it at ~7.8 s).
+    stem_shifts: int = field(default_factory=lambda: _int("AUDIO_STEM_SHIFTS", 1))
+    stem_overlap: float = field(default_factory=lambda: _float("AUDIO_STEM_OVERLAP", 0.25))
+    stem_segment: float | None = field(default_factory=lambda: _opt_float("AUDIO_STEM_SEGMENT"))
+    # options.mode when a request does not set one: auto | prompted | music_stems.
+    routing_default: str = field(default_factory=lambda: os.getenv("AUDIO_ROUTING_DEFAULT", "auto"))
+    # Content classifier for auto routing: off | mock | ast. Unset -> "ast" when a real splitter
+    # is configured (demucs/chain), otherwise "off" (see __post_init__).
+    router_classifier: str = field(default_factory=lambda: os.getenv("AUDIO_ROUTER_CLASSIFIER", ""))
+    router_music_threshold: float = field(default_factory=lambda: _float("AUDIO_ROUTER_MUSIC_THRESHOLD", 0.5))
+
     # Limits.
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
     max_input_bytes: int = field(default_factory=lambda: _int("AUDIO_MAX_INPUT_BYTES", 500 * 1024 * 1024))
@@ -170,6 +192,8 @@ class Settings:
             self.pass_min_similarity = self.pass_min_similarity_env
         elif self.pass_min_similarity is None:
             self.pass_min_similarity = 0.6 if self.backend == "sam" else 0.0
+        if not self.router_classifier:
+            self.router_classifier = "ast" if self.stem_splitter in {"demucs", "chain"} else "off"
         if not self.refine:
             # Measured 2026-11-13 on sam-audio-small: the mask improved every fixture (+1.8 to
             # +5.9 dB SI-SDRi, 1.7-6.5 dB less leakage) at no GPU cost, so it is on for the real
@@ -188,9 +212,9 @@ class Settings:
         if not 1 <= self.chunk_batch <= 8:
             raise ValueError("AUDIO_CHUNK_BATCH (deprecated alias AUDIO_CHUNK_WORKERS) must be between 1 and 8")
         if not -60 <= self.pass_max_ratio_db <= 20:
-            raise ConfigurationError("AUDIO_PASS_MAX_RATIO_DB must be within [-60, 20] (20 effectively disables the guard)")
+            raise ValueError("AUDIO_PASS_MAX_RATIO_DB must be within [-60, 20] (20 effectively disables the guard)")
         if not 0 <= self.pass_min_similarity <= 1:
-            raise ConfigurationError("AUDIO_PASS_MIN_SIMILARITY must be within [0, 1]")
+            raise ValueError("AUDIO_PASS_MIN_SIMILARITY must be within [0, 1]")
         if not 1 <= self.max_passes <= 5:
             raise ValueError("AUDIO_MAX_PASSES must be between 1 and 5")
         if self.chunk_seconds < 0:
@@ -225,6 +249,24 @@ class Settings:
             raise ValueError("AUDIO_CANDIDATES must be between 1 and 8")
         if self.candidate_select not in {"first", "overlap", "mean", "auto"}:
             raise ValueError("AUDIO_CANDIDATE_SELECT must be 'first', 'overlap' or 'mean'")
+        if self.stem_splitter not in {"off", "mock", "demucs", "chain"}:
+            raise ValueError("AUDIO_STEM_SPLITTER must be 'off', 'mock', 'demucs' or 'chain'")
+        if not self.stem_model:
+            raise ValueError("AUDIO_STEM_MODEL must not be empty")
+        if not 0 <= self.stem_shifts <= 20:
+            raise ValueError("AUDIO_STEM_SHIFTS must be between 0 and 20")
+        if not 0 <= self.stem_overlap < 1:
+            raise ValueError("AUDIO_STEM_OVERLAP must be in [0, 1)")
+        if self.stem_segment is not None and self.stem_segment <= 0:
+            raise ValueError("AUDIO_STEM_SEGMENT must be positive")
+        if self.routing_default not in {"auto", "prompted", "music_stems"}:
+            raise ValueError("AUDIO_ROUTING_DEFAULT must be 'auto', 'prompted' or 'music_stems'")
+        if self.routing_default == "music_stems" and self.stem_splitter == "off":
+            raise ValueError("AUDIO_ROUTING_DEFAULT=music_stems needs AUDIO_STEM_SPLITTER")
+        if self.router_classifier not in {"off", "mock", "ast"}:
+            raise ValueError("AUDIO_ROUTER_CLASSIFIER must be 'off', 'mock' or 'ast'")
+        if not 0 <= self.router_music_threshold <= 1:
+            raise ValueError("AUDIO_ROUTER_MUSIC_THRESHOLD must be in [0, 1]")
 
 
 def load_settings() -> Settings:

@@ -108,6 +108,14 @@ class InferenceOptions(BaseModel):
     # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.
     return_mode: Literal["base64", "file"] = "base64"
+    # Model routing (routing.py). None -> AUDIO_ROUTING_DEFAULT (auto). "prompted" is the text/
+    # span/visual model; "music_stems" splits a song into instrument stems.
+    mode: Literal["auto", "prompted", "music_stems"] | None = None
+    # music_stems only: which stems to return (vocals, drums, bass, guitar, piano, other,
+    # instrumental, or an alias). None -> the prompts, or every stem when there are none.
+    stems: list[str] | None = Field(default=None, min_length=1, max_length=8)
+    # music_stems only: must equal the configured AUDIO_STEM_MODEL (one model per process).
+    stem_model: str | None = None
 
 
 class PromptSpec(BaseModel):
@@ -196,6 +204,13 @@ class SourceRef(BaseModel):
     frame_rate: float | None = Field(default=None, gt=0)
 
 
+class RoutingHints(BaseModel):
+    """What the caller knows about the upload. Used by the router as a tie-breaker only."""
+
+    model_config = ConfigDict(extra="ignore")
+    source_kind: Literal["audio", "video"] | None = Field(default=None, description="audio-only upload or the soundtrack of a video")
+
+
 class SeparationMetadata(BaseModel):
     """Contract B (proposed): what arrives in the ``metadata`` form field / JSON body."""
 
@@ -209,6 +224,7 @@ class SeparationMetadata(BaseModel):
     options: InferenceOptions = Field(default_factory=InferenceOptions)
     asset_id: str | None = None
     request_id: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    hints: RoutingHints = Field(default_factory=RoutingHints)
 
     def resolved_prompts(self, max_prompts: int) -> list[PromptSpec]:
         specs: list[PromptSpec] = []
@@ -300,10 +316,38 @@ class ModelInfo(BaseModel):
     candidate_select: str = Field(default="first", description="How a draw was picked per window; 'first' when candidates == 1")
 
 
+class RouteInfo(BaseModel):
+    """Which separator handled (or would handle) a request, and why."""
+
+    mode: Literal["prompted", "music_stems"]
+    engine: str = Field(description="What runs: mock | sam | audiosep for prompted; mock | demucs | chain for music_stems")
+    model_id: str | None
+    reason: str
+    scores: dict[str, float] | None = Field(default=None, description="Content classifier {music, speech} in [0, 1]; null when it was not run or is unavailable")
+    stems: list[str] | None = Field(default=None, description="music_stems only: canonical names of the returned target stems")
+
+    @model_serializer(mode="wrap")
+    def _keep_scores_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema
+        data = handler(self)
+        if isinstance(data, dict):
+            data.setdefault("scores", None)  # the contract promises scores: null, even under exclude_none
+        return data
+
+
 class SeparationResponse(BaseModel):
     stems: list[StemResult]
     model: ModelInfo
     source: SourceInfo
     request_id: str
+    routing: RouteInfo | None = None
+    warnings: list[str] = Field(default_factory=list)
+    contract_version: str = CONTRACT_VERSION
+
+
+class RouteResponse(BaseModel):
+    """``POST /v1/route``: the routing decision for a request, without separating anything."""
+
+    routing: RouteInfo
+    source: SourceInfo
     warnings: list[str] = Field(default_factory=list)
     contract_version: str = CONTRACT_VERSION

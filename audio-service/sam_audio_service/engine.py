@@ -13,6 +13,10 @@ Long inputs are cut into overlapping windows and handed to the backend ``AUDIO_C
 windows at a time (``Backend.separate_many``). Windows are never run on threads: the model
 is shared and not re-entrant, so parallelism belongs in the batch dimension. See
 ``docs/chunk_concurrency.md``.
+
+Music stems: every request is routed first (``routing.py``). ``music_stems`` requests skip
+all of the above and go through the stem splitter (``stems/``) in one call: split once,
+make the stems sum to the mixture, then return the requested stems plus one residual.
 """
 from __future__ import annotations
 
@@ -31,6 +35,7 @@ from .audio_io import DecodedAudio, sanitise, to_mono
 from .backends import Backend, create_backend
 from .backends.base import Anchor, BackendOptions, BackendPrompt, BackendResult, VisualInput
 from .candidates import choose, choose_residual
+from .classifier import ContentClassifier, create_classifier
 from .config import Settings
 from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
 from .refine import mask_refine
@@ -43,6 +48,10 @@ from .errors import (
     UnsupportedOperation,
     is_out_of_memory,
 )
+from .routing import RouteDecision, route
+from .stems import StemSplitter, create_splitter, mixture_consistency
+from .stems.base import fit_length
+from .stems.vocabulary import components
 from .visual_prompts import translate_visual_prompt
 
 log = logging.getLogger("sam_audio_service")
@@ -93,14 +102,26 @@ class EngineResult:
     model: dict[str, Any]
     warnings: list[str]
     elapsed_seconds: float
+    routing: dict[str, Any] | None = None
+
+
+def _cuda_for(device: Any):
+    """``torch.cuda`` when torch is already imported and ``device`` is a CUDA device, else None."""
+    torch = sys.modules.get("torch")
+    return torch.cuda if torch is not None and torch.cuda.is_available() and str(device or "").startswith("cuda") else None
 
 
 class Engine:
-    def __init__(self, settings: Settings, backend: Backend | None = None):
+    def __init__(self, settings: Settings, backend: Backend | None = None, splitter: StemSplitter | None = None, classifier: ContentClassifier | None = None):
         self.settings = settings
         self.backend = backend or create_backend(settings)
+        # Both optional and loaded on first use; the splitter is None when AUDIO_STEM_SPLITTER=off.
+        self.splitter = splitter or create_splitter(settings)
+        self.classifier = classifier or create_classifier(settings)
         self._lock = threading.Lock()
         self._load_error: str | None = None
+        self._splitter_error: str | None = None
+        self._classifier_error: str | None = None
 
     # ------------------------------------------------------------------ lifecycle
     def load(self) -> None:
@@ -122,8 +143,73 @@ class Engine:
                 raise InsufficientGpuMemory("not enough GPU memory to load the model", details={"model_id": self.settings.model_id}) from exc
             raise MissingModel(f"model is not available: {self._load_error}", details={"model_id": self.settings.model_id}) from exc
 
+    def ensure_splitter_loaded(self) -> None:
+        assert self.splitter is not None
+        if self.splitter.loaded:
+            return
+        try:
+            self.splitter.load()
+            self._splitter_error = None
+        except Exception as exc:  # noqa: BLE001 - surfaced through /health and MISSING_MODEL
+            self._splitter_error = f"{type(exc).__name__}: {exc}"
+            log.exception("stem splitter load failed")
+            details = {"stem_model": self.settings.stem_model}
+            if is_out_of_memory(exc):
+                raise InsufficientGpuMemory("not enough GPU memory to load the stem splitter", details=details) from exc
+            raise MissingModel(f"stem splitter is not available: {self._splitter_error}", details=details) from exc
+
+    def unload(self) -> None:
+        self.backend.unload()
+        if self.splitter is not None:
+            self.splitter.unload()
+        self.classifier.unload()
+
     def status(self) -> dict[str, Any]:
         return {"backend": self.backend.name, "is_mock": self.backend.is_mock, "loaded": self.backend.loaded, "load_error": self._load_error, **self.backend.info()}
+
+    def splitter_status(self) -> dict[str, Any] | None:
+        if self.splitter is None:
+            return None
+        return {"backend": self.splitter.name, "is_mock": self.splitter.is_mock, "loaded": self.splitter.loaded, "load_error": self._splitter_error, "stems": list(self.splitter.stems), **self.splitter.info()}
+
+    def classifier_status(self) -> dict[str, Any]:
+        return {**self.classifier.info(), "load_error": self._classifier_error}
+
+    # ------------------------------------------------------------------ routing
+    def _classify(self, audio: DecodedAudio) -> dict[str, float] | None:
+        """Content scores, or None when no classifier is configured or it cannot run.
+
+        A classifier that fails for any reason other than memory is disabled for the life of
+        the process (missing package, weights not downloadable) so requests do not pay for the
+        same failure again; /health reports why.
+        """
+        if self._classifier_error or audio.frames == 0 or audio.duration > self.settings.max_duration_seconds:
+            return None
+        try:
+            with self._lock:
+                return self.classifier.score(audio.samples, audio.sample_rate)
+        except Exception as exc:  # noqa: BLE001 - routing falls back to the prompt rules
+            log.warning("content classifier failed: %s: %s", type(exc).__name__, exc)
+            if not is_out_of_memory(exc):
+                self._classifier_error = f"{type(exc).__name__}: {exc}"
+            return None
+
+    def route(self, audio: DecodedAudio, metadata: SeparationMetadata, prompts: list[PromptSpec] | None = None) -> RouteDecision:
+        if prompts is None:
+            try:
+                prompts = metadata.resolved_prompts(self.settings.max_prompts)
+            except ValueError as exc:
+                raise InvalidRequest(str(exc)) from exc
+        splitter = self.splitter
+        return route(
+            prompts, metadata.options, metadata.hints,
+            available=tuple(splitter.stems) if splitter else None,
+            classify=lambda: self._classify(audio),
+            default_mode=self.settings.routing_default,
+            threshold=self.settings.router_music_threshold,
+            prompted_engine=(self.backend.name, self.backend.info().get("model_id")),
+            music_engine=(splitter.name, splitter.info().get("model_id")) if splitter else None,
+        )
 
     # ------------------------------------------------------------------ translation
     def translate_visual(self, prompt: PromptSpec, shared: dict[str, Any] | None, metadata: SeparationMetadata, source_duration: float, warnings: list[str], workdir: Path | None = None) -> tuple[VisualInput | None, list[Anchor]]:
@@ -189,11 +275,84 @@ class Engine:
 
     # ------------------------------------------------------------------ main entry
     def separate(self, audio: DecodedAudio, metadata: SeparationMetadata, workdir: Path | None = None) -> EngineResult:
-        warnings: list[str] = []
         try:
             prompts = metadata.resolved_prompts(self.settings.max_prompts)
         except ValueError as exc:
             raise InvalidRequest(str(exc)) from exc
+        decision = self.route(audio, metadata, prompts)
+        if decision.mode == "music_stems":
+            result = self._separate_stems(audio, metadata, decision)
+        else:
+            result = self._separate_prompted(audio, metadata, prompts, workdir)
+        result.warnings.extend(decision.warnings)
+        result.routing = decision.to_dict()
+        return result
+
+    def _separate_stems(self, audio: DecodedAudio, metadata: SeparationMetadata, decision: RouteDecision) -> EngineResult:
+        """Split once, make the stems sum to the mixture, return the requested ones (+ residual)."""
+        splitter = self.splitter
+        assert splitter is not None
+        options = metadata.options
+        if audio.duration > self.settings.max_duration_seconds:
+            raise UnsupportedOperation(f"audio is {audio.duration:.1f}s; the limit is {self.settings.max_duration_seconds:.0f}s", details={"max_duration_seconds": self.settings.max_duration_seconds})
+        if audio.frames == 0:
+            raise InvalidRequest("audio is empty")
+        if options.stem_model and options.stem_model not in (self.settings.stem_model, splitter.info().get("model_id")):
+            raise UnsupportedOperation(f"this service splits with {self.settings.stem_model!r}; stem_model {options.stem_model!r} is not loaded", details={"available": [self.settings.stem_model]})
+        warnings: list[str] = []
+        if splitter.is_mock:
+            warnings.append("MOCK stem splitter: stems are frequency bands of the mixture, not real separation")
+        mixture = audio.samples
+        started = time.perf_counter()
+        with self._lock:
+            self.ensure_splitter_loaded()
+            cuda = _cuda_for(splitter.info().get("device"))
+            if cuda:
+                cuda.reset_peak_memory_stats()
+            try:
+                raw = splitter.split(mixture)
+            except AudioServiceError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if is_out_of_memory(exc):
+                    raise InsufficientGpuMemory("GPU ran out of memory splitting stems; try a shorter input or a smaller AUDIO_STEM_SEGMENT", details={"frames": audio.frames}) from exc
+                raise InferenceFailure(f"{type(exc).__name__}: {exc}") from exc
+            peak_memory = int(cuda.max_memory_allocated()) if cuda else None
+        missing = [s for s in splitter.stems if s not in raw]
+        if missing:
+            raise InferenceFailure(f"stem splitter returned no {', '.join(missing)}")
+        for name in splitter.stems:
+            stem = sanitise(np.asarray(raw[name], dtype=np.float32))
+            if stem.ndim != 2 or stem.shape[0] != mixture.shape[0]:
+                raise InferenceFailure(f"stem splitter returned {name} with shape {stem.shape} for a mixture of shape {mixture.shape}")
+            raw[name] = fit_length(stem, audio.frames)
+        split = mixture_consistency(mixture, {name: raw[name] for name in splitter.stems})
+
+        def total(names: list[str]) -> np.ndarray:
+            return np.sum([split[n] for n in names], axis=0, dtype=np.float32)
+
+        stems = [StemArrays(r.name, "target", total(components(r.canonical, splitter.stems)), None, r.canonical, None) for r in decision.requests]
+        if decision.residual and options.residual != "none":
+            stems.append(StemArrays(options.residual_name, "residual", total(decision.residual), None, "everything else", None))
+        elapsed = time.perf_counter() - started
+        info = splitter.info()
+        model = {
+            "backend": splitter.name,
+            "model_id": info.get("model_id"),
+            "device": info.get("device"),
+            "dtype": info.get("dtype"),
+            "predict_spans": False,
+            "reranking_candidates": 1,
+            "stereo_mode": "native",
+            "chunked": False,
+            "peak_memory_bytes": peak_memory,
+            "elapsed_seconds": round(elapsed, 3),
+            "is_mock": splitter.is_mock,
+        }
+        return EngineResult(stems, model, warnings, elapsed)
+
+    def _separate_prompted(self, audio: DecodedAudio, metadata: SeparationMetadata, prompts: list[PromptSpec], workdir: Path | None) -> EngineResult:
+        warnings: list[str] = []
         if not prompts:
             raise InvalidRequest("at least one prompt is required")
         if audio.duration > self.settings.max_duration_seconds:
@@ -224,8 +383,7 @@ class Engine:
         candidates_ignored_warned = False
         with self._lock:
             self.ensure_loaded()  # under the lock so concurrent first requests load the model once
-            torch = sys.modules.get('torch')
-            cuda = torch.cuda if torch is not None and torch.cuda.is_available() and str(self.backend.info().get('device','')).startswith('cuda') else None
+            cuda = _cuda_for(self.backend.info().get("device"))
             if cuda: cuda.reset_peak_memory_stats()
             for spec in prompts:
                 visual, visual_anchors = self.translate_visual(spec, metadata.visual_prompt, metadata, audio.duration, warnings, workdir)

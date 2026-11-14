@@ -94,7 +94,7 @@ export function EntryRipple() {
         ctx.fill()
       })
 
-      // The drop: a glowing orb hovering over the center of the rings.
+      // The drop, glowing, hovering over the center of the rings.
       const ox = cx, oy = horizon + ((CAMERA_HEIGHT - 1.0) * focal) / ORIGIN_Z - h * 0.06
       const pulse = 1 + Math.sin(t * 6) * 0.04
       const radius = (h * 0.05) * Math.min(1, t / 0.3) * pulse
@@ -103,10 +103,20 @@ export function EntryRipple() {
         halo.addColorStop(0, 'rgba(140,196,242,0.55)'); halo.addColorStop(1, 'rgba(140,196,242,0)')
         ctx.globalAlpha = 1; ctx.fillStyle = halo
         ctx.beginPath(); ctx.arc(ox, oy, radius * 5, 0, Math.PI * 2); ctx.fill()
-        const orb = ctx.createRadialGradient(ox - radius * 0.3, oy - radius * 0.35, radius * 0.1, ox, oy, radius)
-        orb.addColorStop(0, '#ffffff'); orb.addColorStop(0.45, '#cfe6fd'); orb.addColorStop(1, '#4f9ae8')
-        ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = orb
-        ctx.beginPath(); ctx.arc(ox, oy, radius, 0, Math.PI * 2); ctx.fill()
+        // A water drop: round body, tapering to a point at the top.
+        const R = radius, tip = oy - R * 2.1
+        const body = ctx.createRadialGradient(ox - R * 0.35, oy - R * 0.1, R * 0.08, ox, oy - R * 0.2, R * 1.5)
+        body.addColorStop(0, '#ffffff'); body.addColorStop(0.4, '#cfe6fd'); body.addColorStop(1, '#3f8ee6')
+        ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = body
+        ctx.beginPath()
+        ctx.moveTo(ox, tip)
+        ctx.bezierCurveTo(ox + R * 0.2, oy - R * 1.45, ox + R, oy - R * 0.75, ox + R, oy)
+        ctx.arc(ox, oy, R, 0, Math.PI)
+        ctx.bezierCurveTo(ox - R, oy - R * 0.75, ox - R * 0.2, oy - R * 1.45, ox, tip)
+        ctx.closePath(); ctx.fill()
+        // A small glint, the way light catches the side of a drop.
+        ctx.fillStyle = 'rgba(255,255,255,0.85)'
+        ctx.beginPath(); ctx.ellipse(ox - R * 0.42, oy - R * 0.3, R * 0.14, R * 0.28, -0.35, 0, Math.PI * 2); ctx.fill()
       }
       ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1
       el.parentElement?.style.setProperty('--oy', `${(oy / h) * 100}%`)

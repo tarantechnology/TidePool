@@ -128,8 +128,10 @@ def apply(job):
         for item in data['proposed']:
             if item['id'] in old:
                 # The snapshot is unchanged, including every existing edit.
-                db.execute('UPDATE stems SET path=?,duration=?,volume=?,muted=?,mute_ranges=?,revision=revision+1 WHERE id=? AND project_id=?',
-                           (item['path'],item['duration'],item['volume'],item['muted'],item['mute_ranges'],item['id'],pid))
+                db.execute('UPDATE stems SET path=?,name=?,label=?,duration=?,start_offset=?,volume=?,muted=?,mute_ranges=?,revision=revision+1 WHERE id=? AND project_id=?',
+                           (item['path'],item['name'],item.get('label'),item['duration'],item['start_offset'],item['volume'],item['muted'],item['mute_ranges'],item['id'],pid))
+                for key in ('effect_group_id','effect_asset_id','effect_label'):
+                    if key in item: db.execute(f'UPDATE stems SET {key}=? WHERE id=? AND project_id=?',(item[key],item['id'],pid))
                 if 'refinement' in item:  # Previews built before refinement existed leave it alone.
                     db.execute('UPDATE stems SET refinement=? WHERE id=? AND project_id=?',(item['refinement'],item['id'],pid))
             else:

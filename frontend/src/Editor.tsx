@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, ReactNode } from 'react'
+import type { ChangeEvent, CSSProperties, DragEvent, ReactNode } from 'react'
 import { NO_PROJECT_HINT } from './agent/planOutcome'
 import { NO_PROJECT_STEMS, showsMockBadge } from './state/projectStems'
 import type { ProjectStemsState } from './state/projectStems'
@@ -17,6 +17,7 @@ import { ProjectPanel } from './components/ProjectPanel'
 import type { ProjectPanelHandle } from './components/ProjectPanel'
 import { Logo } from './components/Logo'
 import { Splitter } from './components/Splitter'
+import { PHONE_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { DropLoader } from './components/DropLoader'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
@@ -72,7 +73,13 @@ export default function Editor() {
   const [working, setWorking] = useState<string | null>(null)
   const videoUploadInProgress = useRef(false)
   const [videoAspect, setVideoAspect] = useState<number | null>(null)
-  const portrait = videoSrc !== null && videoAspect !== null && videoAspect < 0.9
+  const isPhone = useMediaQuery(PHONE_QUERY)
+  const portrait = !isPhone && videoSrc !== null && videoAspect !== null && videoAspect < 0.9
+  // Phone layout: the steps live in a sheet that peeks from the bottom and pulls up.
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [step, setStep] = useState({ n: 1, title: 'Upload' })
+  // When work starts (separating, uploading), the sheet gets out of the way so the loader shows.
+  const onBusy = useCallback((label: string | null) => { setWorking(label); if (label) setSheetOpen(false) }, [])
   const [layout, setLayout] = useState(readLayout)
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* layout just won't persist */ } }, [layout])
@@ -90,6 +97,10 @@ export default function Editor() {
     const observer = new ResizeObserver(measure); observer.observe(el)
     return () => observer.disconnect()
   }, [])
+  // On a phone the video spans the width at its own shape, but never takes more than 38% of the screen.
+  const phoneVideoStyle: CSSProperties = videoSrc && videoAspect
+    ? { aspectRatio: String(videoAspect), height: `min(38svh, calc((100vw - 16px) / ${videoAspect}))`, maxWidth: '100%' }
+    : { width: '100%', height: '30svh' }
   const fittedTop = videoAspect && stageSize.width > 0 ? Math.max(140, Math.min(stageSize.width / videoAspect, stageSize.height - TIMELINE_MIN)) : null
   const setPanel = (px: number) => setLayout((l) => ({ ...l, panel: clamp(px, 260, 560) }))
   const stemsRef = useRef<Stem[]>([])
@@ -344,14 +355,14 @@ export default function Editor() {
       )}
       <div className="pointer-events-none absolute -top-40 left-1/2 h-80 w-[60rem] -translate-x-1/2 rounded-full bg-sky/30 blur-[120px]" />
 
-      <header className="relative z-20 flex h-14 shrink-0 items-center gap-4 border-b border-line bg-surface/70 px-4 backdrop-blur">
+      <header className="relative z-20 flex h-14 shrink-0 items-center gap-4 border-b border-line bg-surface/70 px-4 backdrop-blur max-md:gap-2 max-md:px-2.5">
         <a href="#/" className="shrink-0 text-fg transition-opacity hover:opacity-80">
-          <Logo />
+          <Logo iconOnly={isPhone} />
         </a>
         <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
           <Transport engine={engine} playing={playing} duration={duration} />
           {originalSrc && stemsLabel === 'Project stems' && (
-            <div className="flex rounded-full border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to">
+            <div className="flex rounded-full max-md:hidden border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to">
               {([false, true] as const).map((orig) => (
                 <button key={String(orig)} aria-pressed={compareOriginal === orig} onClick={() => setCompareOriginal(orig)}
                   className={`rounded-full px-2.5 py-1 transition-colors ${compareOriginal === orig ? 'bg-accent text-white' : 'text-muted hover:text-fg'}`}>
@@ -376,7 +387,7 @@ export default function Editor() {
           </IconButton>
           <span
             title={chipErrors.join(' ') || statusText}
-            className="ml-1 inline-flex max-w-52 items-center gap-2 truncate rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted"
+            className="ml-1 inline-flex max-w-52 items-center gap-2 truncate rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted max-md:hidden"
           >
             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipErrors.length > 0 || status === 'error' ? 'bg-red-400' : status === 'ready' ? 'bg-accent' : 'animate-pulse-dot bg-faint'}`} />
             <span className="truncate">{statusText}</span>
@@ -400,12 +411,12 @@ export default function Editor() {
       {status === 'error' ? (
         <div className="relative z-10 flex flex-1 items-center justify-center p-8 text-sm text-red-600">{error}</div>
       ) : (
-        <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 p-3 pb-0">
+        <main ref={mainRef} className={`relative z-10 flex min-h-0 flex-1 ${isPhone ? 'flex-col p-2 pb-0' : 'p-3 pb-0'}`}>
           {/* Left: the clip and its layers. A portrait clip stands beside the timeline; a landscape one sits above it. */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div ref={stage} className={`flex min-h-0 flex-1 ${portrait ? 'flex-row gap-3' : 'flex-col'}`}>
-              <div className={portrait ? 'flex h-full shrink-0' : 'flex min-h-[140px] shrink-0'}
-                style={portrait ? { aspectRatio: String(videoAspect), maxWidth: '45%' } : autoTop && fittedTop !== null && videoSrc && videoAspect ? { height: fittedTop, width: Math.min(stageSize.width, fittedTop * videoAspect), alignSelf: 'center' } : { height: `${layout.top * 100}%` }}>
+            <div ref={stage} className={`flex min-h-0 flex-1 ${portrait ? 'flex-row gap-3' : 'flex-col'} ${isPhone ? 'gap-2' : ''}`}>
+              <div className={portrait ? 'flex h-full shrink-0' : isPhone ? 'flex shrink-0 self-center' : 'flex min-h-[140px] shrink-0'}
+                style={isPhone ? phoneVideoStyle : portrait ? { aspectRatio: String(videoAspect), maxWidth: '45%' } : autoTop && fittedTop !== null && videoSrc && videoAspect ? { height: fittedTop, width: Math.min(stageSize.width, fittedTop * videoAspect), alignSelf: 'center' } : { height: `${layout.top * 100}%` }}>
             <VideoPanel
               engine={engine}
               src={videoSrc}
@@ -422,7 +433,7 @@ export default function Editor() {
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
               </div>
-              {!portrait && (
+              {!portrait && !isPhone && (
                 <Splitter direction="row" label="Resize the video and the timeline"
                   onDrag={(y) => setTop(y - (stage.current?.getBoundingClientRect().top ?? 0))} onStep={(d) => setTop((autoTop && fittedTop !== null && videoSrc ? fittedTop : layout.top * (stage.current?.clientHeight ?? 800)) + d)} onReset={() => { setAutoTop(true); setLayout((l) => ({ ...l, top: DEFAULT_LAYOUT.top })) }} />
               )}
@@ -457,20 +468,40 @@ export default function Editor() {
                 <DropLoader size={96} label={working} />
               </div>
             )}
+
           </div>
             </div>
                 </div>
-          <Splitter direction="column" label="Resize the steps panel"
-            onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
+          {!isPhone && <Splitter direction="column" label="Resize the steps panel"
+            onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />}
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
-          <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={setWorking} />
+          {isPhone && sheetOpen && <div className="fixed inset-0 z-30 bg-fg/20 backdrop-blur-[1px]" onClick={() => setSheetOpen(false)} aria-hidden="true" />}
+          <div className={isPhone ? `fixed inset-x-0 bottom-0 z-40 flex flex-col rounded-t-3xl border-t border-line bg-surface shadow-[0_-12px_40px_-12px_rgb(14_36_64/0.3)] transition-[height] duration-300 ease-out ${sheetOpen ? 'h-[78svh]' : 'h-16'}` : 'flex min-h-0 shrink-0 flex-col pb-3'}
+            style={isPhone ? undefined : { width: layout.panel }}>
+            {isPhone && (
+              <button type="button" onClick={() => setSheetOpen((o) => !o)} aria-expanded={sheetOpen} aria-controls="steps-sheet"
+                className="flex h-16 shrink-0 flex-col items-center justify-center gap-1.5 px-4">
+                <span className="h-1 w-10 rounded-full bg-line-strong" aria-hidden="true" />
+                <span className="flex w-full items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 font-medium text-fg"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent-soft text-[11px] text-accent">{step.n}</span>{step.title}</span>
+                  <span className="text-xs text-accent">{sheetOpen ? 'Close' : 'Steps'}</span>
+                </span>
+              </button>
+            )}
+            <div id="steps-sheet" className={isPhone ? `flex min-h-0 flex-1 flex-col px-2 pb-2 ${sheetOpen ? '' : 'invisible'}` : 'contents'}>
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={onBusy} onStep={setStep} />
+            </div>
+
           </div>
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} onRun={runPrompt}
-        split={projectStems.split ? { suggested: projectStems.split.suggested, onSplit: () => void projectPanel.current?.splitSong(), busy: Boolean(working) } : null} />
+      {/* Below the editor's layer, so the phone steps sheet covers it when pulled up; on a phone it sits above the sheet's peek. */}
+      <div className={`relative z-[5] ${isPhone ? 'pb-16' : ''}`}>
+        <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} onRun={runPrompt}
+          split={projectStems.split ? { suggested: projectStems.split.suggested, onSplit: () => void projectPanel.current?.splitSong(), busy: Boolean(working) } : null} />
+      </div>
+
     </div>
   )
 }

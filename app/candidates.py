@@ -3,7 +3,7 @@ import json
 import shutil
 from pathlib import Path
 from fastapi import HTTPException
-from .core import connect, probe, project_dir, stem, uid
+from .core import connect, probe, project_dir, run, stem, uid
 from .guidance import edit_target
 from .media import separate, export
 from .visual import file_sha256
@@ -27,7 +27,37 @@ def build(project, payload, cid):
     if file_sha256(source)!=snapshot['source_sha256']: raise ValueError('Source changed; generate another preview')
     payload['request_id']=cid
     inference={}; directory=project_dir(pid)/'stems'
-    results=separate(source,directory,payload,report=inference)
+    interval=payload.pop('_processing_interval',None)
+    point=payload.pop('_processing_time',None)
+    source_anchors=payload.get('anchors',[])
+    localization=None
+    if point is not None:
+        from .discovery import locate_near
+        localization=locate_near(source, probe(source)['duration'], payload['prompts'][0], point)
+        interval=localization['interval']
+    service_source=source
+    if interval:
+        start,end=interval['start'],interval['end']
+        duration=probe(source)['duration']
+        # Context is only for model inference. The output remains inside the selected range.
+        padding=min(1.0,max(0.0,(10.0-(end-start))/2))
+        context_start=max(0.0,start-padding);context_end=min(duration,end+padding)
+        service_source=directory/(uid()+'-segment.wav')
+        run('ffmpeg','-v','error','-y','-ss',str(context_start),'-i',str(source),'-t',str(context_end-context_start),'-c:a','pcm_f32le',str(service_source))
+        payload['anchors']=[{**a,'start':max(0,a['start']-context_start),'end':min(context_end-context_start,a['end']-context_start)} for a in source_anchors if a['start']>=context_start and a['end']<=context_end]
+    results=separate(service_source,directory,payload,report=inference)
+    if interval:
+        selected=[r for r in results if r['name'].lower()!='residual']
+        if len(selected)!=1: raise ValueError('Preview requires exactly one target; existing layers were preserved.')
+        info=probe(source); rate=info['sample_rate']; count=round(info['duration']*rate)
+        offset=round((start-context_start)*rate);delay=round(start*rate);length=round((end-start)*rate)
+        fade=min(.02,(end-start)/4)
+        full_target=directory/(uid()+'-target.wav'); full_residual=directory/(uid()+'-residual.wav')
+        run('ffmpeg','-v','error','-y','-i',str(selected[0]['path']),'-af',f'atrim=start_sample={offset}:end_sample={offset+length},asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade},afade=t=out:st={max(0,end-start-fade)}:d={fade},adelay={delay}S:all=1,apad,atrim=end_sample={count}','-c:a','pcm_f32le',str(full_target))
+        run('ffmpeg','-v','error','-y','-i',str(source),'-i',str(full_target),'-filter_complex','[1:a]volume=-1[neg];[0:a][neg]amix=inputs=2:duration=first:normalize=0','-c:a','pcm_f32le',str(full_residual))
+        results=[{**selected[0],'path':full_target},{'name':'residual','path':full_residual}]
+        if localization and localization.get('notice'):
+            inference.setdefault('warnings',[]).append(localization['notice'])
     results=[r if isinstance(r,dict) else {'name':r[0],'path':r[1]} for r in results]
     refinement=next((r.get('refinement') for r in results if r['name'].lower()!='residual'),None)
     targets=[(r['name'],r['path']) for r in results if r['name'].lower()!='residual']
@@ -62,9 +92,9 @@ def build(project, payload, cid):
     return {'target':target,'residual':residual,'mix':{'path':str(mix)},'original':{'path':str(original)},
             'snapshot':snapshot,'proposed':proposed,'inference':inference,
             'provenance':{'source_sha256':snapshot['source_sha256'],'source_kind':'original' if snapshot['target_id'] or not rows else 'residual',
-                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':payload.get('anchors',[]),
+                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':source_anchors,
                           'visual_guidance':bool(payload.get('visual_prompt')),'edit_scope':payload.get('edit_scope'),
-                          'profile':payload.get('profile','preview'),'requested_options':payload['options'],
+                          'profile':payload.get('profile','preview'),'processing_interval':interval,'processing_time':point,'localization':localization,'inference_interval':{'start':context_start,'end':context_end} if interval else None,'requested_options':payload['options'],
                           'passes':payload['options'].get('passes',1),'refinement':refinement}}
 
 
@@ -88,6 +118,9 @@ def apply(job):
         try:
             if file_sha256(safe_path(pid,snapshot['source']))!=snapshot['source_sha256']: raise ValueError('Source changed')
             for item in data['proposed']: safe_path(pid,item['path'])
+            for item in snapshot['rows']:
+                expected = snapshot.get('stem_hashes', {}).get(item['id'])
+                if expected and file_sha256(safe_path(pid, item['path'])) != expected: raise ValueError('A source layer changed')
         except (OSError,ValueError) as exc: raise HTTPException(409,'Preview media changed or is unavailable; regenerate it.') from exc
         project=db.execute('SELECT audio FROM projects WHERE id=?',(pid,)).fetchone()
         if project['audio']!=snapshot.get('project_audio',project['audio']): raise HTTPException(409,'Project media changed since preview; regenerate it.')

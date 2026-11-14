@@ -110,8 +110,26 @@ def work_once():
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
+        elif job['kind']=='discovery':
+            from .discovery import discover
+            if file_sha256(p['audio']) != payload['audio_sha256']: raise ValueError('Project audio changed; run discovery again.')
+            output=discover(p['audio'], json.loads(p['metadata'])['duration'])
+            with connect() as db:
+                current=db.execute('SELECT audio FROM projects WHERE id=?',(pid,)).fetchone()
+                if not current or current['audio']!=p['audio'] or file_sha256(p['audio'])!=payload['audio_sha256']:
+                    raise ValueError('Project audio changed; run discovery again.')
+                db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='candidate':
-            from .candidates import build
+            if payload.get('_effects'):
+                from .effects import build
+            elif payload.get('_director_adjust'):
+                from .director import adjust as build
+            elif payload.get('_director'):
+                from .director import build
+            elif payload.get('_cinematic'):
+                from .cinematic import build
+            else:
+                from .candidates import build
             output=build(p,payload,job['id'])
             with connect() as db:
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))

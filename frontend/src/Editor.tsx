@@ -69,7 +69,6 @@ export default function Editor() {
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
   const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
-  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null)
   const [working, setWorking] = useState<string | null>(null)
   const videoUploadInProgress = useRef(false)
   const [videoAspect, setVideoAspect] = useState<number | null>(null)
@@ -266,7 +265,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate') return {message:plan.message,ok:true}
+      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
@@ -446,7 +445,6 @@ export default function Editor() {
                 <DropLoader size={96} label={working} />
               </div>
             )}
-            <div ref={setPreviewSlot} className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center [&>*]:pointer-events-auto" />
           </div>
             </div>
                 </div>
@@ -454,7 +452,7 @@ export default function Editor() {
             onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
           <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={setWorking} />
           </div>
         </main>
       )}

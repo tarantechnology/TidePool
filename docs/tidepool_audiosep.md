@@ -27,6 +27,30 @@ retries. Those controls follow the live capabilities rather than pretending they
 work with AudioSep. Capability-driven requests use one candidate and batch one;
 unsupported quality retries are rejected before starting a job.
 
+## Processing ranges and newer editor features
+
+The upstream editor adds **Select audio range** and commands such as
+`Mute the dog barking at 8 seconds`. The app crops the selected audio with up to
+one second of context for inference, fades the removed target at the interval
+edges, and rebuilds a full-length residual from the original. The float32 edited
+mix stays sample-identical outside the selected interval. This is app-level
+cropping; AudioSep still receives only text and audio, with no time anchors or
+visual guidance. Overlapping speech inside the selected interval can still be
+affected. Lossy MP4/MP3 encoding can change samples throughout the export.
+
+Timestamp localization uses the optional YAMNet detector when configured. On the
+current Mac backend, neither YAMNet nor the optional scene-caption model is
+configured. Timestamp requests therefore use the reported two-second fallback;
+manual ranges work without either model. **Discover sounds** needs a separately
+configured detector on the machine running the app backend, even when AudioSep
+itself runs remotely.
+
+The new EQ/compression and creative previews use separate reversible candidate
+operations. They do not improve source separation or restore damaged voices.
+Manual effects run locally with FFmpeg; the creative director can fall back to a
+whole-mix treatment when optional discovery and scene understanding are absent.
+The separate event-detection benchmark branch is not enabled in the demo app.
+
 ## RunPod service
 
 Use the authorized SSH connection and a source checkout on the persistent volume.

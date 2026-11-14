@@ -190,3 +190,15 @@ describe('music splits and routing', () => {
     expect(toCapabilities({}).musicStems).toBeUndefined()
   })
 })
+
+describe('responseBlob', () => {
+  it('builds the blob from the bytes and keeps the content type', async () => {
+    const { responseBlob } = await import('./backend')
+    const res = new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/wav' } })
+    // Response.blob() is the path that fails in Chrome for large network bodies; it must not be used.
+    res.blob = () => Promise.reject(new TypeError('Failed to fetch'))
+    const blob = await responseBlob(res)
+    expect(blob.type).toBe('audio/wav')
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
+  })
+})

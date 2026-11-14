@@ -195,9 +195,19 @@ export function toTrackState(stem: SavedStem): TrackState {
  * Never from the HTTP cache: Extract more rewrites a stem's audio in place, at
  * the same URL, and a cached copy would play the old separation.
  */
+/**
+ * A Blob of the response body, built in the page. Chrome builds `Response.blob()` for a network
+ * response in the browser process and spills large bodies to disk; when that fails (seen with a
+ * nearly full disk on 2026-11-14: an 11 MB WAV) it rejects with a bare "Failed to fetch" even though
+ * every byte arrived. Reading the bytes and wrapping them avoids that path.
+ */
+export async function responseBlob(res: Response): Promise<Blob> {
+  return new Blob([await res.arrayBuffer()], { type: res.headers.get('content-type') ?? '' })
+}
+
 export async function fetchStemBlobUrl(config: BackendConfig, audioUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<string> {
   const res = await request(config, audioUrl, { cache: 'no-store' }, undefined, timeoutMs)
-  return URL.createObjectURL(await res.blob())
+  return URL.createObjectURL(await responseBlob(res))
 }
 
 const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1
@@ -367,7 +377,7 @@ export async function getExport(config: BackendConfig, exportId: string, signal?
   return res.json() as Promise<ExportInfo>
 }
 export async function downloadExport(config: BackendConfig, url: string, filename: string): Promise<void> {
-  const res = await request(config, url); const blobUrl = URL.createObjectURL(await res.blob())
+  const res = await request(config, url); const blobUrl = URL.createObjectURL(await responseBlob(res))
   try { const a = document.createElement('a'); a.href = blobUrl; a.download = filename; a.click() }
   finally { setTimeout(() => URL.revokeObjectURL(blobUrl), 1000) }
 }

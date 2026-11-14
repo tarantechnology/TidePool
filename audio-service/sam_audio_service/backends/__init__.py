@@ -15,7 +15,7 @@ def create_backend(settings: Settings) -> Backend:
     if settings.backend == "audiosep":
         from .audiosep import AudioSepBackend
 
-        return AudioSepBackend(root=os.getenv('AUDIO_AUDIOSEP_ROOT', ''), model_id=settings.model_id, device=settings.device)
+        return AudioSepBackend(root=os.getenv('AUDIO_AUDIOSEP_ROOT', '/workspace/vendor/AudioSep'), model_id=settings.model_id, device=settings.device)
     if settings.backend == "sam":
         from .sam_audio import SamAudioBackend
 

@@ -41,15 +41,17 @@ interface Props {
 
 /** Detector status, Find objects, and the tracked objects it found. Keyed by project, so a new project starts clean. */
 export function ObjectsPanel({ config, projectId, vision, visual, selection, disabled, resumeJobId, canPrepare, onAnalyzed, onSelect, onSeek, onPrepared }: Props) {
+  const [concept, setConcept] = useState('')
   const [run, setRun] = useState<DetectionRun>(IDLE)
   const abort = useRef<AbortController | null>(null)
-  const followed = useRef<string | null>(null)
   const section = useRef<HTMLElement>(null)
   useEffect(() => () => abort.current?.abort(), [])
 
   const tracks = useMemo(() => (visual ? objectTracks(visual) : []), [visual])
   const found = useMemo(() => (visual ? summarize(visual) : null), [visual])
   const status = detectorStatus(vision, run, found)
+  const automatic = !vision?.selectionOnly || vision.automatic === true
+  const suggestedConcepts = [...new Set(tracks.map(t => t.label))]
 
   const start = async (work: (signal: AbortSignal, update: (r: DetectionRun) => void) => Promise<boolean>) => {
     abort.current?.abort()
@@ -74,12 +76,12 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
     }
   }
 
-  const detect = (jobId: string | null, preparedBefore = false) => start(async (signal, update) => {
+  const detect = (jobId: string | null, preparedBefore = false, target = 'auto') => start(async (signal, update) => {
     let prepared = preparedBefore
     let id = jobId
     if (!id) {
       update({ phase: 'queued', prepared })
-      const started = await startVisualAnalysis(config, projectId)
+      const started = await startVisualAnalysis(config, projectId, target)
       id = started.jobId; prepared ||= started.prepared
     }
     const job = id
@@ -102,8 +104,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
 
   const follow = useEffectEvent((jobId: string) => { void detect(jobId) })
   useEffect(() => {
-    if (!resumeJobId || followed.current === resumeJobId) return
-    followed.current = resumeJobId
+    if (!resumeJobId) return
     follow(resumeJobId)
   }, [resumeJobId])
 
@@ -126,6 +127,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
         <span aria-hidden="true" className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot[status.tone]}`} />
         <span className="min-w-0 break-words">{status.text}</span>
       </p>
+      {vision?.selectionOnly && vision.prompted !== false && <details><summary className="cursor-pointer text-muted">Find a specific object with SAM</summary><label className="mt-2 block">Object to find<input aria-label="Object to find" placeholder="Optional, e.g. dog or person in a white hoodie" className="mt-1 w-full rounded border border-line bg-surface px-2 py-1" value={concept} maxLength={80} disabled={disabled || status.running} onChange={e=>setConcept(e.target.value)}/></label><button type="button" className="mt-1 rounded border border-line px-2 py-1" disabled={disabled || status.running || !concept.trim()} onClick={()=>void detect(null,false,concept.trim())}>Find with SAM</button></details>}
       {status.running ? (
         <div className="flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-tint/10" role="progressbar" aria-label="Detection progress" aria-valuemin={0} aria-valuemax={100} {...(progress !== undefined ? { 'aria-valuenow': progress } : {})}>
@@ -134,10 +136,11 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
           <button type="button" className="rounded-lg border border-line px-2 py-1 text-fg" onClick={cancel}>Cancel</button>
         </div>
       ) : (
-        <button type="button" className="w-full rounded-lg border border-accent/40 bg-accent-soft px-3 py-1.5 font-medium text-accent transition-colors hover:border-accent/60 disabled:opacity-40" disabled={disabled || !status.canStart} onClick={() => void detect(null)}>
-          Find objects in video
+        <button type="button" className="w-full rounded-lg border border-accent/40 bg-accent-soft px-3 py-1.5 font-medium text-accent transition-colors hover:border-accent/60 disabled:opacity-40" disabled={disabled || !status.canStart || (!automatic && !concept.trim())} onClick={() => void detect(null,false,automatic ? 'auto' : concept.trim())}>
+          {automatic ? 'Find people and objects' : 'Find with SAM'}
         </button>
       )}
+      {visual?.discovery_mode==='automatic' && suggestedConcepts.length>0 && vision?.prompted !== false && <div className="space-y-1"><p className="text-muted">People and common objects found automatically. Refine a category with SAM for a more precise outline:</p><div className="flex flex-wrap gap-1">{suggestedConcepts.map(label=><button type="button" key={label} disabled={disabled || status.running} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={()=>void detect(null,false,label)}>Refine {label}</button>)}</div></div>}
       {run.phase === 'failed' && run.status === 422 && !status.running && (canPrepare ? (
         <div className="space-y-1">
           <p className="text-muted">This server did not re-encode the video itself. Prepare a compatible copy here and detection runs again; the uploaded file is kept.</p>
@@ -148,7 +151,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
       ))}
       {tracks.length > 0 && (
         <>
-          <p className="text-subtle">Pick one to hear just that sound.</p>
+          <p className="text-subtle">Pick an object, then choose its sound and an edit.</p>
           <ul aria-label="Detected objects" className="max-h-32 space-y-0.5 overflow-y-auto">
             {tracks.map((t) => {
               const selected = selection?.track_id === t.trackId

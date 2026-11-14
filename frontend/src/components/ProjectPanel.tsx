@@ -15,7 +15,7 @@ import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -151,7 +151,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
   useEffect(() => () => { if(currentUrl) URL.revokeObjectURL(currentUrl) },[currentUrl])
-  useEffect(() => { if (selectedVisual) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual])
+  useEffect(() => { if (selectedVisual && capabilities?.visual !== false) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual, capabilities?.visual])
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
@@ -289,12 +289,24 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await loadVideo(cfg, info)
     suggestRoute(cfg, created.project_id)
     setMessage(info.metadata?.has_video ? 'Uploaded. Pick a sound to separate.' : 'Uploaded. Split it into tracks, or pick a sound to separate.')
+    if (info.metadata?.has_video) {
+      try {
+        const available = await getCapabilities(cfg, info.project_id)
+        if (available.vision?.available && available.vision.automatic) {
+          const started = await startVisualAnalysis(cfg, info.project_id)
+          setResumeVisual({projectId:info.project_id,jobId:started.jobId})
+          setMessage('Uploaded. Finding people and objects…')
+        }
+      } catch {
+        setMessage('Uploaded. Automatic detection could not start; retry Find people and objects.')
+      }
+    }
   })
-  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime) => {
+  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
     try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`) } catch { /* Ignore unavailable storage. */ }
-    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
+    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
@@ -401,7 +413,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try {
       await flush()
       setPrompt(description);setEditAction(action==='isolate'?'keep':action)
-      await previewSound(config,project,description,{action:action==='isolate'?'keep':action},chosen)
+      await previewSound(config,project,description,{action:action==='isolate'?'keep':action},capabilities?.visual ? chosen : {},null,false,capabilities?.visual ? anchors : [],1,null,null,capabilities?.visual ? undefined : chosen)
     } catch(e) { setError(e instanceof Error ? e.message : String(e)); throw e }
     finally { busyRef.current = false; setBusy(false) }
   }, separateVideo: async (video, description, remove) => {
@@ -521,6 +533,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   }}))
   const visualAnalyzed = (metadata: VisualMetadata) => {
     onVisual(metadata); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('Analysis complete')
+    setMessage('Objects ready. Click an outline, then describe its sound.')
   }
   /** After the backend re-encoded a compatible copy: reload the video, and the original audio if nothing was separated yet. */
   const reloadPreparedMedia = async () => {
@@ -685,6 +698,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   ) : null
 
   return <section className="shadow-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface text-fg" aria-label="Project controls">
+    {capabilities?.backend && <p className="border-b border-line px-3 py-2 text-xs text-muted" aria-label="Audio separator">
+      {capabilities.backend === 'audiosep' ? 'AudioSep' : capabilities.backend === 'sam' ? 'SAM Audio' : capabilities.backend}
+      {capabilities.preserveVoices && ' · Preserve voices'}
+      {capabilities.loaded === false && ' · Loading'}
+    </p>}
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       <ol className="space-y-1">
         <Step n={1} title="Upload" status={status('upload')} open={open('upload')} onToggle={() => toggle('upload')}
@@ -705,8 +723,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
             {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
-            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">The current separator does not support visual object guidance.</p>}
-            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy || capabilities?.visual === false} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">Select an object to choose its sound. AudioSep separates the sound description.</p>}
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
                 : <p className="text-muted">{visual ? 'Click an object in the video, or describe' : 'Describe'} the sound in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}

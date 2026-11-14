@@ -106,10 +106,11 @@ table preserves previous references across restarts. Apply and undo delete no st
 projects, migration initializes this field to their currently referenced original.
 
 `GET /api/projects/{id}/capabilities` exposes a whitelist of usable options, never internal
-paths, credentials, service addresses or raw load errors. `preview` requests one candidate;
-`quality` requests two judge-ranked candidates. Both use 10 s windows, 2 s overlap, batch
-two, automatic spans off, and a mixture-derived residual. Quality controls stay disabled
-when the text judge is unavailable. Ranking expresses preference, not calibrated confidence.
+paths, credentials, service addresses or raw load errors. The default AudioSep preview
+uses one candidate, 10 s windows, 2 s overlap, batch one, automatic spans off, and a
+mixture-derived residual. Quality controls stay disabled for AudioSep. On an explicitly
+selected SAM backend, `quality` can request two ranked candidates when the service
+supports ranking. Ranking expresses preference, not calibrated confidence.
 
 The planner separates `description`, `guidance`, `edit_scope`, and existing-layer actions.
 The backend reloads authoritative stems/edits, validates every generated operation, and
@@ -124,14 +125,16 @@ is experimental: native frame/mask/track/source checks remain enforced, the UI d
 selected mask, and visible intervals no longer automatically create positive sound anchors.
 Unusable visual input fails explicitly; suspicious output offers a text-plus-time retry.
 
-### AudioSep separator
+### Default AudioSep separator
 
-The audio service defaults to `AUDIO_BACKEND=audiosep` with an externally prepared
-AudioSep checkout and official checkpoints. See [AudioSep setup](audio-service/README.md#audiosep-backend).
+The audio service defaults to `AUDIO_BACKEND=audiosep` with a prepared
+AudioSep checkout and official checkpoints. See [AudioSep setup](audio-service/README.md#default-audiosep-backend).
 AudioSep is a real text-only model: visual conditioning, span anchors, independent
 candidates and the SAM judge are unavailable. Capabilities report these limits; the editor
 disables unsupported controls. Inference is still serialized and residuals are derived from
-the original mixture. This backend is opt-in and does not change the SAM default.
+the original mixture. Conservative source-phase suppression defaults to strength 0.9;
+`options.suppression=off` requests the raw separation path. A selected processing range
+confines either path to that interval. SAM and mock backends require explicit selection.
 
 ### Music stems (song → one track per instrument)
 

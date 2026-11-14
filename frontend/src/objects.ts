@@ -57,7 +57,7 @@ export function readyText(vision: VisionCapability): string {
  * objects stays enabled and the backend has the final word.
  */
 export function detectorStatus(vision: VisionCapability | undefined, run: DetectionRun, found: FoundSummary | null): DetectorStatus {
-  const installed = vision?.available !== false
+  const installed = vision?.available !== false || vision?.retryable === true
   const note = (prepared: boolean) => (prepared ? PREPARED_NOTE : '')
   switch (run.phase) {
     case 'queued': return { text: `Waiting for the detector…${note(run.prepared)}`, tone: 'busy', canStart: false, running: true }
@@ -73,7 +73,7 @@ export function detectorStatus(vision: VisionCapability | undefined, run: Detect
     case 'cancelled': return { text: 'Stopped waiting. Detection may still finish on the server.', tone: 'muted', canStart: installed, running: false }
     case 'idle': break
   }
-  if (vision && !vision.available) return { text: `Detector not installed — ${vision.reason || 'no reason given'}`, tone: 'error', canStart: false, running: false }
+  if (vision && !vision.available) return { text: `${vision.retryable ? 'Detector connection unavailable' : 'Detector not installed'} — ${vision.reason || 'no reason given'}`, tone: 'error', canStart: installed, running: false }
   if (found) return { text: foundText(found), tone: found.objects ? 'ok' : 'warn', canStart: true, running: false }
   if (vision) return { text: readyText(vision), tone: 'ready', canStart: true, running: false }
   return { text: 'Detector status unknown', tone: 'muted', canStart: true, running: false }
@@ -167,6 +167,9 @@ export function objectTracks(metadata: VisualMetadata): ObjectTrack[] {
     }
   }
   return [...byTrack.values()]
+    // Suppress one/two-frame class flicker from the fast automatic scan. SAM
+    // observations remain available at their native cadence, including brief ones.
+    .filter(row => metadata.discovery_mode !== 'automatic' || row.frames >= 3)
     .map(({ labels, ...row }) => {
       // A tracker can relabel an object between frames; show the label it had most often.
       let label = row.label, best = 0

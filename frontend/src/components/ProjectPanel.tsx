@@ -11,7 +11,7 @@ import { splitSuggestion } from '../state/projectStems'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
 import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
-import { pollJob, toJobStatus } from '../api/jobs'
+import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
 import { HttpStemSource } from '../api/stemSources'
@@ -147,6 +147,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try { sessionStorage.setItem(`soundcanvas-project:${baseUrl}`, JSON.stringify({id, token:credential})) } catch { /* Manual credentials remain available. */ }
   }
   async function waitCandidate(cfg:BackendConfig, projectId:string, id:string) {
+    const began=Date.now()
     for (;;) {
       if(!mounted.current)throw new Error('Preview cancelled')
       const job=await getCandidate(cfg,id)
@@ -158,7 +159,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
         setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
       }
-      setMessage(job.status === 'queued' ? 'Waiting for the separator…' : 'Separating the sound…');await new Promise(resolve=>setTimeout(resolve,1000))
+      setMessage(jobProgressMessage({state:job.status === 'queued' ? 'queued' : 'processing',progress:job.progress},Date.now()-began,'Separating the sound'));await new Promise(resolve=>setTimeout(resolve,1000))
     }
   }
   /** Ask the router what the upload is, in the background; a song gets "Split into tracks" offered. */
@@ -171,7 +172,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     setMessage('Splitting into tracks…')
     const id = await splitTracks(cfg, info.project_id, stems, scope)
     const controller = new AbortController(); abort.current = controller
-    const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(`Splitting into tracks: ${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''}`)})
+    const began = Date.now()
+    const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(jobProgressMessage(status, Date.now()-began, 'Splitting into tracks'))})
     if (result.state === 'failed') throw new Error(result.error || 'The split failed.')
     const job = await getJob(cfg, id)
     await onLoadStems(new HttpStemSource(cfg, id), 'Project stems')
@@ -200,7 +202,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const latest = info.latest_job
     if (latest && (latest.status === 'queued' || latest.status === 'processing')) {
       const controller = new AbortController(); abort.current = controller
-      const result = await pollJob(async signal => toJobStatus(await getJob(cfg, latest.id, signal)), {signal:controller.signal, onUpdate: status => setMessage(`Finding sound: ${status.state}`)})
+      const began = Date.now()
+      const result = await pollJob(async signal => toJobStatus(await getJob(cfg, latest.id, signal)), {signal:controller.signal, onUpdate: status => setMessage(jobProgressMessage(status, Date.now()-began, 'Finding sound'))})
       if (result.state === 'failed') throw new Error(result.error || 'Processing failed')
       const job = await getJob(cfg, latest.id)
       await onLoadStems(new HttpStemSource(cfg, latest.id), 'Project stems')

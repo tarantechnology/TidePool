@@ -54,7 +54,8 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload')
-    if kind!='vision': d.pop('stage',None)
+    # Process jobs report 'splitting' or 'separating' while the audio service runs.
+    if kind not in ('vision','process'): d.pop('stage',None)
     output=json.loads(d.pop('output')) if d['output'] else None
     d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':

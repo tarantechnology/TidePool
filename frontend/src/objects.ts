@@ -84,7 +84,8 @@ export function detectorStatus(vision: VisionCapability | undefined, run: Detect
 export interface VisualJobStatus extends JobStatus { stage?: 'preparing' | 'detecting' }
 
 export function toVisualJobStatus(job: VisualJob): VisualJobStatus {
-  const status = toJobStatus(job)
+  // Only the two visual stages are kept; anything else the job reports is dropped.
+  const { stage: _ignored, ...status } = toJobStatus(job)
   const progress = status.progress
   return {
     ...status,

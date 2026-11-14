@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_POLL_FAILURES, pollJob, toExportStatus, toJobStatus } from './jobs'
+import { formatElapsed, jobProgressMessage, MAX_POLL_FAILURES, pollJob, toExportStatus, toJobStatus } from './jobs'
 import type { JobStatus } from './jobs'
 
 describe('toJobStatus', () => {
@@ -164,5 +164,23 @@ describe('pollJob', () => {
     const get = vi.fn<() => Promise<JobStatus>>()
     await expect(pollJob(get, { signal: ctrl.signal })).rejects.toBeDefined()
     expect(get).not.toHaveBeenCalled()
+  })
+})
+
+describe('job progress line', () => {
+  it('formats elapsed time as minutes and seconds', () => {
+    expect(formatElapsed(0)).toBe('0:00')
+    expect(formatElapsed(12_400)).toBe('0:12')
+    expect(formatElapsed(65_000)).toBe('1:05')
+    expect(formatElapsed(-5)).toBe('0:00')
+  })
+
+  it('reads the stage from the job and keeps a running clock', () => {
+    expect(toJobStatus({ status: 'processing', progress: 40, stage: 'splitting' }).stage).toBe('splitting')
+    expect(toJobStatus({ status: 'processing', stage: null })).not.toHaveProperty('stage')
+    expect(jobProgressMessage({ state: 'processing', progress: 45, stage: 'splitting' }, 12_000, 'Working')).toBe('Splitting into tracks… 0:12 · 45%')
+    expect(jobProgressMessage({ state: 'processing', stage: 'separating' }, 3_000, 'Working')).toBe('Separating the sound… 0:03')
+    expect(jobProgressMessage({ state: 'processing', progress: 5, stage: 'mystery' }, 1_000, 'Finding sound')).toBe('Finding sound… 0:01 · 5%')
+    expect(jobProgressMessage({ state: 'queued', progress: 0 }, 2_000, 'Splitting into tracks')).toBe('Waiting for the separator… 0:02')
   })
 })

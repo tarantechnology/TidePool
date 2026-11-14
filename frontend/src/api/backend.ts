@@ -59,6 +59,8 @@ export interface BackendJob {
   status: string
   progress?: number
   error?: string | null
+  /** What a running process job is doing: `splitting` or `separating`. */
+  stage?: string | null
   stems?: BackendStem[]
   /** Read from get_job in app/main.py. INTEGRATION.md does not list this field. */
   project_id?: string

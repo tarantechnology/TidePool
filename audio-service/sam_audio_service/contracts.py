@@ -109,11 +109,17 @@ class InferenceOptions(BaseModel):
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.
     return_mode: Literal["base64", "file"] = "base64"
     # Model routing (routing.py). None -> AUDIO_ROUTING_DEFAULT (auto). "prompted" is the text/
-    # span/visual model; "music_stems" splits a song into instrument stems.
-    mode: Literal["auto", "prompted", "music_stems"] | None = None
+    # span/visual model; "music_stems" splits a song into instrument stems; "music_substems"
+    # splits one stem of an earlier split (the residual "other") into the instruments inside it.
+    mode: Literal["auto", "prompted", "music_stems", "music_substems"] | None = None
     # music_stems only: which stems to return (vocals, drums, bass, guitar, piano, other,
     # instrumental, or an alias). None -> the prompts, or every stem when there are none.
+    # music_substems: which instruments to separate (piano, keys, guitar, ... or an alias).
+    # None -> the ones the instrument tagger finds, up to AUDIO_SUBSTEM_MAX.
     stems: list[str] | None = Field(default=None, min_length=1, max_length=8)
+    # music_substems only: canonical label of the stem being split (normally "other"); must be
+    # one of /capabilities music_substems.parents. Used for validation, logging and naming.
+    parent_label: str | None = Field(default=None, min_length=1, max_length=64)
     # music_stems only: must equal the configured AUDIO_STEM_MODEL (one model per process).
     stem_model: str | None = None
 
@@ -331,12 +337,14 @@ class ModelInfo(BaseModel):
 class RouteInfo(BaseModel):
     """Which separator handled (or would handle) a request, and why."""
 
-    mode: Literal["prompted", "music_stems"]
-    engine: str = Field(description="What runs: mock | sam | audiosep for prompted; mock | demucs | chain for music_stems")
+    mode: Literal["prompted", "music_stems", "music_substems"]
+    engine: str = Field(description="What runs: mock | sam | audiosep for prompted; mock | demucs | chain | roformer for music_stems; "
+                        "mock | demucs for music_substems")
     model_id: str | None
     reason: str
     scores: dict[str, float] | None = Field(default=None, description="Content classifier {music, speech} in [0, 1]; null when it was not run or is unavailable")
-    stems: list[str] | None = Field(default=None, description="music_stems only: canonical names of the returned target stems")
+    stems: list[str] | None = Field(default=None, description="music_stems / music_substems: canonical labels of the returned target stems "
+                                    "(music_substems via /v1/route: the requested ones, or null when they are detected at separation time)")
 
     @model_serializer(mode="wrap")
     def _keep_scores_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema

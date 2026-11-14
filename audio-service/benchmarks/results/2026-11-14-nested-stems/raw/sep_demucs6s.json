@@ -1,0 +1,31 @@
+{
+ "system": "demucs6s",
+ "tag": "demucs6s",
+ "load_s": 2.83777544205077,
+ "families": [
+  "guitar",
+  "piano"
+ ],
+ "mean_clip_s": 1.1518902963630668,
+ "clip_audio_s": 20.0,
+ "peak_alloc_mb": 671,
+ "peak_reserved_mb": 890,
+ "args": {
+  "work": "/workspace/nested",
+  "est": "/root/nested-est",
+  "device": "cuda",
+  "cmd": "separate",
+  "system": "demucs6s",
+  "tag": null,
+  "conds": "A,B,E,X",
+  "limit": null,
+  "overlap": 0.25,
+  "banquet_root": "/workspace/nested/src/query-bandit",
+  "banquet_ckpt": "/workspace/nested/ckpt/ev-pre-aug.ckpt",
+  "banquet_hop": 0.5,
+  "banquet_batch": 12,
+  "audiosep_root": "/workspace/AudioSep",
+  "model_dir": "/workspace/torch-cache/audio-separator",
+  "file": "/workspace/music-bench/data/fullsong.wav"
+ }
+}

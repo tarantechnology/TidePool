@@ -286,9 +286,10 @@ split returns no residual; a subset returns one `residual` (the sum of the other
 | `AUDIO_ROUTING_DEFAULT` | `auto` | `options.mode` when a request sets none: `auto`, `prompted`, `music_stems` (the last needs a splitter). |
 | `AUDIO_ROUTER_CLASSIFIER` | `panns` with `demucs`/`chain`/`roformer`, else `off` | `off`, `mock` (everything is music; tests), `panns` (PANNs Cnn14 via `panns-inference`, 32 kHz; checkpoint `AUDIO_ROUTER_PANNS_CHECKPOINT`, default `~/panns_data/Cnn14_mAP=0.431.pth`), `ast` (`MIT/ast-finetuned-audioset-10-10-0.4593`, 16 kHz). Both score up to eight 10 s windows across the file and load on first use. A classifier that cannot load is disabled for the process and `/health` reports why; routing then uses the prompt rules alone (`scores: null`). |
 | `AUDIO_ROUTER_MUSIC_THRESHOLD` | per classifier: `panns` 0.4, `ast` 0.2 | Minimum "song" score (median over up to 8 10 s windows of AudioSet Music minus Speech) for stem-name prompts to go to the splitter. Speech over music (vlogs, soundtracks) scores ~0 and stays on the prompted model; full songs score ~0.8 (PANNs). |
-| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever the router classifier can tag (`panns`, `ast`); it reuses that model under its lock, no second load. `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
-| `AUDIO_STEM_LABEL_MIN_SCORE` | `0.1` | Minimum mean AudioSet probability for a tag (and for naming `other`). Picked on 50 MUSDB clips: 0.1 named 31/33 guitar-dominated "other" stems with a guitar and left 8/50 as "Other"; 0.2 drops to 28/33 and 14/50. |
-| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). 4 stems of a 4-min song: ~0.6 s warm with PANNs on an A40. |
+| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever a tagger can run. Each stem is described only with its own vocabulary (vocals: Male/Female singing, Rapping, Choir, Synth vocals, Spoken word, else "Singing"; drums: Drum kit/Drum machine + details; bass: Bass guitar/Synth bass/Double bass; other: melodic instruments). `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
+| `AUDIO_STEM_LABEL_MODEL` | `router` | Tagger for stem labels and "separate the rest" detection: `router` reuses the router's AudioSet classifier (PANNs; no second model, ~0.8 s warm for 4 stems of a 4-min song on a busy A40), `panns`/`ast` load their own copy when the router uses another, `clap` loads LAION-CLAP zero-shot (`AUDIO_STEM_LABEL_CLAP_MODEL`, default `laion/larger_clap_music_and_speech`, Apache-2.0). PANNs is the default: AST is ~3x slower and weaker on vocals; CLAP is strong on clean strings but mislabels separated vocals ("Synth vocals") and bass (2026-11-14 evaluation, docs/plans/music-stems.md). |
+| `AUDIO_STEM_LABEL_MIN_SCORE` | `0` | Floor on the per-family presence thresholds (`labeling.PRESENCE`, calibrated per tagger on synthetic BabySlakh stems) and on drum detail tags; `0` = calibrated thresholds only. |
+| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). |
 
 The splitter and classifier load lazily on first use (not at startup), share the GPU and
 the inference lock with the prompted model, and are reported under `splitter` and
@@ -301,3 +302,35 @@ yet). The chain splitter disables audio-separator's peak normalisation
 (`normalization_threshold=1.0`), feeds it at most 0.5 peak and undoes that gain on the vocals.
 Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
 the splitter, duplicates mono to stereo and folds the stems back to mono.
+
+### Nested split: "Separate the rest" (`options.mode = "music_substems"`)
+
+The editor can split one track of a song split further: the parent stem's audio goes to
+`/separate` with `options: {"mode": "music_substems", "parent_label": "other", "stems": null}`
+and comes back as one track per instrument found plus exactly one residual, `Rest`
+(`label: "rest"`), that makes them sum to the input. Instruments are `options.stems` or, when
+null, what the router's tagger hears (`labeling.label_stems`, the same tags as `stems[].tags`);
+quiet results are folded into `Rest`; nothing separable is a `400 INVALID_REQUEST`
+("No separable instruments found in this track"). Contract:
+`docs/contracts/audio_contracts.md` → *Nested split*. Code: `sam_audio_service/stems/nested.py`.
+Benchmark and model choice: `benchmarks/nested_stems.py`, results in
+`benchmarks/results/2026-11-14-nested-stems/`.
+
+```bash
+AUDIO_STEM_SPLITTER=mock .venv/bin/python -m sam_audio_service      # mock nested splitter too
+curl -F audio=@other.wav -F 'metadata={"options":{"mode":"music_substems","stems":["piano"]}}' localhost:8001/separate
+```
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AUDIO_SUBSTEM_MODEL` | follows `AUDIO_STEM_SPLITTER`: `off` → `off`, `mock` → `mock`, real → `htdemucs_6s` | `off`, `mock` (frequency bands; CI), `htdemucs_6s` (Demucs 6-source on the parent stem: offers `guitar`, `piano`, `keys`; MIT; shifts 0, `AUDIO_STEM_OVERLAP`, `AUDIO_STEM_DEMUCS_BATCH`; its own model instance, ~0.1 GB of weights). The only licence-clean model that beat the input clearly in the Phase 4 benchmark; families no shippable model separates (organ, synth, strings, brass, woodwinds) are not offered. |
+| `AUDIO_SUBSTEM_MAX` | `4` | Most instruments per split (1-8). |
+| `AUDIO_SUBSTEM_MIN_SCORE` | `0.1` | Minimum tag score for a detected instrument (PANNs/AST mean probability over active windows). |
+| `AUDIO_SUBSTEM_SILENT_DB` | `-15` | A separated instrument quieter than this (dB of the input) is folded into `Rest` with a warning. With `MIN_SCORE` 0.1 this returned a piano that is not in the mix for 5% of BabySlakh clips (10% at -20 dB) and a phantom guitar for 1 of 80. |
+| `AUDIO_SUBSTEM_PARENTS` | `other` | Comma-separated parent labels that may be split; anything else is `400 UNSUPPORTED_OPERATION`. |
+
+The nested model loads on first use, runs under the same inference lock as the splitter
+and the prompted model, and is reported under `substems` in `/health` and `music_substems`
+in `/capabilities` (`instruments`, `parents`, `license`, …), which is how the editor knows
+where to offer the action. With no tagger (`AUDIO_ROUTER_CLASSIFIER=off`) every offered
+instrument is tried once and the silence check decides.

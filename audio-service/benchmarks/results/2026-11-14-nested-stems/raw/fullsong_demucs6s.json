@@ -1,0 +1,178 @@
+{
+ "system": "demucs6s",
+ "file": "/workspace/music-bench/data/fullsong.wav",
+ "duration_s": 230.656875,
+ "load_s": 0.5793913130182773,
+ "run_s": 26.16,
+ "runs_s": [
+  9.53,
+  26.16
+ ],
+ "peak_alloc_mb": 1824,
+ "peak_reserved_mb": 2854,
+ "other_tags": [
+  {
+   "label": "Guitar",
+   "score": 0.43
+  }
+ ],
+ "other_name": "Guitar",
+ "detected_families": [
+  {
+   "family": "guitar",
+   "name": "Guitar",
+   "score": 0.43,
+   "present": true,
+   "coverage": 0.917
+  },
+  {
+   "family": "organ",
+   "name": "Organ",
+   "score": 0.073,
+   "present": false,
+   "coverage": 0.25
+  },
+  {
+   "family": "piano",
+   "name": "Piano",
+   "score": 0.061,
+   "present": false,
+   "coverage": 0.167
+  },
+  {
+   "family": "strings",
+   "name": "Violin",
+   "score": 0.045,
+   "present": false,
+   "coverage": 0.417
+  },
+  {
+   "family": "keys",
+   "name": "Electric piano",
+   "score": 0.033,
+   "present": false,
+   "coverage": 0.25
+  },
+  {
+   "family": "synth",
+   "name": "Synth",
+   "score": 0.033,
+   "present": false,
+   "coverage": 0.083
+  },
+  {
+   "family": "accordion",
+   "name": "Accordion",
+   "score": 0.027,
+   "present": false,
+   "coverage": 0.083
+  },
+  {
+   "family": "mandolin",
+   "name": "Mandolin",
+   "score": 0.013,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "brass",
+   "name": "Brass",
+   "score": 0.012,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "harmonica",
+   "name": "Harmonica",
+   "score": 0.007,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "harp",
+   "name": "Harp",
+   "score": 0.007,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "woodwinds",
+   "name": "Saxophone",
+   "score": 0.006,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "banjo",
+   "name": "Banjo",
+   "score": 0.006,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "ukulele",
+   "name": "Ukulele",
+   "score": 0.005,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "sitar",
+   "name": "Sitar",
+   "score": 0.002,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "mallets",
+   "name": "Marimba",
+   "score": 0.002,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "steelpan",
+   "name": "Steel drums",
+   "score": 0.001,
+   "present": false,
+   "coverage": 0.0
+  },
+  {
+   "family": "bells",
+   "name": "Bells",
+   "score": 0.001,
+   "present": false,
+   "coverage": 0.0
+  }
+ ],
+ "outputs": {
+  "guitar": {
+   "est_db": -2.18,
+   "tags": [
+    {
+     "label": "Guitar",
+     "score": 0.561
+    }
+   ],
+   "name": "Guitar"
+  },
+  "piano": {
+   "est_db": -18.15,
+   "tags": [
+    {
+     "label": "Piano",
+     "score": 0.183
+    },
+    {
+     "label": "Electric piano",
+     "score": 0.078
+    },
+    {
+     "label": "Violin",
+     "score": 0.072
+    }
+   ],
+   "name": "Piano"
+  }
+ }
+}

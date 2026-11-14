@@ -39,6 +39,7 @@ from .engine import Engine, write_stem_file
 from .errors import ERROR_CODES, AudioServiceError, InvalidMedia, InvalidRequest, StorageFailure
 from .media import resolve_ref, to_file_ref
 from .stems import STEM_ALIASES
+from .stems.nested import RESIDUAL_LABEL, RESIDUAL_NAME, SUBSTEM_ALIASES
 from .stems.vocabulary import requestable
 
 log = logging.getLogger("sam_audio_service")
@@ -79,7 +80,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     def health() -> dict[str, Any]:
         status = engine.status()
         return {"status": "ok" if status["loaded"] else "degraded", "service": "sam-audio-service", "version": __version__, "contract_version": CONTRACT_VERSION, "model": status,
-                "splitter": engine.splitter_status(), "classifier": engine.classifier_status()}
+                "splitter": engine.splitter_status(), "substems": engine.substems_status(), "classifier": engine.classifier_status()}
 
     @app.get("/ready")
     def ready():
@@ -110,7 +111,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                          "candidates": settings.candidates, "candidate_select": settings.candidate_select},
             "limits": {"max_passes": settings.max_passes, "max_prompts": settings.max_prompts, "max_duration_seconds": settings.max_duration_seconds},
             "music_stems": _music_stems_capabilities(),
-            "routing": {"default_mode": settings.routing_default, "modes": ["auto", "prompted", "music_stems"], "classifier": engine.classifier.name, "music_threshold": settings.router_music_threshold},
+            "music_substems": _music_substems_capabilities(),
+            "routing": {"default_mode": settings.routing_default, "modes": ["auto", "prompted", "music_stems"] + (["music_substems"] if engine.substems else []), "classifier": engine.classifier.name, "music_threshold": settings.router_music_threshold},
             "error_codes": ERROR_CODES,
         }
 
@@ -122,6 +124,21 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         return {
             "available": True, "backend": splitter.name, "is_mock": splitter.is_mock, "model_id": splitter.info().get("model_id"), "license": splitter.info().get("license"),
             "stems": stems, "aliases": {alias: c for alias, c in STEM_ALIASES.items() if c in stems and alias != c},
+            "max_duration_seconds": settings.max_duration_seconds,
+        }
+
+    def _music_substems_capabilities() -> dict[str, Any]:
+        """Where the editor may offer "Separate the rest": ``parents`` are the splittable stem
+        labels, ``instruments`` what the nested model can return (besides the residual "Rest")."""
+        sep = engine.substems
+        if sep is None:
+            return {"available": False, "model_id": None, "instruments": [], "parents": [], "max_instruments": settings.substem_max}
+        info = sep.info()
+        return {
+            "available": True, "backend": sep.name, "is_mock": sep.is_mock, "model_id": info.get("model_id"), "license": info.get("license"),
+            "instruments": list(sep.offered), "parents": list(settings.substem_parents), "residual": {"name": RESIDUAL_NAME, "label": RESIDUAL_LABEL},
+            "max_instruments": settings.substem_max, "detection": engine.classifier.can_tag, "min_score": settings.substem_min_score,  # null = calibrated per-family thresholds
+            "silent_db": settings.substem_silent_db, "aliases": {w: f for w, f in SUBSTEM_ALIASES.items() if f in sep.families and w != f},
             "max_duration_seconds": settings.max_duration_seconds,
         }
 

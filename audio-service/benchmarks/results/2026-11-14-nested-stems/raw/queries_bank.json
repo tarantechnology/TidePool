@@ -1,0 +1,86 @@
+{
+ "guitar": [
+  {
+   "track": "Track00011",
+   "start_s": 90.0,
+   "path": "/workspace/nested/queries/guitar_Track00011.npy"
+  },
+  {
+   "track": "Track00017",
+   "start_s": 185.0,
+   "path": "/workspace/nested/queries/guitar_Track00017.npy"
+  }
+ ],
+ "piano": [
+  {
+   "track": "Track00007",
+   "start_s": 140.0,
+   "path": "/workspace/nested/queries/piano_Track00007.npy"
+  },
+  {
+   "track": "Track00003",
+   "start_s": 146.0,
+   "path": "/workspace/nested/queries/piano_Track00003.npy"
+  }
+ ],
+ "organ": [
+  {
+   "track": "Track00018",
+   "start_s": 237.0,
+   "path": "/workspace/nested/queries/organ_Track00018.npy"
+  },
+  {
+   "track": "Track00001",
+   "start_s": 154.0,
+   "path": "/workspace/nested/queries/organ_Track00001.npy"
+  }
+ ],
+ "synth": [
+  {
+   "track": "Track00019",
+   "start_s": 132.0,
+   "path": "/workspace/nested/queries/synth_Track00019.npy"
+  },
+  {
+   "track": "Track00018",
+   "start_s": 224.0,
+   "path": "/workspace/nested/queries/synth_Track00018.npy"
+  }
+ ],
+ "strings": [
+  {
+   "track": "Track00017",
+   "start_s": 60.0,
+   "path": "/workspace/nested/queries/strings_Track00017.npy"
+  },
+  {
+   "track": "Track00009",
+   "start_s": 51.0,
+   "path": "/workspace/nested/queries/strings_Track00009.npy"
+  }
+ ],
+ "brass": [
+  {
+   "track": "Track00006",
+   "start_s": 146.0,
+   "path": "/workspace/nested/queries/brass_Track00006.npy"
+  },
+  {
+   "track": "Track00016",
+   "start_s": 58.0,
+   "path": "/workspace/nested/queries/brass_Track00016.npy"
+  }
+ ],
+ "woodwinds": [
+  {
+   "track": "Track00013",
+   "start_s": 32.0,
+   "path": "/workspace/nested/queries/woodwinds_Track00013.npy"
+  },
+  {
+   "track": "Track00006",
+   "start_s": 106.0,
+   "path": "/workspace/nested/queries/woodwinds_Track00006.npy"
+  }
+ ]
+}

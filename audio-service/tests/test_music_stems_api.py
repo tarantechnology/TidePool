@@ -151,13 +151,14 @@ def test_capabilities_and_health(music_client, client):
     assert caps["music_stems"]["aliases"]["karaoke"] == "instrumental"
     assert caps["music_stems"]["license"] == "n/a (no weights)"
     assert caps["error_codes"]["CANCELLED"]["http_status"] == 409
-    assert caps["routing"] == {"default_mode": "auto", "modes": ["auto", "prompted", "music_stems"], "classifier": "off", "music_threshold": 0.4}
+    assert caps["routing"] == {"default_mode": "auto", "modes": ["auto", "prompted", "music_stems", "music_substems"], "classifier": "off", "music_threshold": 0.4}
     health = music_client.get("/health").json()
     assert health["splitter"]["backend"] == "mock" and set(health["splitter"]["stems"]) == {"vocals", "drums", "bass", "other"}
     assert health["classifier"]["classifier"] == "off"
     off = client.get("/capabilities").json()["music_stems"]
     assert off["available"] is False and off["stems"] == []
     assert client.get("/health").json()["splitter"] is None
+    assert client.get("/capabilities").json()["music_substems"] == {"available": False, "model_id": None, "instruments": [], "parents": [], "max_instruments": 4}
 
 
 def test_engine_logs_split_progress(music_client, caplog):

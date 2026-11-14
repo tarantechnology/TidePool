@@ -13,6 +13,11 @@ request                                     route
 ``options.mode = music_stems``              music_stems (400 UNSUPPORTED_OPERATION when no
                                             splitter is configured, 400 INVALID_REQUEST
                                             for names that are not stems)
+``options.mode = music_substems``           music_substems: the nested splitter on one stem
+                                            of an earlier split (400 UNSUPPORTED_OPERATION
+                                            when none is configured or ``parent_label`` is
+                                            not splittable, 400 INVALID_REQUEST for names
+                                            it cannot separate). Never chosen by auto.
 auto, no splitter configured                prompted
 auto, no prompts and no ``options.stems``   music_stems, every stem (warns when the
                                             classifier says it is not a song)
@@ -55,7 +60,7 @@ class StemRequest:
 
 @dataclass
 class RouteDecision:
-    mode: str  # prompted | music_stems
+    mode: str  # prompted | music_stems | music_substems
     engine: str
     model_id: str | None
     reason: str
@@ -63,9 +68,10 @@ class RouteDecision:
     requests: list[StemRequest] = field(default_factory=list)  # music_stems: the target stems
     residual: list[str] = field(default_factory=list)  # music_stems: splitter stems summed into the residual
     warnings: list[str] = field(default_factory=list)
+    parent: str | None = None  # music_substems: canonical label of the stem being split
 
     def to_dict(self) -> dict[str, Any]:
-        stems = [r.canonical for r in self.requests] if self.mode == "music_stems" else None
+        stems = [r.canonical for r in self.requests] if self.mode == "music_stems" or (self.mode == "music_substems" and self.requests) else None
         return {"mode": self.mode, "engine": self.engine, "model_id": self.model_id, "reason": self.reason, "scores": self.scores, "stems": stems}
 
 
@@ -123,12 +129,19 @@ def route(
     threshold: float,
     prompted_engine: Engine,
     music_engine: Engine | None,
+    substem_engine: Engine | None = None,
+    substem_families: dict[str, str] | None = None,
+    substem_parents: tuple[str, ...] = ("other",),
 ) -> RouteDecision:
     """Decide per the table in the module docstring. ``available`` is the splitter's stems
-    (None when no splitter is configured); ``classify`` is called at most once."""
+    (None when no splitter is configured); ``classify`` is called at most once.
+    ``substem_families`` maps each family the nested splitter offers to its model output."""
     mode = options.mode or default_mode
     origin = "options.mode" if options.mode else "AUDIO_ROUTING_DEFAULT"
     items = _items(prompts, options)
+
+    if mode == "music_substems":
+        return _route_substems(items, options, substem_engine, substem_families, substem_parents)
 
     def prompted(reason: str, scores: dict[str, float] | None = None) -> RouteDecision:
         decision = RouteDecision("prompted", prompted_engine[0], prompted_engine[1], reason, scores)
@@ -187,6 +200,39 @@ def route(
     if decision_score(scores) >= threshold:
         return music(f"auto: the prompts are stem names and the content is music ({_describe(scores)} >= {threshold:g})", matched, scores)
     return prompted(f"auto: the prompts are stem names but the content is not a song ({_describe(scores)} < {threshold:g})", scores)
+
+
+def _route_substems(items: list[tuple[str | None, str]], options: InferenceOptions, engine: Engine | None,
+                    families: dict[str, str] | None, parents: tuple[str, ...]) -> RouteDecision:
+    """``music_substems``: validate the parent and the requested instruments. An empty request
+    list means "detect them" (done by the engine on the audio)."""
+    from .stems.nested import canonical_substem, DISPLAY_NAMES
+
+    if engine is None or families is None:
+        raise UnsupportedOperation("music_substems is not available: no nested splitter is configured (AUDIO_SUBSTEM_MODEL=off)", details={"modes": ["prompted", "music_stems"]})
+    parent = (options.parent_label or "other").strip().lower()
+    if parent not in parents:
+        raise UnsupportedOperation(f"stem {parent!r} cannot be split further; splittable stems: {', '.join(parents)}", details={"parent_label": parent, "parents": list(parents)})
+    offered = list(families)
+    requests: list[StemRequest] = []
+    unknown: list[str] = []
+    warnings: list[str] = []
+    for name, wording in items:
+        family = canonical_substem(wording)
+        if family not in families:
+            unknown.append(wording)
+            continue
+        same = next((r for r in requests if families[r.canonical] == families[family]), None)
+        if same is not None:
+            warnings.append(f"{wording!r} is separated together with {same.name!r}; it is returned once")
+            continue
+        requests.append(StemRequest(name or DISPLAY_NAMES[family], family))
+    if unknown:
+        raise InvalidRequest(f"cannot separate {', '.join(repr(u) for u in unknown)} from this stem; this model separates {', '.join(offered)}",
+                             details={"unknown": unknown, "valid_stems": offered})
+    reason = f"options.mode=music_substems of {parent!r}: " + (f"requested {', '.join(r.canonical for r in requests)}" if requests else "instruments detected by the tagger")
+    decision = RouteDecision("music_substems", engine[0], engine[1], reason, None, requests, [], warnings, parent)
+    return decision
 
 
 def _describe(scores: dict[str, float]) -> str:

@@ -1,0 +1,36 @@
+{
+ "system": "audiosep",
+ "tag": "audiosep",
+ "load_s": 53.2094202239532,
+ "families": [
+  "guitar",
+  "piano",
+  "organ",
+  "synth",
+  "strings",
+  "brass",
+  "woodwinds"
+ ],
+ "mean_clip_s": 1.225784910444475,
+ "clip_audio_s": 20.0,
+ "peak_alloc_mb": 3567,
+ "peak_reserved_mb": 5718,
+ "args": {
+  "work": "/workspace/nested",
+  "est": "/root/nested-est",
+  "device": "cuda",
+  "cmd": "separate",
+  "system": "audiosep",
+  "tag": null,
+  "conds": "A,B,E,X",
+  "limit": null,
+  "overlap": 0.25,
+  "banquet_root": "/workspace/nested/src/query-bandit",
+  "banquet_ckpt": "/workspace/nested/ckpt/ev-pre-aug.ckpt",
+  "banquet_hop": 0.5,
+  "banquet_batch": 12,
+  "audiosep_root": "/workspace/AudioSep",
+  "model_dir": "/workspace/torch-cache/audio-separator",
+  "file": "/workspace/music-bench/data/fullsong.wav"
+ }
+}

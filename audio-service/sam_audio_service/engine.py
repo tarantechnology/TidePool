@@ -17,6 +17,10 @@ is shared and not re-entrant, so parallelism belongs in the batch dimension. See
 Music stems: every request is routed first (``routing.py``). ``music_stems`` requests skip
 all of the above and go through the stem splitter (``stems/``) in one call: split once,
 make the stems sum to the mixture, then return the requested stems plus one residual.
+
+Nested split (``music_substems``, ``stems/nested.py``): one stem of an earlier split in. The
+instruments are the caller's ``options.stems`` or the tagger's detections; one run of the nested
+splitter, consistency, near-silent instruments folded into the one residual "Rest".
 """
 from __future__ import annotations
 
@@ -35,11 +39,11 @@ from .audio_io import DecodedAudio, sanitise, to_mono
 from .backends import Backend, create_backend
 from .backends.base import Anchor, BackendOptions, BackendPrompt, BackendResult, VisualInput
 from .candidates import choose, choose_residual
-from .classifier import ContentClassifier, create_classifier
+from .classifier import ContentClassifier, create_classifier, create_stem_tagger
 from .config import Settings
 from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
 from .refine import mask_refine
-from .labeling import FALLBACK_NAME, label_stems
+from .labeling import FALLBACK_NAME, Instrument, detect_instruments, label_stems
 from .errors import (
     AudioServiceError,
     InferenceFailure,
@@ -52,6 +56,14 @@ from .errors import (
 from .routing import RouteDecision, route
 from .stems import StemSplitter, create_splitter, mixture_consistency
 from .stems.base import fit_length
+from .stems.nested import (
+    DISPLAY_NAMES,
+    RESIDUAL_LABEL,
+    RESIDUAL_NAME,
+    SubstemSeparator,
+    create_substem_separator,
+    pick_detected,
+)
 from .stems.vocabulary import components, display_name
 from .visual_prompts import translate_visual_prompt
 
@@ -127,12 +139,18 @@ def _log_progress(name: str):
 
 
 class Engine:
-    def __init__(self, settings: Settings, backend: Backend | None = None, splitter: StemSplitter | None = None, classifier: ContentClassifier | None = None):
+    def __init__(self, settings: Settings, backend: Backend | None = None, splitter: StemSplitter | None = None, classifier: ContentClassifier | None = None,
+                 substems: SubstemSeparator | None = None):
         self.settings = settings
         self.backend = backend or create_backend(settings)
         # Both optional and loaded on first use; the splitter is None when AUDIO_STEM_SPLITTER=off.
         self.splitter = splitter or create_splitter(settings)
         self.classifier = classifier or create_classifier(settings)
+        # Stem labels / instrument detection (AUDIO_STEM_LABEL_MODEL): the router's classifier by
+        # default, else its own lazily loaded tagger (CLAP, or the other AudioSet model).
+        self.stem_tagger = create_stem_tagger(settings, self.classifier)
+        # Nested splitter for music_substems (None when AUDIO_SUBSTEM_MODEL=off); loaded on first use.
+        self.substems = substems or create_substem_separator(settings)
         self._lock = threading.Lock()  # serialises separation (prompted model and splitter)
         # The content classifier is a separate small model with its own lock, so /v1/route (and
         # the routing step of /separate) never waits behind a long split. Never held together
@@ -140,6 +158,7 @@ class Engine:
         self._classifier_lock = threading.Lock()
         self._load_error: str | None = None
         self._splitter_error: str | None = None
+        self._substem_error: str | None = None
         self._classifier_error: str | None = None
 
     # ------------------------------------------------------------------ lifecycle
@@ -177,11 +196,30 @@ class Engine:
                 raise InsufficientGpuMemory("not enough GPU memory to load the stem splitter", details=details) from exc
             raise MissingModel(f"stem splitter is not available: {self._splitter_error}", details=details) from exc
 
+    def ensure_substems_loaded(self) -> None:
+        assert self.substems is not None
+        if self.substems.loaded:
+            return
+        try:
+            self.substems.load()
+            self._substem_error = None
+        except Exception as exc:  # noqa: BLE001 - surfaced through /health and MISSING_MODEL
+            self._substem_error = f"{type(exc).__name__}: {exc}"
+            log.exception("nested splitter load failed")
+            details = {"substem_model": self.settings.substem_model}
+            if is_out_of_memory(exc):
+                raise InsufficientGpuMemory("not enough GPU memory to load the nested splitter", details=details) from exc
+            raise MissingModel(f"nested splitter is not available: {self._substem_error}", details=details) from exc
+
     def unload(self) -> None:
         self.backend.unload()
         if self.splitter is not None:
             self.splitter.unload()
+        if self.substems is not None:
+            self.substems.unload()
         self.classifier.unload()
+        if self.stem_tagger is not self.classifier:
+            self.stem_tagger.unload()
 
     def status(self) -> dict[str, Any]:
         return {"backend": self.backend.name, "is_mock": self.backend.is_mock, "loaded": self.backend.loaded, "load_error": self._load_error, **self.backend.info()}
@@ -190,6 +228,16 @@ class Engine:
         if self.splitter is None:
             return None
         return {"backend": self.splitter.name, "is_mock": self.splitter.is_mock, "loaded": self.splitter.loaded, "load_error": self._splitter_error, "stems": list(self.splitter.stems), **self.splitter.info()}
+
+    def substems_status(self) -> dict[str, Any] | None:
+        if self.substems is None:
+            return None
+        return {"backend": self.substems.name, "is_mock": self.substems.is_mock, "loaded": self.substems.loaded, "load_error": self._substem_error,
+                "instruments": list(self.substems.offered), "parents": list(self.settings.substem_parents), **self.substems.info()}
+
+    def _tagger_error(self) -> str | None:
+        """The router classifier's load error when stem labels use that same model."""
+        return self._classifier_error if self.stem_tagger is self.classifier else None
 
     def classifier_status(self) -> dict[str, Any]:
         return {**self.classifier.info(), "load_error": self._classifier_error}
@@ -228,6 +276,9 @@ class Engine:
             threshold=self.settings.router_music_threshold,
             prompted_engine=(self.backend.name, self.backend.info().get("model_id")),
             music_engine=(splitter.name, splitter.info().get("model_id")) if splitter else None,
+            substem_engine=(self.substems.name, self.substems.info().get("model_id")) if self.substems else None,
+            substem_families=dict(self.substems.families) if self.substems else None,
+            substem_parents=self.settings.substem_parents,
         )
 
     # ------------------------------------------------------------------ translation
@@ -301,10 +352,15 @@ class Engine:
         decision = self.route(audio, metadata, prompts)
         if decision.mode == "music_stems":
             result = self._separate_stems(audio, metadata, decision)
+        elif decision.mode == "music_substems":
+            result = self._separate_substems(audio, metadata, decision)
         else:
             result = self._separate_prompted(audio, metadata, prompts, workdir)
         result.warnings.extend(decision.warnings)
-        result.routing = decision.to_dict()
+        routing = decision.to_dict()
+        if decision.mode == "music_substems":
+            routing["stems"] = [s.label for s in result.stems if s.role == "target"]
+        result.routing = routing
         return result
 
     def _separate_stems(self, audio: DecodedAudio, metadata: SeparationMetadata, decision: RouteDecision) -> EngineResult:
@@ -377,6 +433,125 @@ class Engine:
         }
         return EngineResult(stems, model, warnings, elapsed)
 
+    # ------------------------------------------------------------------ nested split
+    def _detect_substems(self, mixture: np.ndarray, sample_rate: int, parent: str, warnings: list[str]) -> list[Instrument] | None:
+        """Instrument families in the input (``labeling.detect_instruments`` with the router's
+        tagger, under its lock); None when no tagger can run."""
+        if not getattr(self.stem_tagger, "can_tag", False) or self._tagger_error():
+            reason = f"the content classifier failed earlier ({self._classifier_error})" if self._classifier_error else "no instrument tagger is configured"
+            warnings.append(f"instrument detection unavailable: {reason}; every instrument this model separates was tried")
+            return None
+        try:
+            with self._classifier_lock:
+                return detect_instruments(self.stem_tagger, mixture, sample_rate, parent=parent, min_score=self.settings.substem_min_score,
+                                          max_windows=self.settings.stem_label_max_windows)
+        except AudioServiceError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("instrument detection failed: %s: %s", type(exc).__name__, exc)
+            warnings.append(f"instrument detection failed ({type(exc).__name__}); every instrument this model separates was tried")
+            return None
+
+    def _separate_substems(self, audio: DecodedAudio, metadata: SeparationMetadata, decision: RouteDecision) -> EngineResult:
+        """Nested split of one stem: targets (requested or detected) + exactly one residual "Rest"
+        that makes them sum to the input. 400 when nothing separable is found."""
+        separator = self.substems
+        assert separator is not None
+        settings = self.settings
+        if audio.duration > settings.max_duration_seconds:
+            raise UnsupportedOperation(f"audio is {audio.duration:.1f}s; the limit is {settings.max_duration_seconds:.0f}s", details={"max_duration_seconds": settings.max_duration_seconds})
+        if audio.frames == 0:
+            raise InvalidRequest("audio is empty")
+        warnings: list[str] = []
+        if separator.is_mock:
+            warnings.append("MOCK nested splitter: instruments are frequency bands of the input, not real separation")
+        mixture = audio.samples
+        started = time.perf_counter()
+        requests = [(r.canonical, r.name) for r in decision.requests]
+        if not requests:
+            families = dict(separator.families)
+            found = self._detect_substems(mixture, audio.sample_rate, decision.parent or "other", warnings)
+            if found is None:  # no tagger: one per model output, then the silence check decides
+                seen: set[str] = set()
+                requests = [(f, DISPLAY_NAMES[f]) for f in families if not (families[f] in seen or seen.add(families[f]))][: settings.substem_max]
+            else:
+                requests = pick_detected(found, families, settings.substem_max)
+                log.info("music_substems of %r: picked %s from %s", decision.parent, requests, [i.as_dict() for i in found])
+            if not requests:
+                raise InvalidRequest("No separable instruments found in this track", details={
+                    "reason": "no_separable_instruments", "parent_label": decision.parent,
+                    "detected": [i.family for i in found or [] if i.present], "separable": list(separator.offered)})
+        elif len(requests) > settings.substem_max:
+            raise InvalidRequest(f"at most {settings.substem_max} instruments per split (AUDIO_SUBSTEM_MAX)", details={"max": settings.substem_max})
+        with self._lock:
+            self.ensure_substems_loaded()
+            info = separator.info()
+            cuda = _cuda_for(info.get("device"))
+            if cuda:
+                cuda.reset_peak_memory_stats()
+            try:
+                raw = separator.split(mixture, progress=_log_progress(separator.name))
+            except AudioServiceError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if is_out_of_memory(exc):
+                    raise InsufficientGpuMemory("GPU ran out of memory in the nested split; try a shorter input", details={"frames": audio.frames}) from exc
+                raise InferenceFailure(f"{type(exc).__name__}: {exc}") from exc
+            peak_memory = int(cuda.max_memory_allocated()) if cuda else None
+        outputs = {}
+        for name, arr in raw.items():
+            stem = sanitise(np.asarray(arr, dtype=np.float32))
+            if stem.ndim != 2 or stem.shape[0] != mixture.shape[0]:
+                raise InferenceFailure(f"nested splitter returned {name} with shape {stem.shape} for an input of shape {mixture.shape}")
+            outputs[name] = fit_length(stem, audio.frames)
+        missing = sorted({separator.families[f] for f, _ in requests} - set(outputs))
+        if missing:
+            raise InferenceFailure(f"nested splitter returned no {', '.join(missing)}")
+        outputs = mixture_consistency(mixture, outputs)
+        total = _energy(mixture)
+        targets: list[StemArrays] = []
+        used: set[str] = set()
+        for family, name in requests:
+            source = separator.families[family]
+            level = _energy_db(_energy(outputs[source]), total)
+            if level < settings.substem_silent_db:
+                warnings.append(f"{name} came back near-silent ({level:.1f} dB of the input < {settings.substem_silent_db:g} dB) and was folded into {RESIDUAL_NAME}")
+                continue
+            used.add(source)
+            targets.append(StemArrays(name, "target", outputs[source], None, family, None))
+        if not targets:
+            raise InvalidRequest("No separable instruments found in this track", details={
+                "reason": "no_separable_instruments", "parent_label": decision.parent, "requested": [f for f, _ in requests], "separable": list(separator.offered)})
+        rest = mixture.astype(np.float32, copy=True)
+        for t in targets:
+            rest -= t.samples
+        stems = targets + [StemArrays(RESIDUAL_NAME, "residual", rest, None, RESIDUAL_LABEL, None)]
+        self._tag_substems(stems, mixture, audio.sample_rate, warnings)
+        elapsed = time.perf_counter() - started
+        model = {
+            "backend": separator.name, "model_id": info.get("model_id"), "device": info.get("device"), "dtype": info.get("dtype"),
+            "predict_spans": False, "reranking_candidates": 1, "stereo_mode": "native", "chunked": False,
+            "peak_memory_bytes": peak_memory, "elapsed_seconds": round(elapsed, 3), "is_mock": separator.is_mock,
+        }
+        return EngineResult(stems, model, warnings, elapsed)
+
+    def _tag_substems(self, stems: list[StemArrays], mixture: np.ndarray, sample_rate: int, warnings: list[str]) -> None:
+        """Instrument tags on every child (names are already set); never fails the split."""
+        if self.settings.stem_labels == "off" or not getattr(self.stem_tagger, "can_tag", False) or self._tagger_error():
+            return
+        try:
+            with self._classifier_lock:
+                labels = label_stems(self.stem_tagger, [("other", s.samples) for s in stems], mixture, sample_rate,
+                                     min_score=float(self.settings.stem_label_min_score), max_windows=self.settings.stem_label_max_windows)
+        except AudioServiceError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("substem tagging failed: %s: %s", type(exc).__name__, exc)
+            warnings.append(f"instrument tagging failed ({type(exc).__name__})")
+            return
+        for stem, label in zip(stems, labels):
+            stem.tags = label.tags
+
     def _label_stems(self, stems: list[StemArrays], mixture: np.ndarray, sample_rate: int, decision: RouteDecision, warnings: list[str]) -> None:
         """Tag every stem and give the ``other`` stem a descriptive name (``labeling.py``).
 
@@ -385,16 +560,16 @@ class Engine:
         the title-cased canonical "Other"); a caller's own wording is kept. Any failure leaves
         tags null and names unchanged, with a warning: labeling never fails a split.
         """
-        if self.settings.stem_labels == "off" or not self.classifier.can_tag or not stems:
+        if self.settings.stem_labels == "off" or not getattr(self.stem_tagger, "can_tag", False) or not stems:
             return
-        if self._classifier_error:
+        if self._tagger_error():
             warnings.append(f"stem labeling unavailable: the content classifier failed earlier ({self._classifier_error})")
             return
         started = time.perf_counter()
         try:
             with self._classifier_lock:
                 labels = label_stems(
-                    self.classifier,
+                    self.stem_tagger,
                     [(s.label if s.role == "target" else "residual", s.samples) for s in stems],
                     mixture,
                     sample_rate,

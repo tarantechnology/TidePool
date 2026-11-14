@@ -34,7 +34,8 @@ sam = [
 music = [
     "torch>=2.4",
     "demucs>=4.0.1",
-    "transformers>=4.25",
+    # AST tagger, and ClapModel for AUDIO_STEM_LABEL_MODEL=clap (LAION-CLAP, Apache-2.0; 4.27+; 5.23 tested).
+    "transformers>=4.27",
     # PANNs Cnn14, the default router classifier (AUDIO_ROUTER_CLASSIFIER=panns); 0.1.1 tested.
     "panns-inference>=0.1.1",
 ]

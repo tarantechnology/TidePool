@@ -43,8 +43,11 @@ remote launcher enables the prepared SAM runtime when these paths exist:
 - `AUDIO_OBJECT_DISCOVERY_MODEL`: `/workspace/checkpoints/yolo26n-seg.pt`
   (explicit cached segmentation checkpoint for automatic discovery)
 
-`AUDIO_OBJECT_ENABLE=0` disables launcher setup. Missing paths report unavailable;
-no checkpoint is automatically downloaded or substituted. The remote local-app
+`AUDIO_OBJECT_ENABLE=0` disables launcher setup. No checkpoint is automatically
+downloaded or substituted. Automatic discovery works with its YOLO weights and
+runtime even when the gated SAM checkpoint is missing; in that configuration the
+capabilities report `automatic: true` and `prompted: false`, and SAM refinement
+is hidden. SAM refinement requires its own checkpoint and runtime. The remote local-app
 launcher configures `VISION_SERVICE_URL` for the default AudioSep setup. Other
 deployment modes may configure it explicitly. Keep application endpoints private.
 The `automatic` capability is advertised only when discovery weights are present.

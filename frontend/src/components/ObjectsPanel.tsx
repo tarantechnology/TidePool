@@ -116,10 +116,6 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
     onSelect(chosen)
   }
   const progress = run.phase === 'detecting' ? run.progress : undefined
-  const unavailable = run.phase === 'unavailable' || (vision !== undefined && !vision.available && !status.running)
-
-  // Without a detector there is nothing to show; step 2's instruction already points to the bar.
-  if (unavailable) return null
 
   return (
     <section ref={section} aria-label="Objects" className="space-y-2 text-xs">

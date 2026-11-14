@@ -1,13 +1,15 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, SavedStem, VisualMetadata } from '../api/backend'
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { separationCommand } from '../separationCommand'
+import { separationSettings } from '../agent/separationSettings'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { pollJob, toJobStatus } from '../api/jobs'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
 import { HttpStemSource } from '../api/stemSources'
@@ -26,6 +28,7 @@ const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white 
 const secondary = 'rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-fg transition-colors hover:border-line-strong hover:bg-surface-2 disabled:opacity-40'
 interface Props {
   baseUrl: string
+  readyToRestore: boolean
   onProjectState: (state:ProjectStemsState)=>void
   onLoadStems: (source: StemSource, label: string) => Promise<void>
   onVideo: (url: string | null) => void
@@ -52,10 +55,13 @@ export interface ProjectPanelHandle {
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
 }
 
-/** The project token stays in component memory and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, previewSlot, onBusy}, ref) {
+/** The project token stays in this browser tab and is sent only as a bearer header. */
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, previewSlot, onBusy}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
+  const [resumeId, setResumeId] = useState('')
+  const [resumeToken, setResumeToken] = useState('')
+  const [resumeVisual, setResumeVisual] = useState<{projectId:string;jobId:string}|null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [prompt, setPrompt] = useState('')
   const [selection, setSelection] = useState<unknown>(null)
@@ -100,6 +106,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const abort = useRef<AbortController | null>(null)
   const attachedVideo = useRef<File | null>(null)
   const mounted = useRef(true)
+  const busyRef = useRef(false)
+  const restored = useRef(false)
   useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
   useEffect(() => () => { if(currentUrl) URL.revokeObjectURL(currentUrl) },[currentUrl])
@@ -112,21 +120,83 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
   const run = async (fn: () => Promise<void>) => {
+    if (busyRef.current) return
+    busyRef.current = true
     setError(''); setMessage(''); setBusy(true)
     try { await fn() } catch (e) { if(mounted.current)setError(e instanceof Error ? e.message : String(e)) }
-    finally { if(mounted.current)setBusy(false) }
+    finally { busyRef.current = false; if(mounted.current)setBusy(false) }
   }
   const loadVideo = async (cfg: BackendConfig, info: ProjectInfo) => {
     if (!info.metadata?.has_video) { onVideo(null); return }
     // Authenticated media is fetched into a blob; the token never enters a URL.
     onVideo(await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(info.project_id)}/preview`, 3_600_000))
   }
+  const rememberProject = (id: string, credential: string) => {
+    setResumeId(id); setResumeToken(credential)
+    try { sessionStorage.setItem(`soundcanvas-project:${baseUrl}`, JSON.stringify({id, token:credential})) } catch { /* Manual credentials remain available. */ }
+  }
+  async function waitCandidate(cfg:BackendConfig, projectId:string, id:string) {
+    for (;;) {
+      if(!mounted.current)throw new Error('Preview cancelled')
+      const job=await getCandidate(cfg,id)
+      if(job.status==='failed') { try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${projectId}`) } catch { /* Ignore unavailable storage. */ }; throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.') }
+      if(job.status==='completed') {
+        if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
+        const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
+        setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
+        setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
+        setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
+      }
+      setMessage(job.status === 'queued' ? 'Waiting for the separator…' : 'Separating the sound…');await new Promise(resolve=>setTimeout(resolve,1000))
+    }
+  }
+  const resume = (id: string, credential: string) => run(async () => {
+    if (!id.trim() || !credential.trim()) throw new Error('Enter both project ID and token.')
+    await flush()
+    const cfg = {baseUrl, token:credential.trim()}
+    const info = await getProject(cfg, id.trim())
+    attachedVideo.current = null; setFile(null)
+    setUndoId(''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([])
+    setToken(cfg.token); setProject(info); rememberProject(info.project_id, cfg.token)
+    setJobId(info.last_completed_job_id || ''); setSettingsStems([]); setMessages([])
+    setFormat(info.metadata?.has_video ? 'mp4' : 'wav'); setSelection(null); onClearSelection(); setVisualName(''); setSelectionName('')
+    try { onVisual(info.visual_metadata ? asVisualMetadata(info.visual_metadata) : null) } catch { onVisual(null) }
+    await loadVideo(cfg, info)
+    const original = info.metadata ? await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(info.project_id)}/original-audio`, 3_600_000) : null
+    onOriginalAudio(original)
+    const visualJob = info.latest_visual_job
+    setResumeVisual(visualJob && (visualJob.status === 'queued' || visualJob.status === 'processing') ? {projectId:info.project_id, jobId:visualJob.id} : null)
+    const latest = info.latest_job
+    if (latest && (latest.status === 'queued' || latest.status === 'processing')) {
+      const controller = new AbortController(); abort.current = controller
+      const result = await pollJob(async signal => toJobStatus(await getJob(cfg, latest.id, signal)), {signal:controller.signal, onUpdate: status => setMessage(`Finding sound: ${status.state}`)})
+      if (result.state === 'failed') throw new Error(result.error || 'Processing failed')
+      const job = await getJob(cfg, latest.id)
+      await onLoadStems(new HttpStemSource(cfg, latest.id), 'Project stems')
+      setJobId(latest.id); setMockStems(job.inference?.model?.is_mock ?? null)
+    } else if (info.last_completed_job_id) await onLoadStems(new HttpStemSource(cfg, info.last_completed_job_id), 'Project stems')
+    else await onLoadStems({load: async () => original ? [{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}] : []}, original ? 'Original audio' : 'No stems yet')
+    setMessage('Project restored.')
+    try {
+      const saved = sessionStorage.getItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`)
+      if (saved) { const pending = JSON.parse(saved); if (typeof pending.id === 'string' && typeof pending.sound === 'string') { setPrompt(pending.sound); await waitCandidate(cfg, info.project_id, pending.id) } }
+    } catch (error) { throw new Error(`Project restored, but the preview could not be recovered: ${error instanceof Error ? error.message : String(error)}`) }
+  })
+  const restoreTab = useEffectEvent(() => {
+    if (restored.current) return
+    restored.current = true
+    try {
+      const saved = sessionStorage.getItem(`soundcanvas-project:${baseUrl}`)
+      if (saved) { const credentials = JSON.parse(saved); if (typeof credentials.id === 'string' && typeof credentials.token === 'string') void resume(credentials.id, credentials.token) }
+    } catch { /* The manual resume form remains available. */ }
+  })
+  useEffect(() => { if (readyToRestore) restoreTab() }, [baseUrl, readyToRestore])
   const uploadMedia = (media: File) => run(async () => {
     await flush()
     const created = await createProject(baseUrl)
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
-    setProject(created); setToken(created.access_token);
+    setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
     setMockStems(null);setJobId(''); setUndoId('');setAnchors([]); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
@@ -142,20 +212,10 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
+    try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`) } catch { /* Ignore unavailable storage. */ }
     const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount})
-    for (;;) {
-      if(!mounted.current)throw new Error('Preview cancelled')
-      const job=await getCandidate(cfg,id)
-      if(job.status==='failed')throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.')
-      if(job.status==='completed') {
-        if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
-        const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
-        setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
-        setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
-      }
-      setMessage(job.status === 'queued' ? 'Waiting for the separator…' : 'Separating the sound…');await new Promise(resolve=>setTimeout(resolve,1000))
-    }
+    try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound})) } catch { /* Preview still works without tab recovery. */ }
+    await waitCandidate(cfg,info.project_id,id)
   }
   const process = (quality=false) => run(async () => {
     if (!project) return
@@ -169,23 +229,23 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useImperativeHandle(ref, () => ({ uploadMedia, visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
-    if (busy) throw new Error('A project operation is already running.')
-    setBusy(true); setError(''); setMessage('Preparing visual selection…')
+    if (busyRef.current) throw new Error('A project operation is already running.')
+    busyRef.current = true; setBusy(true); setError(''); setMessage('Preparing visual selection…')
     try {
       await flush()
       setPrompt(description);setEditAction(action==='isolate'?'keep':action)
       await previewSound(config,project,description,{action:action==='isolate'?'keep':action},chosen)
     } catch(e) { setError(e instanceof Error ? e.message : String(e)); throw e }
-    finally { setBusy(false) }
+    finally { busyRef.current = false; setBusy(false) }
   }, separateVideo: async (video, description, remove) => {
-    if (busy) throw new Error('A project operation is already running. Please wait.')
-    setError(''); setMessage('Uploading video for separation…'); setBusy(true)
+    if (busyRef.current) throw new Error('A project operation is already running. Please wait.')
+    busyRef.current = true; setError(''); setMessage('Uploading video for separation…'); setBusy(true)
     try {
       await flush()
       const created=await createProject(baseUrl)
       if (!created.access_token) throw new Error('Project token was not returned.')
       const cfg={baseUrl,token:created.access_token}
-      setProject(created); setToken(cfg.token);
+      setProject(created); setToken(cfg.token); rememberProject(created.project_id, cfg.token);
       setJobId(''); setSettingsStems([]); setMessages([]); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
       await uploadProject(cfg,created.project_id,video)
       attachedVideo.current=video
@@ -193,10 +253,10 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage('Separating audio…')
       await previewSound(cfg,info,description,{action:remove?'mute':'keep'})
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); throw e }
-    finally { setBusy(false) }
+    finally { busyRef.current = false; setBusy(false) }
   }, planCommand: async (text, video, stems, tracks, duration) => {
-    if (busy) throw new Error('A project operation is already running. Please wait.')
-    setError(''); setMessage('Understanding your request…'); setBusy(true)
+    if (busyRef.current) throw new Error('A project operation is already running. Please wait.')
+    busyRef.current = true; setError(''); setMessage('Understanding your request…'); setBusy(true)
     try {
       await flush()
       let current=project, currentToken=token, currentJob=jobId
@@ -205,7 +265,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if (!created.access_token) throw new Error('Project token was not returned.')
         currentToken=created.access_token
         const cfg={baseUrl,token:currentToken}
-        setProject(created); setToken(currentToken);
+        setProject(created); setToken(currentToken); rememberProject(created.project_id, currentToken);
         setJobId(''); currentJob=''; setSettingsStems([]); setMessages([])
         onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
         setMessage('Uploading video…')
@@ -231,13 +291,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (result.kind === 'separate') {
         if (!result.description?.trim()) throw new Error('The requested sound is missing.')
         if (result.use_visual && !selectedVisual) throw new Error('The selected object is no longer available; choose it again.')
-        setPrompt(result.description);setEditAction(result.edit_scope?.action || (result.remove?'mute':'keep'))
-        await previewSound(cfg,current,result.description,result.edit_scope || {action:result.remove?'mute':'keep'},result.use_visual?selectedVisual:{},null,false,result.guidance?.anchors || [])
+        const {scope, anchors:guidance} = separationSettings(result, anchors, editAction, timedEdit, editStart, editEnd)
+        setPrompt(result.description); setEditAction(scope.action)
+        await previewSound(cfg,current,result.description,scope,result.use_visual?selectedVisual:{},null,false,guidance,clampPasses(passes,choices))
         result.message='Preview ready. Compare it above the timeline, then apply.'
       } else setMessage(result.message)
       return result
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); throw e }
-    finally { setBusy(false) }
+    finally { busyRef.current = false; setBusy(false) }
   }}))
   const visualAnalyzed = (metadata: VisualMetadata) => {
     onVisual(metadata); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('Analysis complete')
@@ -333,6 +394,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await flush();const applied=await applyCandidate(config,candidateId)
     await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
     setMockStems(candidateMock);setJobId(applied.job_id);setUndoId(candidateId);setCandidateId('');setRetryStems([])
+    try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ }
     setProject(await getProject(config,project.project_id))
     setMessage('Preview applied. Existing layer edits were preserved.')
   })
@@ -369,7 +431,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (id === 'preview' && jobId && !candidateId) return 'done'
     return order.indexOf(id) <= order.indexOf(current) ? 'active' : 'todo'
   }
-  const fileName = file?.name
+  const fileName = file?.name || project?.filename
   const comparison = candidateId ? (
     <div className="rise-in shadow-card w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-line bg-surface p-4" aria-label="Preview ready">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -377,7 +439,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <p className="flex items-center gap-1.5 text-[11px] font-medium text-accent"><FeatureTag name={FEATURES.compare}/>Preview ready</p>
           <p className="mt-0.5 text-sm font-semibold text-fg">{prompt.trim() || 'Separated sound'}</p>
         </div>
-        <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); setMessage('Preview discarded.') }}>Discard</button>
+        <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); if (project) { try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ } } setMessage('Preview discarded.') }}>Discard</button>
       </div>
       <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl}/>
       <div className="mt-3 flex items-center gap-2">
@@ -397,14 +459,16 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-accent" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
             <span className="text-xs font-medium text-fg">{file ? file.name : 'Choose a video or audio file'}</span>
             <span className="text-[11px] text-subtle">MP4, MOV, WAV or MP3. You can also drop it anywhere.</span>
-            <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3" aria-label="Media" onChange={e => { const f=e.target.files?.[0] || null; setFile(f); if (f) void uploadMedia(f) }} />
+            <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3" aria-label="Media" disabled={busy} onChange={e => { const f=e.target.files?.[0] || null; setFile(f); if (f) void uploadMedia(f) }} />
           </label>
+          {project && <details className="mt-2 text-xs"><summary className="cursor-pointer">Project credentials</summary><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e=>e.currentTarget.select()}/></label><p className="text-muted">Keep these private. Copy them to resume after closing this tab.</p></details>}
+          <details className="mt-2 text-xs"><summary className="cursor-pointer">Resume a project</summary><div className="mt-2 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={()=>void resume(resumeId,resumeToken)}>Resume</button></div></details>
         </Step>
 
         <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
           summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
           <div className="space-y-3">
-            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
                 : <p className="text-muted">{visual ? 'Click an object in the video, or describe' : 'Describe'} the sound in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}

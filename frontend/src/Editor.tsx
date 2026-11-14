@@ -71,6 +71,7 @@ export default function Editor() {
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null)
   const [working, setWorking] = useState<string | null>(null)
+  const videoUploadInProgress = useRef(false)
   const [videoAspect, setVideoAspect] = useState<number | null>(null)
   const portrait = videoSrc !== null && videoAspect !== null && videoAspect < 0.9
   const [layout, setLayout] = useState(readLayout)
@@ -226,7 +227,13 @@ export default function Editor() {
     [loadStems],
   )
 
-  const onPickVideo = useCallback((file: File) => { setCompareOriginal(false); loadVideo(file, false); void projectPanel.current?.uploadMedia(file) }, [loadVideo])
+  const onPickVideo = useCallback((file: File) => {
+    const panel = projectPanel.current
+    if (working || videoUploadInProgress.current || !panel) return
+    videoUploadInProgress.current = true
+    setCompareOriginal(false); loadVideo(file, false)
+    void panel.uploadMedia(file).finally(() => { videoUploadInProgress.current = false })
+  }, [loadVideo, working])
 
   const onPick = (e: ChangeEvent<HTMLInputElement>) => {
     loadFiles(Array.from(e.target.files ?? []))
@@ -447,7 +454,7 @@ export default function Editor() {
             onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
           <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} previewSlot={previewSlot} onBusy={setWorking} />
           </div>
         </main>
       )}

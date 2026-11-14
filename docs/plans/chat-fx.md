@@ -72,6 +72,22 @@ plan kinds. Everything runs through the same candidate flow, so A/B compare, app
 
 ### E. Generate new tracks that fit the song (P1, flagship demo)
 
+**Scope:** any instrument or free-text sound, not only violins. Examples: "add a piano part", "a funky bassline",
+"an 80s synth arpeggio", "a string pad", "a trumpet line in the chorus", "a choir", "a guitar riff". The project's
+existing separated tracks provide the musical context:
+
+- **Drums:** groove, swing and per-section density.
+- **Bass:** harmonic roots, transcribed.
+- **Vocals:** the melody, and where the voice is active, so the new part leaves space.
+- **Other tracks:** the registers already in use, so the part avoids crowded ranges.
+
+**Rendering:**
+
+- **Wide coverage:** a General MIDI soundfont with a permissive licence.
+- **Most-requested instruments:** higher-quality permissive samples.
+- **Synths:** a built-in numpy synth, which needs no licence.
+- **Free-text timbres:** the audio-generative path covers what samples can't, conditioned on the song and flagged with its licence.
+
 Ask: "add violins to the song", "put a string pad under the chorus", "add a piano part", "add a bassline".
 
 The new part has to fit the song's key, chords, tempo and groove, and sound like it was recorded in the same

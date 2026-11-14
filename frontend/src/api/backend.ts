@@ -39,6 +39,8 @@ export interface BackendStem {
   refinement?: BackendRefinement | null
   /** Instruments heard in a music stem, highest score first. Absent or null otherwise. */
   tags?: Array<{ label: string; score: number }> | null
+  /** Set on the children of a "Separate the rest" split: the replaced track's name. */
+  parent_name?: string | null
 }
 
 export interface BackendRefinement {
@@ -69,10 +71,12 @@ export interface BackendJob {
   inference?: { model?: { is_mock?: boolean; backend?: string }; warnings?: string[] } | null
   /** Which separator the audio service picked, and why. Absent from older backends and the prompted fake. */
   routing?: unknown
+  /** What a finished refine or track-split job produced. */
+  result?: unknown
 }
 
 /** How the audio service separates: `auto` lets its router decide (a song becomes music stems). */
-export type SeparationMode = 'auto' | 'prompted' | 'music_stems'
+export type SeparationMode = 'auto' | 'prompted' | 'music_stems' | 'music_substems'
 
 /** Stem names the music splitters use. The service narrows this to its model's own list. */
 export const MUSIC_STEMS = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] as const
@@ -238,7 +242,7 @@ export function toStem(stem: BackendStem, url: string): Stem {
   return {
     id: stem.id,
     // A music split labels stems canonically ("vocals") and names them for display ("Vocals").
-    label: label && (MUSIC_STEMS as readonly string[]).includes(label) && stem.name.trim() ? stem.name.trim() : label || stem.name,
+    label: label && ((MUSIC_STEMS as readonly string[]).includes(label) || stem.parent_name) && stem.name.trim() ? stem.name.trim() : label || stem.name,
     kind: stem.role === 'residual' ? 'residual' : 'sfx',
     url,
     duration: stem.duration,
@@ -246,7 +250,26 @@ export function toStem(stem: BackendStem, url: string): Stem {
     muteRanges: stem.mute_ranges ?? [],
     ...(refinement ? { refinement } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(label && (MUSIC_STEMS as readonly string[]).includes(label) && stem.role === 'target' ? { canonicalLabel: label } : {}),
+    ...(stem.parent_name?.trim() ? { group: stem.parent_name.trim() } : {}),
   }
+}
+
+/** "Separate the rest" is offered on a split song's `other` track, once, when the service has a nested model. */
+export function canSplitFurther(stem: Stem, serviceCan = true): boolean {
+  return serviceCan && stem.canonicalLabel === 'other' && !stem.group
+}
+
+/** Separate one music track into the instruments inside it, plus a Rest. Resolves with the job to poll. */
+export async function splitStem(config: BackendConfig, projectId: string, stemId: string, stems: string[] | null = null): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}/split`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(stems?.length ? {stems} : {})})
+  return ((await res.json()) as {job_id:string}).job_id
+}
+
+/** The project stems job a finished track split produced, which the editor reloads. */
+export function splitResultJob(job: BackendJob): string | null {
+  const r = job.result as { stems_job_id?: unknown } | null | undefined
+  return typeof r?.stems_job_id === 'string' && r.stems_job_id ? r.stems_job_id : null
 }
 
 /** The tags worth showing beside a track's name: "Strings · Synthesizer" for a track named Piano. */
@@ -430,7 +453,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null; split_stem_id?:string|null }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -454,7 +477,7 @@ export interface VisionCapability {available:boolean;reason:string|null;model:st
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
  */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;musicStems?:{available:boolean;stems:string[]}}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;musicStems?:{available:boolean;stems:string[]};musicSubstems?:{available:boolean;stems:string[]}}
 const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
 export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
@@ -472,6 +495,7 @@ export function toCapabilities(raw:unknown):Capabilities {
     ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
     ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),
     ...(c.music_stems && typeof c.music_stems==='object' ? {musicStems:toMusicStems(c.music_stems as Record<string,unknown>)} : {}),
+    ...(c.music_substems && typeof c.music_substems==='object' ? {musicSubstems:toMusicStems({...c.music_substems as Record<string,unknown>,stems:(c.music_substems as Record<string,unknown>).instruments})} : {}),
   }
 }
 function toMusicStems(m:Record<string,unknown>):{available:boolean;stems:string[]} {

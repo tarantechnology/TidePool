@@ -195,6 +195,9 @@ def work_once():
         elif job['kind']=='refine':
             from .refine import refine
             refine(p,payload,job['id'])
+        elif job['kind']=='split':
+            from .substems import split
+            split(p,payload,job['id'])
         elif job['kind']=='normalize':
             def finish(db): db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'prepared':True}),job['id']))
             normalize(pid,p,finish)

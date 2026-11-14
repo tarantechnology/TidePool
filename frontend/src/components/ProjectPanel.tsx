@@ -1,11 +1,11 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
+import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, BackendJob, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
 
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
-import { musicCommand, separationCommand } from '../separationCommand'
+import { musicCommand, restCommand, separationCommand } from '../separationCommand'
 import { separationSettings } from '../agent/separationSettings'
 import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
@@ -15,7 +15,7 @@ import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitResultJob, splitStem, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -64,6 +64,8 @@ export interface ProjectPanelHandle {
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
+  /** "Separate the rest": split one music track into the instruments inside it. */
+  splitTrack: (stemId: string) => Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -158,7 +160,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   // A split replaces every layer, so it is offered only before the first separation.
   const canSplit = Boolean(project?.metadata) && !jobId && !candidateId && capabilities?.musicStems?.available !== false
   const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
-  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,onProjectState])
+  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null,splitTracks:capabilities?.musicSubstems?.available !== false})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,capabilities,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
@@ -381,7 +383,28 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await splitInto(config, project, null)
   })
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, visualAction: async (chosen, description, action) => {
+  /** Replace one music track with its instruments and a Rest; undone like an applied preview. */
+  const splitTrackInto = async (cfg: BackendConfig, projectId: string, stemId: string) => {
+    await flush()
+    setMessage('Separating the rest…')
+    const id = await splitStem(cfg, projectId, stemId)
+    const controller = new AbortController(); abort.current = controller
+    const began = Date.now()
+    const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(jobProgressMessage({...status, stage: undefined}, Date.now()-began, 'Separating the rest'))})
+    if (result.state === 'failed') throw new Error(result.error || 'Separating the track failed.')
+    const job = await getJob(cfg, id), stemsJob = splitResultJob(job)
+    if (!stemsJob) throw new Error('The split finished without its tracks; reload the project.')
+    await onLoadStems(new HttpStemSource(cfg, stemsJob), 'Project stems')
+    const children = (job.result as {stems?: Array<{name?: string}>} | null)?.stems ?? []
+    const inference = (job.result as {inference?: BackendJob['inference']} | null)?.inference
+    setJobId(stemsJob); setUndoId(id); if (inference?.model?.is_mock !== undefined) setMockStems(inference.model.is_mock)
+    setMessage([`Separated into ${children.map(c => c.name).filter(Boolean).join(', ')}.`, ...(inference?.warnings || [])].join(' '))
+  }
+  const splitTrack = (stemId: string) => run(async () => {
+    if (!project) return
+    await splitTrackInto(config, project.project_id, stemId)
+  })
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, splitTrack, visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
     if (busyRef.current) throw new Error('A project operation is already running.')
@@ -445,18 +468,26 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         return {kind:'replacement',description:null,remove:false,actions:[],message:'Replacement preview ready. Compare before applying.'}
       }
       pendingReplacement.current=''
-      const local=separationCommand(text), music=musicCommand(text)
+      const local=separationCommand(text), music=musicCommand(text), rest=restCommand(text)
 
       const directCinematic = cinematicCommand(text, candidateKind==='cinematic'||candidateKind==='director')
       const directCreative = creativeCommand(text)
       const directTimestamp = local?.processingTime !== undefined
       let result:AgentPlan=directTimestamp && local ? {kind:'separate',description:local.description,remove:local.remove,edit_scope:local.editScope || {action:local.remove?'mute':'keep'},processing_time:local.processingTime,actions:[],message:''} : directCinematic || directCreative ? {kind:'director',description:null,remove:false,actions:[],message:''} : await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{
+        if(rest)return {kind:'separate',description:'the rest',remove:false,separation_mode:'music_substems',split_stem_id:null,use_visual:false,actions:[],message:''}
         if(music)return {kind:'separate',description:music.description,remove:music.remove,separation_mode:'music_stems',stems:music.stems,...(music.remove?{edit_scope:{action:'mute'}}:{}),use_visual:false,actions:[],message:''}
         if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
       // "Remove the vocals" on a split song mutes its Vocals track; no new separation needed.
       if (result.kind === 'separate' && hasStems) {
         const muted = muteExistingStem(result, await getSavedStems(cfg, current.project_id))
         if (muted) { setMessage(muted.message); return muted }
+      }
+      if (result.kind === 'separate' && result.separation_mode === 'music_substems') {
+        // The rule-based fallback names no track: it means the split song's "other" one.
+        const target = result.split_stem_id || (await getSavedStems(cfg, current.project_id)).find(s => s.role === 'target' && s.label === 'other' && !s.parent_name)?.id
+        if (!target) throw new Error('There is no "other" track to separate. Split the song into tracks first.')
+        await splitTrackInto(cfg, current.project_id, target)
+        return {...result, message: 'Separated the rest into its instruments.'}
       }
       if (result.kind === 'separate' && result.separation_mode === 'music_stems') {
         if (hasStems) throw new Error('This project already has layers. Upload the song again to split it into tracks.')

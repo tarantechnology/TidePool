@@ -30,7 +30,7 @@ def connect():
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
-                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'))
+                ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'), ('parent_name', 'TEXT'))
 JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():

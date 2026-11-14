@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { musicCommand, separationCommand } from './separationCommand'
+import { musicCommand, restCommand, separationCommand } from './separationCommand'
 
 describe('separation commands', () => {
   it('recognizes explicit whole-track requests', () => {
@@ -47,5 +47,19 @@ describe('music and timestamped commands together', () => {
   it('never reads a timestamped request as a whole-song split', () => {
     expect(musicCommand('split this song at 30s')).toBeNull()
     expect(separationCommand('isolate the drums at 30s')).toEqual({description:'drums',remove:false,processingTime:30})
+  })
+})
+
+describe('rest commands', () => {
+  it('reads a request to separate the other track', () => {
+    for (const text of ['Split the rest', 'separate the other track', "What's in the other track?", 'what is in the rest', 'separate the rest into instruments', 'break up the other stem']) {
+      expect(restCommand(text), text).toBe(true)
+    }
+  })
+  it('leaves everything else alone', () => {
+    for (const text of ['split this song into tracks', 'separate the dog', 'mute the other track', 'separate the rest of the song from 1 to 2 seconds']) {
+      expect(restCommand(text), text).toBe(false)
+      expect(musicCommand('split the rest')).toBeNull()
+    }
   })
 })

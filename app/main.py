@@ -54,8 +54,8 @@ def get_job(jid, kind, authorization):
     if not row: raise HTTPException(404,'Job not found')
     auth(row['project_id'],authorization)
     d=dict(row); d.pop('payload')
-    # Process jobs report 'splitting' or 'separating' while the audio service runs.
-    if kind not in ('vision','process'): d.pop('stage',None)
+    # Process and split jobs report 'splitting' or 'separating' while the audio service runs.
+    if kind not in ('vision','process','split'): d.pop('stage',None)
     output=json.loads(d.pop('output')) if d['output'] else None
     d['retryable']=None if d.get('retryable') is None else bool(d['retryable'])
     if kind=='process':
@@ -656,6 +656,9 @@ def apply_candidate(cid: str,authorization: str | None=Header(None)):
 @app.post('/api/candidates/{cid}/undo')
 def undo_candidate(cid: str,authorization: str | None=Header(None)):
     from .candidates import undo
+    # A track split ("Separate the rest") is undone through the same history as an applied preview.
+    with connect() as db: row=db.execute("SELECT * FROM jobs WHERE id=? AND kind='split'",(cid,)).fetchone()
+    if row: auth(row['project_id'],authorization); return undo(row)
     return undo(candidate_record(cid,authorization))
 
 @app.post('/api/projects/{pid}/stems/{sid}/refine',status_code=202)
@@ -676,6 +679,24 @@ def refine_stem(pid: str, sid: str, body: RefineRequest=RefineRequest(), authori
              'revisions':{sid:target['revision'],residuals[0]['id']:residuals[0]['revision']}}
     return {'job_id':start(pid,'refine',payload),'status':'queued'}
 
+class SplitRequest(BaseModel):
+    stems: list[str] | None=Field(default=None,min_length=1,max_length=8)
+
+@app.post('/api/projects/{pid}/stems/{sid}/split',status_code=202)
+def split_stem(pid: str, sid: str, body: SplitRequest=SplitRequest(), authorization: str | None=Header(None)):
+    """Separate the rest: replace one music track with the instruments inside it and a Rest."""
+    auth(pid,authorization)
+    from .agent import MUSIC_STEMS
+    with connect() as db:
+        target=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
+        busy=db.execute("SELECT kind FROM jobs WHERE project_id=? AND status IN ('queued','processing') LIMIT 1",(pid,)).fetchone()
+    if not target: raise HTTPException(404,'Stem not found')
+    if target['role']!='target' or target['label'] not in MUSIC_STEMS: raise HTTPException(409,'Only a track from a music split can be separated further.')
+    if busy: raise HTTPException(409,f"Wait for the active {busy['kind']} job to finish before splitting a track.")
+    stems=[s.strip().lower() for s in body.stems] if body.stems else None
+    if stems and (any(not s or len(s)>40 for s in stems) or len(set(stems))!=len(stems)): raise HTTPException(422,'stems must be distinct nonempty names')
+    return {'job_id':start(pid,'split',{'stem_id':sid,'revision':target['revision'],'stems':stems}),'status':'queued'}
+
 @app.get('/api/refine-jobs/{jid}')
 def refine_job(jid: str, authorization: str | None=Header(None)):
     return get_job(jid,'refine',authorization)
@@ -683,7 +704,7 @@ def refine_job(jid: str, authorization: str | None=Header(None)):
 @app.get('/api/jobs/{jid}')
 def job(jid: str, authorization: str | None=Header(None)):
     # The editor polls every job here (processing and refine share the response shape).
-    with connect() as db: row=db.execute("SELECT kind FROM jobs WHERE id=? AND kind IN ('process','refine')",(jid,)).fetchone()
+    with connect() as db: row=db.execute("SELECT kind FROM jobs WHERE id=? AND kind IN ('process','refine','split')",(jid,)).fetchone()
     return get_job(jid,row['kind'] if row else 'process',authorization)
 
 @app.get('/api/projects/{pid}/stems')

@@ -45,6 +45,30 @@ def fake_music_stems(audio, directory, requested, report):
     return results
 
 
+# The pretend nested model's instruments, for "Separate the rest" without the GPU.
+FAKE_SUBSTEMS = ('piano', 'keys', 'synth', 'strings', 'brass', 'woodwinds', 'organ', 'guitar')
+
+
+def fake_substems(audio, directory, requested, report):
+    """Mock nested split of one stem: the instruments plus a 'Rest' residual, each the parent
+    scaled so they sum back to it. Not separation."""
+    unknown = [s for s in requested if s not in FAKE_SUBSTEMS]
+    if unknown: raise InferenceError(f"INVALID_REQUEST: Unknown instruments {', '.join(unknown)}; valid: {', '.join(FAKE_SUBSTEMS)}", 'INVALID_REQUEST', False)
+    names = list(requested or ('piano', 'synth'))
+    share = 1 / (len(names) + 1)
+    if report is not None:
+        report.update(model={'backend':'fake','is_mock':True}, warnings=['Fake adapter: instruments are scaled copies of the track; no source separation performed'],
+                      routing={'mode':'music_substems','engine':'fake','model_id':None,'reason':'Fake adapter: music_substems requested','scores':None,'stems':names})
+    results = []
+    for name in names + ['residual']:
+        path = directory / (uid() + '.wav')
+        run('ffmpeg','-v','error','-y','-i',str(audio),'-af',f'volume={share}','-c:a','pcm_f32le',str(path))
+        rest = name == 'residual'
+        results.append({'name':'Rest' if rest else name.title(),'path':path,'role':'residual' if rest else 'target','prompt':None,
+                        'label':'rest' if rest else name,'tags':None if rest else [{'label':name.title(),'score':0.8}]})
+    return results
+
+
 def route(audio, source_kind):
     """The audio service's routing decision for this audio, without separating anything."""
     if os.getenv('INFERENCE_ADAPTER', 'fake') == 'fake':
@@ -75,6 +99,7 @@ def separate(audio, directory, payload, report=None):
     if mode == 'fake':
         opts = payload.get('options') or {}
         if opts.get('mode') == 'music_stems': return fake_music_stems(audio, directory, opts.get('stems') or [], report)
+        if opts.get('mode') == 'music_substems': return fake_substems(audio, directory, opts.get('stems') or [], report)
         passes=int(opts.get('passes') or 1)
         if report is not None:
             report.update(model={'backend':'fake','is_mock':True,'passes':passes}, warnings=['Fake adapter copies audio; no source separation performed'])
@@ -242,6 +267,7 @@ def capabilities():
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Fake adapter: no AI separation or judge ranking.',
                 'max_passes':max_passes(),'refine':True,
                 'music_stems':{'available':True,'model_id':None,'stems':list(FAKE_STEMS),'max_duration_seconds':None,'is_mock':True},
+                'music_substems':{'available':True,'model_id':None,'instruments':list(FAKE_SUBSTEMS),'is_mock':True},
                 'routing':{'default_mode':'auto','classifier':None}}
     from urllib.parse import urlsplit, urlunsplit
     url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL',''))
@@ -259,13 +285,15 @@ def capabilities():
                 'long_window_promoted':False,'automatic_spans':False,**passes_capability(data),**music_capability(data)}
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.',
-                'max_passes':max_passes(),'refine':True,'music_stems':{'available':False}}
+                'max_passes':max_passes(),'refine':True,'music_stems':{'available':False},'music_substems':{'available':False}}
 
 
 def music_capability(data):
     """The service's music_stems and routing blocks, whitelisted; a service without them has no splitter."""
     music, routing = data.get('music_stems'), data.get('routing')
     result = {'music_stems': {k: music.get(k) for k in ('available','model_id','stems','max_duration_seconds')} if isinstance(music, dict) else {'available': False}}
+    nested = data.get('music_substems')
+    result['music_substems'] = {k: nested.get(k) for k in ('available','model_id','instruments')} if isinstance(nested, dict) else {'available': False}
     if isinstance(routing, dict): result['routing'] = {k: routing.get(k) for k in ('default_mode','classifier')}
     return result
 

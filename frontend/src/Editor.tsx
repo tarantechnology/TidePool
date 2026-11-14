@@ -4,10 +4,11 @@ import { NO_PROJECT_HINT } from './agent/planOutcome'
 import { NO_PROJECT_STEMS, showsMockBadge } from './state/projectStems'
 import type { ProjectStemsState } from './state/projectStems'
 import { validateActions } from './agent/validate'
+import { canSplitFurther } from './api/backend'
 import type { SyncTarget, VisualMetadata } from './api/backend'
 import type { VisualSelection } from './visual'
 import { loadFromSource, stemFailureMessage } from './api/loadStems'
-import { FileStemSource, isAudioFile, isVideoFile, MockStemSource } from './api/stemSources'
+import { FileStemSource, isAudioFile, isVideoFile, MockStemSource, PROJECT_STEMS_LABEL } from './api/stemSources'
 import type { StemSource } from './api/stemSources'
 import { AudioEngine } from './audio/engine'
 import { resolveActions } from './audio/resolve'
@@ -430,6 +431,7 @@ export default function Editor() {
                 onAction={dispatch}
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
+                split={projectStems.projectId && stemsLabel === PROJECT_STEMS_LABEL ? { can: (stem) => canSplitFurther(stem, projectStems.splitTracks !== false), run: (stemId) => void projectPanel.current?.splitTrack(stemId), busy: Boolean(working) } : null}
               />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">

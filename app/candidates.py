@@ -159,7 +159,7 @@ def undo(job):
         replaced=[r['path'] for r in current]
         db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
         for row in previous:
-            row['revision']=revs[row['id']]+1
+            row['revision']=revs.get(row['id'],row['revision'])+1  # A split parent is restored, not current.
             keys=list(row)
             db.execute('INSERT INTO stems('+','.join(keys)+') VALUES('+','.join('?' for _ in keys)+')',list(row.values()))
         db.execute('UPDATE candidate_history SET undone=1 WHERE candidate_id=?',(job['id'],))

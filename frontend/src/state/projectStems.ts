@@ -19,6 +19,8 @@ export interface ProjectStemsState {
    * when it heard a song, so the split can be offered as the next step.
    */
   split?: { suggested: string | null } | null
+  /** False when the audio service says it cannot separate a track further ("Separate the rest"). */
+  splitTracks?: boolean
 }
 
 export const NO_PROJECT_STEMS: ProjectStemsState = { projectId: null, mockStems: null, warnings: [] }

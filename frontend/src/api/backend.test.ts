@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendStem } from './backend'
-import { createCandidate, describeRouting, tagLine, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
+import { canSplitFurther, createCandidate, describeRouting, splitResultJob, splitStem, tagLine, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
 import { buildVisualPrompt, NO_VISUAL_PROMPT } from './separation'
 
 const config = { baseUrl: 'http://api.test:8000', token: 'tok' }
@@ -200,5 +200,48 @@ describe('responseBlob', () => {
     const blob = await responseBlob(res)
     expect(blob.type).toBe('audio/wav')
     expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
+  })
+})
+
+describe('separate the rest', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const row = (over: Partial<BackendStem>): BackendStem => ({ id: 's1', name: 'Piano', duration: 4, audio_url: '/a', role: 'target', label: 'other', ...over })
+
+  it('posts the split for one track, with instruments only when asked', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ job_id: 'j9' })))
+    expect(await splitStem(config, 'p1', 's1')).toBe('j9')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://api.test:8000/api/projects/p1/stems/s1/split')
+    expect(bodyOf(0)).toEqual({})
+    await splitStem(config, 'p1', 's1', ['piano'])
+    expect(bodyOf(1)).toEqual({ stems: ['piano'] })
+  })
+
+  it('offers it on the other track only, once, and only when the service can', () => {
+    const other = toStem(row({}), 'blob:x')
+    expect(other.canonicalLabel).toBe('other')
+    expect(canSplitFurther(other)).toBe(true)
+    expect(canSplitFurther(other, false)).toBe(false)
+    expect(canSplitFurther(toStem(row({ name: 'Vocals', label: 'vocals' }), 'blob:x'))).toBe(false)
+    expect(canSplitFurther(toStem(row({ role: 'residual' }), 'blob:x'))).toBe(false)
+    expect(canSplitFurther(toStem(row({ parent_name: 'Piano' }), 'blob:x'))).toBe(false)
+  })
+
+  it('groups children under the track they came from, by display name', () => {
+    const child = toStem(row({ name: 'Synth', label: 'synth', parent_name: 'Piano', source_stem_id: 'old' }), 'blob:x')
+    expect(child).toMatchObject({ label: 'Synth', group: 'Piano' })
+    expect(toStem(row({ name: 'Rest', label: 'rest', role: 'residual', parent_name: 'Piano' }), 'blob:x')).toMatchObject({ label: 'Rest', kind: 'residual', group: 'Piano' })
+    expect(toStem(row({}), 'blob:x')).not.toHaveProperty('group')
+  })
+
+  it('reads the reload job and the capability', () => {
+    expect(splitResultJob({ status: 'completed', result: { stems_job_id: 'sj' } })).toBe('sj')
+    expect(splitResultJob({ status: 'completed', result: null })).toBeNull()
+    expect(toCapabilities({ music_substems: { available: true, instruments: ['piano', 2] } }).musicSubstems).toEqual({ available: true, stems: ['piano'] })
+    expect(toCapabilities({ music_substems: { available: false } }).musicSubstems?.available).toBe(false)
   })
 })

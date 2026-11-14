@@ -42,3 +42,14 @@ export function musicCommand(text: string): MusicCommand | null {
   }
   return null
 }
+
+/**
+ * "Separate the rest": split a song's `other` track into the instruments
+ * inside it ("split the rest", "separate the other track", "what's in the
+ * other track").
+ */
+export function restCommand(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/, '').replace(/\s+/g, ' ')
+  return /^(?:split|separate|break)(?: up)? the (?:rest|other(?: track| stem| layer)?)(?: into (?:instruments|tracks|parts))?$/.test(t)
+    || /^what(?:'s| is) in the (?:rest|other(?: track| stem| layer)?)$/.test(t)
+}

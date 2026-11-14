@@ -27,6 +27,8 @@ interface Props {
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
+  /** "Separate the rest" on the tracks that offer it. */
+  split?: { can: (stem: Stem) => boolean; run: (stemId: string) => void; busy: boolean } | null
 }
 
 function tickStep(duration: number): number {
@@ -104,7 +106,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, split = null }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
   // every lane at once, and dragging a lane's bottom edge sizes just that lane.
@@ -233,6 +235,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
+                {...(split?.can(stem) ? { onSplit: () => split.run(stem.id), splitBusy: split.busy } : {})}
               />
               <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">
                 {majors.map((t) => (

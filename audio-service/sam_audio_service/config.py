@@ -92,6 +92,17 @@ class Settings:
     max_prompts: int = field(default_factory=lambda: _int("AUDIO_MAX_PROMPTS", 8))
     # Upper bound for options.passes (multi-pass separation; each pass is a full model run).
     max_passes: int = field(default_factory=lambda: _int("AUDIO_MAX_PASSES", 3))
+    # Multi-pass safeguards (measured 2026-11-13, sam-audio-large: a second "guitar" pass on a
+    # residual with no guitar left pulled the drums in and dropped the stem from 19.6 to 0.9 dB).
+    # A pass is discarded, and the chain stops, when it extracts more than pass_max_ratio_db
+    # relative to pass 1 (a leftover is quieter than the first pass) or when its long-term
+    # spectrum is less similar than pass_min_similarity (cosine) to pass 1's (a different sound).
+    # Unset -> -3 dB / 0.6 for the real backend; disabled (20 dB / 0) for the mock, whose band-pass
+    # legitimately extracts more on a second pass and whose tests pin exact arithmetic.
+    pass_max_ratio_db: float | None = None
+    pass_min_similarity: float | None = None
+    pass_max_ratio_db_env: float | None = field(default_factory=lambda: _opt_float("AUDIO_PASS_MAX_RATIO_DB"), repr=False)
+    pass_min_similarity_env: float | None = field(default_factory=lambda: _opt_float("AUDIO_PASS_MIN_SIMILARITY"), repr=False)
     # Visually prompted requests run the whole selected interval as ONE model window (frames
     # must stay aligned with the audio, so no chunking). Upstream reports ~30 s as the
     # practical ceiling for the large model on an 80 GB GPU.
@@ -145,6 +156,14 @@ class Settings:
             self.chunk_seconds = self.chunk_seconds_env
         elif self.backend == "sam":
             self.chunk_seconds = 10.0
+        if self.pass_max_ratio_db_env is not None:
+            self.pass_max_ratio_db = self.pass_max_ratio_db_env
+        elif self.pass_max_ratio_db is None:
+            self.pass_max_ratio_db = -3.0 if self.backend == "sam" else 20.0
+        if self.pass_min_similarity_env is not None:
+            self.pass_min_similarity = self.pass_min_similarity_env
+        elif self.pass_min_similarity is None:
+            self.pass_min_similarity = 0.6 if self.backend == "sam" else 0.0
         if not self.refine:
             # Measured 2026-11-13 on sam-audio-small: the mask improved every fixture (+1.8 to
             # +5.9 dB SI-SDRi, 1.7-6.5 dB less leakage) at no GPU cost, so it is on for the real
@@ -160,6 +179,10 @@ class Settings:
             raise ValueError("AUDIO_MAX_VISUAL_INTERVAL_SECONDS must be positive")
         if not 1 <= self.chunk_batch <= 8:
             raise ValueError("AUDIO_CHUNK_BATCH (deprecated alias AUDIO_CHUNK_WORKERS) must be between 1 and 8")
+        if not -60 <= self.pass_max_ratio_db <= 20:
+            raise ConfigurationError("AUDIO_PASS_MAX_RATIO_DB must be within [-60, 20] (20 effectively disables the guard)")
+        if not 0 <= self.pass_min_similarity <= 1:
+            raise ConfigurationError("AUDIO_PASS_MIN_SIMILARITY must be within [0, 1]")
         if not 1 <= self.max_passes <= 5:
             raise ValueError("AUDIO_MAX_PASSES must be between 1 and 5")
         if self.chunk_seconds < 0:

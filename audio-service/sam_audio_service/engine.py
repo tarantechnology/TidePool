@@ -56,6 +56,19 @@ def _energy(samples: np.ndarray) -> float:
     return float(np.sum(np.square(samples, dtype=np.float64)))
 
 
+def _spectral_similarity(a: np.ndarray, b: np.ndarray, n_fft: int = 2048) -> float:
+    """Cosine similarity of the long-term magnitude spectra of two (C, T) signals (mono)."""
+    from .refine import stft
+    def profile(x):
+        mono = np.asarray(x, dtype=np.float64).mean(axis=0) if x.ndim == 2 else np.asarray(x, dtype=np.float64)
+        if mono.size < n_fft:
+            mono = np.pad(mono, (0, n_fft - mono.size))
+        return np.abs(stft(mono, n_fft)).mean(axis=0)
+    pa, pb = profile(a), profile(b)
+    denom = float(np.linalg.norm(pa) * np.linalg.norm(pb))
+    return float(np.dot(pa, pb) / denom) if denom > 0 else 0.0
+
+
 def _energy_db(energy: float, reference: float) -> float:
     if energy <= 0 or reference <= 0:
         return ENERGY_FLOOR_DB
@@ -246,6 +259,8 @@ class Engine:
                 pass_spans: list[tuple[float, float]] = []
                 saw_spans = False
                 stopped_early = False
+                stop_reason: str | None = None
+                first_target: np.ndarray | None = None
                 model_residual: np.ndarray | None = None
                 for k in range(1, passes + 1):
                     pass_started = time.perf_counter()
@@ -261,10 +276,21 @@ class Engine:
                     log.info("prompt %r pass %d/%d: %.1f dB re mixture in %.2fs", spec.display_name, k, passes, _energy_db(energy, mixture_energy), time.perf_counter() - pass_started)
                     if k == 1:
                         first_energy = energy
+                        first_target = target
                     elif energy < first_energy * NEGLIGIBLE_PASS_RATIO:
                         # Discarded: it stays in the residual, so reconstruction is unaffected.
                         warnings.append(f"pass {k} extracted negligible energy; stopped after {k - 1} pass(es)")
-                        stopped_early = True
+                        stopped_early, stop_reason = True, "negligible"
+                        break
+                    elif energy > first_energy * 10 ** (self.settings.pass_max_ratio_db / 10):
+                        # A leftover is quieter than the first pass; something this loud is a
+                        # different sound the model pulled from a residual that had none left.
+                        warnings.append(f"pass {k} extracted {_energy_db(energy, first_energy):+.1f} dB relative to pass 1 (limit {self.settings.pass_max_ratio_db:g} dB): probably a different sound; discarded, stopped after {k - 1} pass(es)")
+                        stopped_early, stop_reason = True, "too_much"
+                        break
+                    elif first_target is not None and (similarity := _spectral_similarity(first_target, target)) < self.settings.pass_min_similarity:
+                        warnings.append(f"pass {k} does not sound like pass 1 (spectral similarity {similarity:.2f} < {self.settings.pass_min_similarity:g}); discarded, stopped after {k - 1} pass(es)")
+                        stopped_early, stop_reason = True, "dissimilar"
                         break
                     cumulative += target
                     per_pass_db.append(_energy_db(energy, mixture_energy))
@@ -280,12 +306,12 @@ class Engine:
                         break
                     if first_energy <= 0:
                         warnings.append("pass 1 extracted negligible energy; stopped after 1 pass(es)")
-                        stopped_early = True
+                        stopped_early, stop_reason = True, "silent_first_pass"
                         break
                     source = (mixture - cumulative).astype(np.float32)
                     if not np.any(source):
                         warnings.append(f"residual is silent after pass {k}; stopped after {k} pass(es)")
-                        stopped_early = True
+                        stopped_early, stop_reason = True, "silent_residual"
                         break
                 target = cumulative
                 if refine_cfg is not None:
@@ -320,6 +346,8 @@ class Engine:
                     model_residuals.append(model_residual)
                 label = spec.visual_prompt.label if spec.visual_prompt and spec.visual_prompt.label else None
                 refinement = {"passes_requested": passes, "passes_run": passes_run, "per_pass_energy_db": per_pass_db, "stopped_early": stopped_early}
+                if stop_reason:  # only when the chain stopped early (the API drops None fields)
+                    refinement["stop_reason"] = stop_reason
                 stems.append(StemArrays(spec.display_name, "target", target, spec.text or None, label or spec.display_name, spans, refinement=refinement))
 
             peak_memory = int(cuda.max_memory_allocated()) if cuda else None

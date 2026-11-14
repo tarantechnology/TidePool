@@ -82,8 +82,15 @@ what it extracts to the target:
 | --- | --- | --- |
 | `options.passes` | `1` | Pass 1 separates the mixture; pass `k` separates `mixture - (t1 + ... + t(k-1))` and the stem is `t1 + ... + tk`. Each prompt has its own residual chain; the residual stem is still `mixture - all targets`, so stems sum to the mixture exactly. Chunking, `per_channel` stereo, anchors and visual intervals apply unchanged to every pass. A pass extracting less than -30 dB of pass 1's energy is discarded and stops the chain (with a warning), as does a silent residual. Cost is up to `n x` per prompt. |
 
+Two safeguards stop a chain whose later pass is not a leftover of the first: a pass louder than
+`AUDIO_PASS_MAX_RATIO_DB` (default -3 dB) relative to pass 1, or whose long-term spectrum is less
+similar than `AUDIO_PASS_MIN_SIMILARITY` (cosine, default 0.6) to pass 1's, is discarded and the
+chain stops (`stop_reason` = `too_much` | `dissimilar`). Measured 2026-11-13 with `sam-audio-large`:
+without them a second "guitar" pass on a residual with no guitar left pulled the drums in and dropped
+the stem from 19.6 to 0.9 dB SI-SDRi. The mock backend runs with both disabled.
+
 Each target stem reports `refinement = {passes_requested, passes_run, per_pass_energy_db,
-stopped_early}`; `model.passes` is the most passes run for any prompt. Compare quality across
+stopped_early, stop_reason?}`; `model.passes` is the most passes run for any prompt. Compare quality across
 pass counts with `python -m benchmarks.run_benchmark --backend sam --passes 2`.
 
 ### Mask refinement and per-window candidates (opt-in, both off by default)

@@ -229,6 +229,7 @@ class Refinement(BaseModel):
     passes_run: int
     per_pass_energy_db: list[float] = Field(description="10*log10(energy of pass i's extra target / mixture energy), floored at -120")
     stopped_early: bool
+    stop_reason: str | None = Field(default=None, description="Why the chain stopped early: negligible | too_much | dissimilar | silent_residual | silent_first_pass")
 
 
 class StemResult(BaseModel):

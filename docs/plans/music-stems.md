@@ -1,0 +1,135 @@
+# Plan: song upload → per-instrument tracks, with model routing
+
+Status: in progress on branch `audio/music-stems`. Owner: Person 1 (audio).
+
+## Goal
+
+A user uploads a whole song (audio file, or a music video) and gets one editable track per
+instrument (vocals, drums, bass, guitar, piano, other) in the existing editor, with the
+existing volume / mute / solo / automation tools. A model router picks the right separator:
+dedicated music-source-separation (MSS) models for songs, the prompted text model
+(AudioSep / SAM Audio) for dialogue, video soundtracks and arbitrary sounds.
+
+Why not AudioSep for songs: text-queried models are trained on AudioSet/VGGSound captions
+and are weak on music stems. Dedicated MSS models (Demucs v4, BS-/Mel-RoFormer) are trained
+on MUSDB-style multitracks and are much better on them. Phase 0 measures this on our A40
+and does not assume it.
+
+## Architecture
+
+```
+app /process {mode} ──► audio-service /separate {options.mode}
+                              │
+                         routing.route()            ◄── content classifier (AudioSet tagger, lazy)
+                        /                \
+          mode=music_stems              mode=prompted
+          StemSplitter.split()          Engine (existing): Backend.separate() per prompt
+          (Demucs / RoFormer chain)     (AudioSep or SAM Audio)
+```
+
+### 1. `StemSplitter` (audio-service, new; separate from the prompted `Backend`)
+
+The prompted `Backend` shape is one mono signal and one prompt in, one target out. A splitter
+is one stereo mixture in, N named stems out. Forcing it into `Backend.separate` would mean
+running the model N times or caching outputs. So it gets its own small interface in
+`sam_audio_service/stems/`:
+
+- `StemSplitter.load()`, `info()`, `stems: tuple[str, ...]`, `sample_rate`,
+  `split(mixture: float32[channels, n]) -> dict[str, float32[channels, n]]`.
+- Implementations: `mock` (deterministic band-split filters for CI; not separation),
+  `demucs` (`htdemucs`, `htdemucs_ft`, `htdemucs_6s`), and `chain` (a RoFormer vocal model,
+  then Demucs on the instrumental) if Phase 0 shows it is worth the cost.
+- Native stereo. Resample 48 kHz ↔ model rate inside the splitter. Long songs use the
+  model's own overlap-add chunking.
+- **Mixture consistency:** after splitting, `error = mix - sum(stems)` is spread over the
+  stems in proportion to their energy, so unmuting every track reproduces the upload exactly.
+  The effect on SDR is reported.
+- Lazy, loaded once, alongside the prompted backend on the same GPU (Demucs needs about 1–3 GB).
+
+### 2. Router (`sam_audio_service/routing.py`)
+
+`route(audio, prompts, options, hints) -> RouteDecision{mode, engine, model_id, stems, reason, scores}`
+
+1. `options.mode` is `prompted` or `music_stems`: obey it.
+2. `auto` (default):
+   - No prompts → `music_stems` (all stems). Warn if the content does not look like music.
+   - Every prompt maps onto the stem vocabulary (aliases: vocals/voice/singing/singer/lead
+     vocal → vocals; drums/percussion/beat → drums; bass/bassline → bass; guitar; piano/keys;
+     instrumental/accompaniment/backing track/karaoke → instrumental = sum of non-vocal stems)
+     **and** the content classifier says music → `music_stems` returning the requested stems
+     plus one `residual` (the sum of the rest). Stem names keep the caller's wording.
+   - Otherwise → `prompted` (unchanged behaviour). Mixed prompts ("vocals" + "dog barking")
+     → prompted, with the reason recorded.
+3. Content classifier: an AudioSet tagger (AST or PANNs, whichever is lighter and accurate
+   enough in Phase 0) on a few windows sampled across the file, giving `music` and `speech`
+   scores. If it is unavailable (mock/CI, or not installed), the decision uses the prompt
+   rules alone and records `scores: null`.
+4. `hints.source_kind` (`audio` | `video`) from the app is a tie-breaker only.
+
+Every response carries `routing` so decisions can be explained and debugged. There is also
+a dry-run endpoint, `POST /v1/route` (multipart, same as `/separate`), which returns only the
+decision. The editor uses it to suggest "This sounds like a song: split into tracks?"
+
+### 3. Contract additions (all optional; existing callers unaffected)
+
+Request `metadata.options`:
+- `mode: "auto" | "prompted" | "music_stems"`. Default is `AUDIO_ROUTING_DEFAULT`, which is
+  `auto`. In `auto`, non-music prompts route exactly as today.
+- `stems: list[str] | null`: subset of the splitter vocabulary (music_stems only).
+- `stem_model: str | null`: override `AUDIO_STEM_MODEL`.
+
+Response:
+- Top-level `routing: {mode, engine, model_id, reason, scores, stems}`.
+- Music stems have `role: "target"`, `label` = canonical stem (`vocals`), and `name` = the
+  caller's wording or the title-cased canonical name (`Vocals`). A **full split returns no
+  residual** (the stems already sum to the mix). A subset split returns exactly one `residual`.
+- `model.backend` reports what actually ran (`demucs`, `chain`, `audiosep`, `sam`, `mock`).
+
+Capabilities: `music_stems: {available, model_id, stems, max_duration_seconds}` and
+`routing: {default_mode, classifier}`.
+
+Errors: requesting `music_stems` with no splitter configured gives 400 `UNSUPPORTED_OPERATION`.
+Unknown stem names give 400 `INVALID_REQUEST` listing the valid ones.
+
+Config: `AUDIO_STEM_SPLITTER` (`off|mock|demucs|chain`), `AUDIO_STEM_MODEL`,
+`AUDIO_ROUTING_DEFAULT`, `AUDIO_ROUTER_CLASSIFIER` (`off|ast|panns`),
+`AUDIO_ROUTER_MUSIC_THRESHOLD`, `AUDIO_STEM_SHIFTS`, `AUDIO_STEM_OVERLAP`.
+
+### 4. App backend (`app/`)
+
+- `Process.mode` (`auto|prompted|music_stems`) and optional `stems`, forwarded in
+  `options`. Empty prompts are allowed when `mode` is `music_stems` (or `auto` on the http
+  adapter, in which case the service decides).
+- `source_kind` hint from the project's upload (audio-only vs video).
+- The `fake` adapter emits named instrument stems for `music_stems` (copies, clearly marked as mock).
+- Persist `routing` in the job output; `GET /api/projects/{pid}/route` proxies `/v1/route`.
+- Projects without a video stream already work (audio-only path). Verify, and fix if not.
+
+### 5. Editor (`frontend/`)
+
+- Upload accepts audio files (`audio/*`) as well as video. With no video, the video panel
+  shows a waveform/placeholder instead.
+- A "Split into tracks" primary action (mode `music_stems`) next to the prompt bar, plus
+  an auto-suggestion when `/route` says the upload is music.
+- Stems render as named tracks (Vocals, Drums, Bass, …). Existing edit tools apply unchanged.
+  "Remove vocals" on a split project mutes the vocals track and does not need a residual.
+- Show the routing reason/model in the job status card.
+
+## Phases and owners
+
+| Phase | Work | Where |
+|---|---|---|
+| 0 | Benchmark: MSS candidates on 50 MUSDB clips (SDR per stem, speed, VRAM), AudioSep text-prompt baseline on the same clips, classifier accuracy (music vs speech/SFX) | A40 only |
+| 1 | audio-service: splitter, router, contract, mock, tests | worktree + A40 validation |
+| 2 | app + frontend: mode, upload audio, split action, tracks | worktree |
+| 3 | End-to-end on the A40: real song → tracks in the editor; docs | A40 + local editor via tunnel |
+
+## Acceptance
+
+- Full split of a 4-minute song on the A40 finishes in under 60 s with the chosen model.
+- Mean MUSDB SDR for the chosen model beats the AudioSep text-prompt baseline on every stem,
+  with numbers in `audio-service/benchmarks/results/2026-11-14-music-stems/`.
+- Router: music vs non-music accuracy ≥ 95% on the labelled clip set. Every existing
+  prompted test passes unchanged.
+- Sum of the returned stems equals the decoded mix (max abs error < 1e-4).
+- Mock path is fully covered by CPU tests. No model weights are downloaded on CI or on dev Macs.

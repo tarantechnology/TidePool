@@ -14,9 +14,14 @@ interface Props {
   /** Why the bar is disabled, shown as helper text and as the tooltip. */
   disabledReason?: string
   onRun: (text: string) => Promise<{ message: string; ok: boolean }>
+  /**
+   * "Split into tracks", while the project can be split. `suggested` is set when
+   * the audio service thinks the upload is a song, and puts the action first.
+   */
+  split?: { suggested: string | null; onSplit: () => void; busy?: boolean } | null
 }
 
-export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
+export function PromptBar({ disabled, disabledReason = '', onRun, split = null }: Props) {
   const [text, setText] = useState('')
   const [last, setLast] = useState<Entry | null>(null)
   // The reply describes the moment it was made, so it fades once that moment has passed.
@@ -56,6 +61,14 @@ export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
   return (
     <div className="relative z-10 shrink-0 px-1 pt-2 pb-3">
       <div className="mx-auto max-w-3xl">
+        {split?.suggested && !last && (
+          <p className="rise-in mb-2 flex items-center gap-2 px-1 text-[11px] text-muted" role="status">
+            <span>{split.suggested}</span>
+            <button type="button" onClick={split.onSplit} disabled={disabled || pending || split.busy} className="font-medium text-accent hover:underline disabled:opacity-40">
+              Split it into one track per instrument
+            </button>
+          </p>
+        )}
         {last && (
           <p className={`rise-in mb-2 px-1 text-[11px] ${last.ok ? 'text-muted' : 'text-amber-700'}`} role="status">
             <span className="text-subtle">{last.prompt}</span>
@@ -77,6 +90,17 @@ export function PromptBar({ disabled, disabledReason = '', onRun }: Props) {
             placeholder={reason || 'Tell Current what to change, e.g. isolate the dog barking'}
             className="h-9 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
           />
+          {split && (
+            <button
+              type="button"
+              onClick={split.onSplit}
+              disabled={disabled || pending || split.busy}
+              title="One editable track per instrument: vocals, drums, bass and the rest"
+              className={`flex h-9 shrink-0 items-center rounded-xl px-3 text-sm transition-colors disabled:opacity-40 ${split.suggested ? 'bg-accent-soft font-medium text-accent ring-1 ring-accent/40 hover:bg-accent-soft/70' : 'border border-line text-fg hover:border-line-strong hover:bg-surface-2'}`}
+            >
+              Split into tracks
+            </button>
+          )}
           <button
             type="submit"
             disabled={disabled || pending || !text.trim()}

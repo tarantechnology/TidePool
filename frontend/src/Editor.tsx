@@ -230,7 +230,10 @@ export default function Editor() {
     const panel = projectPanel.current
     if (working || videoUploadInProgress.current || !panel) return
     videoUploadInProgress.current = true
-    setCompareOriginal(false); loadVideo(file, false)
+    setCompareOriginal(false)
+    // A song has no picture: the panel shows the audio placeholder once the project knows.
+    if (isAudioFile(file) && !isVideoFile(file)) { originalVideo.current = file; setHasLocalVideo(true); setVisual(null); setVisualSelection(null); setVideoSrc(null); setVideoAspect(null); setVideoDuration(null) }
+    else loadVideo(file, false)
     void panel.uploadMedia(file).finally(() => { videoUploadInProgress.current = false })
   }, [loadVideo, working])
 
@@ -331,7 +334,7 @@ export default function Editor() {
       {dragging && (
         <div className="pointer-events-none absolute inset-3 z-50 flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-accent/50 bg-accent-soft/80 text-sm font-medium text-accent backdrop-blur-sm">
           Drop a video to start a project
-          <span className="text-xs font-normal text-muted">or audio files to replace the layers</span>
+          <span className="text-xs font-normal text-muted">or audio files to replace the layers (to split a song, choose it with Upload)</span>
         </div>
       )}
       <div className="pointer-events-none absolute -top-40 left-1/2 h-80 w-[60rem] -translate-x-1/2 rounded-full bg-sky/30 blur-[120px]" />
@@ -410,6 +413,7 @@ export default function Editor() {
               selection={visualSelection}
               onClearSelection={() => setVisualSelection(null)}
               seekTo={seekTo}
+              audioOnly={!videoSrc && projectStems.audioOnly === true}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
               </div>
@@ -458,7 +462,8 @@ export default function Editor() {
         </main>
       )}
 
-      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} onRun={runPrompt} />
+      <PromptBar disabled={status !== 'ready' || (!projectStems.projectId && !hasLocalVideo)} disabledReason={projectStems.projectId || hasLocalVideo ? '' : NO_PROJECT_HINT} onRun={runPrompt}
+        split={projectStems.split ? { suggested: projectStems.split.suggested, onSplit: () => void projectPanel.current?.splitSong(), busy: Boolean(working) } : null} />
     </div>
   )
 }

@@ -1,0 +1,76 @@
+{
+ "tagger": "ast",
+ "load_s": 21.881606332026422,
+ "windows": 4,
+ "peak_alloc_mb": 513,
+ "peak_reserved_mb": 616,
+ "rules": {
+  "music": {
+   "threshold": 0.4,
+   "best_plateau": [
+    0.38,
+    0.42
+   ],
+   "accuracy": 1.0,
+   "confusion": {
+    "music": {
+     "pred_music": 51,
+     "pred_not_music": 0
+    },
+    "speech": {
+     "pred_music": 0,
+     "pred_not_music": 87
+    },
+    "sfx": {
+     "pred_music": 0,
+     "pred_not_music": 100
+    }
+   },
+   "errors": [],
+   "speech_over_music_pred_music": {
+    "som-10": 10,
+    "som-20": 10
+   },
+   "accuracy_at_0.5": 0.9705882352941176
+  },
+  "music_minus_speech": {
+   "threshold": 0.21,
+   "best_plateau": [
+    0.18,
+    0.23
+   ],
+   "accuracy": 0.9957983193277311,
+   "confusion": {
+    "music": {
+     "pred_music": 51,
+     "pred_not_music": 0
+    },
+    "speech": {
+     "pred_music": 0,
+     "pred_not_music": 87
+    },
+    "sfx": {
+     "pred_music": 1,
+     "pred_not_music": 99
+    }
+   },
+   "errors": [
+    {
+     "file": "data/sfx_esc50/door_wood_creaks__1-51805-B-33.wav",
+     "label": "sfx",
+     "score": 0.35,
+     "top": "Music"
+    }
+   ],
+   "speech_over_music_pred_music": {
+    "som-10": 0,
+    "som-20": 0
+   },
+   "accuracy_at_0.5": null
+  }
+ },
+ "latency_warm_mean_s": 0.16658958378891145,
+ "latency_warm_p95_s": 0.27665543297771367,
+ "latency_first_s": 0.5480897109955549,
+ "latency_fullsong_s": 1.1687171149533242
+}

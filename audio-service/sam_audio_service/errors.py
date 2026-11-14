@@ -96,6 +96,14 @@ class StorageFailure(AudioServiceError):
     retryable = True
 
 
+class Cancelled(AudioServiceError):
+    """The request was cancelled while it ran (stem splitting checks between chunks). Retry if still wanted."""
+
+    code = "CANCELLED"
+    status = 409
+    retryable = True
+
+
 class ServiceBusy(AudioServiceError):
     """Too many concurrent requests. Retry later."""
 
@@ -149,6 +157,6 @@ ERROR_CODES: dict[str, dict[str, Any]] = {
     cls.code: {"http_status": cls.status, "retryable": cls.retryable, "description": (cls.__doc__ or "").strip()}
     for cls in (
         InvalidRequest, InvalidMedia, UnsupportedOperation, MissingAsset, MissingModel,
-        InsufficientGpuMemory, InferenceFailure, StorageFailure, ServiceBusy, AudioServiceError,
+        InsufficientGpuMemory, InferenceFailure, StorageFailure, Cancelled, ServiceBusy, AudioServiceError,
     )
 }

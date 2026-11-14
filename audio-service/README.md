@@ -257,3 +257,66 @@ The official AudioSep/CLAP checkpoints are reused from the checkout when present
 Otherwise the adapter uses the Hugging Face cache and verified Space revision
 `0807a713283035d8b0d0628f1b8e3d6580459f7b`. Explicit missing checkpoint paths fail
 clearly. No SAM model or mock fallback is loaded by the AudioSep path.
+
+## Music stems and model routing
+
+A song can be split into one track per instrument (vocals, drums, bass, other; guitar and
+piano with a 6-stem model) by a dedicated music-source-separation model instead of the
+prompted text model, which is weak on music stems. Every request is routed first
+(`sam_audio_service/routing.py`); the decision is returned as `routing` in every response
+and can be asked for without separating anything with `POST /v1/route` (multipart, same as
+`/separate`). Plan: `docs/plans/music-stems.md`. Contract: `docs/contracts/audio_contracts.md`
+(Contract B `options.mode` and Contract C `routing`).
+
+```bash
+# CI / local, no weights: frequency-band mock splitter.
+AUDIO_STEM_SPLITTER=mock .venv/bin/python -m sam_audio_service
+curl -F audio=@song.wav -F 'metadata={"options":{"mode":"music_stems"}}' localhost:8001/separate
+# Real model (GPU host): installs demucs + transformers; weights download on first use.
+uv pip install --python .venv/bin/python -e ".[music]"
+AUDIO_STEM_SPLITTER=demucs AUDIO_STEM_MODEL=htdemucs_ft .venv/bin/python -m sam_audio_service
+```
+
+Routing in `auto` (the default): no prompts → split into every stem; every prompt names a
+stem ("vocals", "the beat", "karaoke"…) **and** the content classifier says music → split
+into those stems plus one `residual`; anything else (mixed prompts, non-stem prompts, span
+or visual guidance, not music) → the prompted model exactly as before. Without a classifier,
+stem prompts route to the splitter only when the caller sends `hints.source_kind: "audio"`;
+a "singing" prompt on a video soundtrack stays prompted. `options.mode` (`prompted` /
+`music_stems`) overrides all of it. The full table is in the `routing.py` docstring.
+
+The splitter's stems are made to sum exactly to the input (the error is spread over the
+stems in proportion to their energy), so unmuting every track reproduces the upload. A full
+split returns no residual; a subset returns one `residual` (the sum of the other stems).
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AUDIO_STEM_SPLITTER` | `off` | `off`, `mock` (frequency bands; CI only), `demucs`, `chain` (RoFormer vocal model via `audio-separator`, then Demucs on `mixture - vocals`; `pip install -e ".[music,music-chain]"`), or `roformer` (native multi-stem BS-RoFormer such as ZFTurbo's 4-stem checkpoint; `pip install -e ".[music-roformer]"`). Off by default for every backend, the mock included, so existing deployments and the "empty prompts → 400" contract are unchanged until it is switched on. |
+| `AUDIO_STEM_MODEL` | `htdemucs_ft` | Demucs model: `htdemucs`, `htdemucs_ft` (4 stems, ~4x slower than `htdemucs`), `htdemucs_6s` (adds guitar and piano). May change after the Phase 0 benchmark. A name ending in `6s` also gives the mock six bands. |
+| `AUDIO_STEM_VOCAL_OVERLAP` | `8` | `chain` only: audio-separator `mdxc_params.overlap` for the vocal model (1-16). To be set from the benchmark. |
+| `AUDIO_STEM_ROFORMER_CKPT` / `AUDIO_STEM_ROFORMER_CONFIG` | none | `roformer` only (both required): checkpoint and its training YAML. The model is built from the YAML's `model` section (keys the installed `bs_roformer` does not accept are dropped and logged); a checkpoint missing more than 2% of the parameters fails the load. |
+| `AUDIO_STEM_ROFORMER_OVERLAP` | `2` | `roformer` only: windows per `audio.chunk_size` (step = chunk / overlap), overlap-added with a triangular window (1-16). |
+| `AUDIO_STEM_ROFORMER_BATCH` | `1` | `roformer` only: windows per forward pass (1-16). |
+| `AUDIO_STEM_ROFORMER_FP16` | `false` | `roformer` only: run the model in float16. |
+| `AUDIO_STEM_VOCAL_MODEL` | `model_bs_roformer_ep_317_sdr_12.9755.ckpt` | `chain` only: the `audio-separator` vocal model. `AUDIO_STEM_MODEL_DIR` sets where its weights live. |
+| `AUDIO_STEM_SHIFTS` | `1` | Demucs random-shift averaging (0-20). Cost scales linearly. |
+| `AUDIO_STEM_OVERLAP` | `0.25` | Demucs segment overlap, `[0, 1)`. |
+| `AUDIO_STEM_SEGMENT` | model default | Demucs segment length in seconds; smaller uses less GPU memory (`htdemucs` caps it at ~7.8). |
+| `AUDIO_ROUTING_DEFAULT` | `auto` | `options.mode` when a request sets none: `auto`, `prompted`, `music_stems` (the last needs a splitter). |
+| `AUDIO_ROUTER_CLASSIFIER` | `panns` with `demucs`/`chain`/`roformer`, else `off` | `off`, `mock` (everything is music; tests), `panns` (PANNs Cnn14 via `panns-inference`, 32 kHz; checkpoint `AUDIO_ROUTER_PANNS_CHECKPOINT`, default `~/panns_data/Cnn14_mAP=0.431.pth`), `ast` (`MIT/ast-finetuned-audioset-10-10-0.4593`, 16 kHz). Both score up to eight 10 s windows across the file and load on first use. A classifier that cannot load is disabled for the process and `/health` reports why; routing then uses the prompt rules alone (`scores: null`). |
+| `AUDIO_ROUTER_MUSIC_THRESHOLD` | per classifier: `panns` 0.4, `ast` 0.2 | Minimum "song" score (median over up to 8 10 s windows of AudioSet Music minus Speech) for stem-name prompts to go to the splitter. Speech over music (vlogs, soundtracks) scores ~0 and stays on the prompted model; full songs score ~0.8 (PANNs). |
+| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever the router classifier can tag (`panns`, `ast`); it reuses that model under its lock, no second load. `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
+| `AUDIO_STEM_LABEL_MIN_SCORE` | `0.1` | Minimum mean AudioSet probability for a tag (and for naming `other`). Picked on 50 MUSDB clips: 0.1 named 31/33 guitar-dominated "other" stems with a guitar and left 8/50 as "Other"; 0.2 drops to 28/33 and 14/50. |
+| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). 4 stems of a 4-min song: ~0.6 s warm with PANNs on an A40. |
+
+The splitter and classifier load lazily on first use (not at startup), share the GPU and
+the inference lock with the prompted model, and are reported under `splitter` and
+`classifier` in `/health`; `/capabilities` lists `music_stems` (stems, aliases) and
+`routing` (including the splitter's weight `license`). Splitters report progress through
+an optional callback (the service logs each 10%; RoFormer reports per chunk, chain per
+stage, Demucs only start and end because `apply_model` has no hook) and accept a cancel
+event checked between chunks (`409 CANCELLED`; nothing in the synchronous HTTP API sets it
+yet). The chain splitter disables audio-separator's peak normalisation
+(`normalization_threshold=1.0`), feeds it at most 0.5 peak and undoes that gain on the vocals.
+Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
+the splitter, duplicates mono to stereo and folds the stems back to mono.

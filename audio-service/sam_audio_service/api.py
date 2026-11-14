@@ -6,6 +6,7 @@ POST /separate       multipart ``audio`` + ``metadata`` JSON string. This is the
                      Person 4's backend already implements (INTEGRATION.md). Response is a
                      superset of ``{"stems": [{"name", "audio_base64"}]}``.
 POST /v1/separate    JSON body with ``audio_ref`` instead of uploaded bytes (proposed).
+POST /v1/route       multipart, same as /separate: the routing decision only (dry run).
 GET  /health         liveness + model status.
 GET  /capabilities   prompting modes, limits, error codes, contract version.
 
@@ -33,10 +34,12 @@ from pydantic import ValidationError
 from . import CONTRACT_VERSION, __version__
 from .audio_io import DecodedAudio, decode, encode_wav_pcm16, encode_wav_float32
 from .config import Settings, load_settings
-from .contracts import ModelInfo, SeparationMetadata, SeparationRequest, SeparationResponse, SourceInfo, StemResult
+from .contracts import ModelInfo, RouteInfo, RouteResponse, SeparationMetadata, SeparationRequest, SeparationResponse, SourceInfo, StemResult
 from .engine import Engine, write_stem_file
 from .errors import ERROR_CODES, AudioServiceError, InvalidMedia, InvalidRequest, StorageFailure
 from .media import resolve_ref, to_file_ref
+from .stems import STEM_ALIASES
+from .stems.vocabulary import requestable
 
 log = logging.getLogger("sam_audio_service")
 
@@ -53,7 +56,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             except Exception:  # noqa: BLE001 - keep serving /health; requests return MISSING_MODEL
                 log.warning("model did not load on startup; will retry on first request")
         yield
-        engine.backend.unload()
+        engine.unload()
 
     app = FastAPI(title="SoundCanvas Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
     app.state.settings, app.state.engine = settings, engine
@@ -77,7 +80,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     @app.get("/health")
     def health() -> dict[str, Any]:
         status = engine.status()
-        return {"status": "ok" if status["loaded"] else "degraded", "service": "sam-audio-service", "version": __version__, "contract_version": CONTRACT_VERSION, "model": status}
+        return {"status": "ok" if status["loaded"] else "degraded", "service": "sam-audio-service", "version": __version__, "contract_version": CONTRACT_VERSION, "model": status,
+                "splitter": engine.splitter_status(), "classifier": engine.classifier_status()}
 
     @app.get("/ready")
     def ready():
@@ -108,7 +112,20 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                          "refine": {"mode": settings.refine, "p": settings.refine_p, "n_fft": settings.refine_n_fft, "floor": settings.refine_floor, "blend": settings.refine_blend, "threshold": settings.refine_threshold, "residual_threshold": settings.refine_residual_threshold, "gate_db": settings.refine_gate_db},
                          "candidates": settings.candidates, "candidate_select": settings.candidate_select},
             "limits": {"max_passes": settings.max_passes, "max_prompts": settings.max_prompts, "max_duration_seconds": settings.max_duration_seconds},
+            "music_stems": _music_stems_capabilities(),
+            "routing": {"default_mode": settings.routing_default, "modes": ["auto", "prompted", "music_stems"], "classifier": engine.classifier.name, "music_threshold": settings.router_music_threshold},
             "error_codes": ERROR_CODES,
+        }
+
+    def _music_stems_capabilities() -> dict[str, Any]:
+        splitter = engine.splitter
+        if splitter is None:
+            return {"available": False, "backend": None, "model_id": None, "license": None, "stems": [], "max_duration_seconds": settings.max_duration_seconds}
+        stems = requestable(splitter.stems)
+        return {
+            "available": True, "backend": splitter.name, "is_mock": splitter.is_mock, "model_id": splitter.info().get("model_id"), "license": splitter.info().get("license"),
+            "stems": stems, "aliases": {alias: c for alias, c in STEM_ALIASES.items() if c in stems and alias != c},
+            "max_duration_seconds": settings.max_duration_seconds,
         }
 
     def _parse_metadata(raw: str) -> SeparationMetadata:
@@ -132,7 +149,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             item = StemResult(
                 name=stem.name, stem_id=stem.stem_id, role=stem.role, prompt=stem.prompt, label=stem.label, start_time=0.0, format="wav/" + metadata.options.output_format,
                 duration=round(stem.samples.shape[1] / audio.sample_rate, 6), sample_rate=audio.sample_rate, channels=int(stem.samples.shape[0]),
-                sample_count=int(stem.samples.shape[1]), spans=stem.spans, source_asset_id=metadata.asset_id, refinement=stem.refinement,
+                sample_count=int(stem.samples.shape[1]), spans=stem.spans, source_asset_id=metadata.asset_id, refinement=stem.refinement, tags=stem.tags,
             )
             if metadata.options.return_mode == "file":
                 try:
@@ -143,9 +160,15 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                 item.audio_base64 = base64.b64encode(wav).decode("ascii")
             stems.append(item)
         source = SourceInfo(asset_id=metadata.asset_id, duration=round(audio.duration, 6), sample_rate=audio.sample_rate, channels=audio.channels, sample_count=audio.frames)
-        return SeparationResponse(stems=stems, model=ModelInfo(**result.model), source=source, request_id=request_id, warnings=result.warnings)
+        routing = RouteInfo(**result.routing) if result.routing else None
+        return SeparationResponse(stems=stems, model=ModelInfo(**result.model), source=source, request_id=request_id, routing=routing, warnings=result.warnings)
 
-    def _separate_upload(audio: StarletteUploadFile, metadata: str) -> SeparationResponse:
+    def _route(audio: DecodedAudio, metadata: SeparationMetadata, workdir: Path) -> RouteResponse:
+        decision = engine.route(audio, metadata)
+        source = SourceInfo(asset_id=metadata.asset_id, duration=round(audio.duration, 6), sample_rate=audio.sample_rate, channels=audio.channels, sample_count=audio.frames)
+        return RouteResponse(routing=RouteInfo(**decision.to_dict()), source=source, warnings=decision.warnings)
+
+    def _separate_upload(audio: StarletteUploadFile, metadata: str, handle=_respond):
         meta = _parse_metadata(metadata)
         # Spool to a real file: MP4/MOV with a trailing moov atom cannot be demuxed from a pipe.
         with tempfile.TemporaryDirectory(prefix="sam-audio-req-") as tmp:
@@ -165,11 +188,11 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             if size == 0:
                 raise InvalidMedia("audio upload is empty")
             decoded = decode(path=upload, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
-            return _respond(decoded, meta, workdir)
+            return handle(decoded, meta, workdir)
 
-    @app.post("/separate", response_model=SeparationResponse, response_model_exclude_none=True,
-              openapi_extra={"requestBody":{"required":True,"content":{"multipart/form-data":{"schema":{"type":"object","required":["audio"],"properties":{"audio":{"type":"string","format":"binary"},"metadata":{"type":"string"}}}}}}})
-    async def separate(request: Request) -> SeparationResponse:
+    multipart_body = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {"type": "object", "required": ["audio"], "properties": {"audio": {"type": "string", "format": "binary"}, "metadata": {"type": "string"}}}}}}}
+
+    async def _read_multipart(request: Request, handle):
         # Detection RLE masks routinely exceed Starlette's 1 MiB default form-field limit.
         # Bound metadata explicitly; uploaded files have a separate streaming size limit.
         limit = int(os.getenv("AUDIO_MAX_METADATA_BYTES", str(64 * 1024 * 1024)))
@@ -177,7 +200,17 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             audio, metadata = form.get("audio"), form.get("metadata", "{}")
             if not isinstance(audio, StarletteUploadFile) or not isinstance(metadata, str):
                 raise InvalidRequest("multipart request requires an audio file and metadata string")
-            return await run_in_threadpool(_separate_upload, audio, metadata)
+            return await run_in_threadpool(_separate_upload, audio, metadata, handle)
+
+    @app.post("/separate", response_model=SeparationResponse, response_model_exclude_none=True,
+              openapi_extra=multipart_body)
+    async def separate(request: Request) -> SeparationResponse:
+        return await _read_multipart(request, _respond)
+
+    @app.post("/v1/route", response_model=RouteResponse, openapi_extra=multipart_body)
+    async def route_upload(request: Request) -> RouteResponse:
+        """Dry run: which separator a /separate call with this audio and metadata would use."""
+        return await _read_multipart(request, _route)
 
     @app.post("/v1/separate", response_model=SeparationResponse, response_model_exclude_none=True)
     def separate_ref(body: SeparationRequest) -> SeparationResponse:

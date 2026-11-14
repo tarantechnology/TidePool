@@ -1,0 +1,20 @@
+{
+ "tag": "demucs_htdemucs_ft",
+ "model": "demucs:htdemucs_ft",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 9.55944309500046,
+ "first_clip_s": 2.9132793850731105,
+ "mean_clip_s_excl_first": 2.0754674510526643,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.3050615885062021,
+ "peak_alloc_mb": 1062,
+ "peak_reserved_mb": 1330,
+ "stems_native": [
+  "bass",
+  "drums",
+  "other",
+  "vocals"
+ ]
+}

@@ -22,6 +22,8 @@ export interface Stem {
   muteRanges?: MuteRange[]
   /** How many separation passes produced this stem, when the backend says. Read-only here. */
   refinement?: Refinement
+  /** Instruments heard in a music stem, most likely first ("Piano", "Strings"). Read-only here. */
+  tags?: string[]
 }
 
 /**

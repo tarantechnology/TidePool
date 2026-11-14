@@ -1,7 +1,10 @@
 import json
+import math
+import sqlite3
 import threading
 import time
-from .core import connect, event, project_dir, probe, run, stem, uid
+from contextlib import contextmanager
+from .core import connect, discard, event, project_dir, probe, run, stem, uid
 from .media import InferenceError, separate, export
 from .messaging import provider
 from .visual import project_source, file_sha256, validate_timeline
@@ -17,6 +20,40 @@ def enqueue(pid, kind, payload, stage=None):
 
 def set_stage(job, stage, progress):
     with connect() as db: db.execute('UPDATE jobs SET stage=?,progress=? WHERE id=?',(stage,progress,job))
+
+TICK_SECONDS = 0.5
+
+def is_split(payload):
+    """A music split: asked for, or auto with no prompts, which the service routes to the splitter."""
+    mode=(payload.get('options') or {}).get('mode')
+    return mode=='music_stems' or (mode in (None,'auto') and not payload.get('prompts'))
+
+def expected_seconds(duration, payload):
+    """Rough wall time of one separation call, only for the progress bar. A split (htdemucs on
+    the A40) runs at about a tenth of real time; the prompted model is slower and runs per prompt
+    and per pass, so its estimate is deliberately long."""
+    if is_split(payload): return 0.1*duration+8
+    passes=int((payload.get('options') or {}).get('passes') or 1)
+    return (0.5*duration+10)*max(1,len(payload.get('prompts') or []))*passes
+
+def eased(elapsed, expected, start=5, ceiling=90):
+    """Progress that is ~80% of the way to the ceiling at the expected time and never reaches it."""
+    return int(start+(ceiling-start)*(1-math.exp(-2*elapsed/max(expected,1))))
+
+@contextmanager
+def ticking(job, stage, expected):
+    """Advance a processing job's progress on a timer while a blocking call runs. Writes only
+    while the job is still 'processing', so the final completion or failure write always wins."""
+    done=threading.Event(); began=time.monotonic()
+    def write():
+        try:
+            with connect() as db: db.execute("UPDATE jobs SET stage=?,progress=MAX(progress,?) WHERE id=? AND status='processing'",(stage,eased(time.monotonic()-began,expected),job))
+        except sqlite3.Error as exc: event('progress_failed',job_id=job,error=str(exc))
+    def tick():
+        while not done.wait(TICK_SECONDS): write()
+    write(); thread=threading.Thread(target=tick,daemon=True); thread.start()
+    try: yield
+    finally: done.set(); thread.join()
 
 def normalize(pid, p, finish=None):
     """Re-encode a CFR, zero-start, unrotated copy and switch the project to it.
@@ -75,7 +112,9 @@ def work_once():
                 with connect() as db: residual=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,append['id'])).fetchone()
                 if not residual or residual['revision'] != append['revision']: raise ValueError('Residual stem changed while separation was queued; retry after reloading.')
             inference={}
-            results=separate(residual['path'] if residual else p['audio'],project_dir(pid)/'stems',payload,report=inference)
+            source=residual['path'] if residual else p['audio']
+            with ticking(job['id'],'splitting' if is_split(payload) else 'separating',expected_seconds(probe(source)['duration'],payload)):
+                results=separate(source,project_dir(pid)/'stems',payload,report=inference)
             results=[r if isinstance(r,dict) else {'name':r[0],'path':r[1]} for r in results]
             if append and sum(r['name'].lower()=='residual' for r in results)!=1: raise ValueError('Inference must return exactly one residual to add a sound; existing stems were preserved.')
             items=[]
@@ -87,7 +126,8 @@ def work_once():
                               result.get('role'),result.get('source_stem_id'),result.get('prompt'),result.get('label'),
                               result.get('sample_rate'),result.get('channels'),result.get('format'),
                               json.dumps(spans) if spans is not None else None,
-                              json.dumps(result['refinement']) if result.get('refinement') is not None else None))
+                              json.dumps(result['refinement']) if result.get('refinement') is not None else None,
+                              json.dumps(result['tags']) if result.get('tags') else None))
             with connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 if baseline is not None and {r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))} != baseline:
@@ -95,11 +135,13 @@ def work_once():
                 if append:
                     current=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,append['id'])).fetchone()
                     if not current or current['revision'] != append['revision']: raise ValueError('Residual stem changed during separation; existing stems were preserved. Reload and retry.')
+                    replaced=[current['path']]
                     db.execute('DELETE FROM stems WHERE project_id=? AND id=?',(pid,append['id']))
-                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,start_offset,volume,muted,solo,automation,mute_ranges) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [(*item,current['start_offset'],current['volume'],current['muted'],current['solo'],current['automation'],current['mute_ranges']) for item in items])
+                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,tags,start_offset,volume,muted,solo,automation,mute_ranges) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [(*item,current['start_offset'],current['volume'],current['muted'],current['solo'],current['automation'],current['mute_ranges']) for item in items])
                 else:
+                    replaced=[r['path'] for r in db.execute('SELECT path FROM stems WHERE project_id=?',(pid,))]
                     db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
-                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',items)
+                    db.executemany('INSERT INTO stems(id,project_id,name,path,duration,role,source_stem_id,prompt,label,sample_rate,channels,format,spans,refinement,tags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',items)
                 if payload.get('edit_scope',{}).get('action','keep') != 'keep':
                     from .guidance import edit_target
                     for item in items:
@@ -109,7 +151,8 @@ def work_once():
                         db.execute('UPDATE stems SET volume=?,muted=?,mute_ranges=? WHERE id=?',(edited['volume'],edited['muted'],edited['mute_ranges'],item[0]))
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
-                db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
+                db.execute("UPDATE jobs SET status='completed',progress=100,stage=NULL,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
+            discard(pid,replaced)  # Committed: the replaced stems' files can go.
         elif job['kind']=='discovery':
             from .discovery import discover
             if file_sha256(p['audio']) != payload['audio_sha256']: raise ValueError('Project audio changed; run discovery again.')
@@ -130,7 +173,13 @@ def work_once():
                 from .cinematic import build
             else:
                 from .candidates import build
-            output=build(p,payload,job['id'])
+            snapshot=payload.get('_candidate') or {}
+            duration=probe(snapshot.get('source') or p['audio'])['duration']
+            # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
+            if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
+            creative=any(payload.get(k) for k in ('_effects','_director_adjust','_director','_cinematic'))
+            with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
+                output=build(p,payload,job['id'])
             with connect() as db:
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='refine':

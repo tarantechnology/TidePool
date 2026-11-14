@@ -836,3 +836,18 @@ describe('stems placed on the timeline', () => {
     expect(parsePrompt('set the siren to 30% at 12 seconds', [late], tracks).actions).toHaveLength(1)
   })
 })
+
+describe('parsePrompt with instrument tags', () => {
+  const music = [{ ...stem('v', 'Vocals'), tags: ['Female singing'] }, { ...stem('o', 'Synth & Strings'), tags: ['Synthesizer', 'Piano'] }]
+  const tracks = initialTracks(music)
+
+  it('finds a track by a tag the user names, or shortens', () => {
+    expect(parsePrompt('mute the piano', music, tracks).actions).toEqual([{ type: 'set_mute', stemId: 'o', muted: true }])
+    expect(parsePrompt('turn down the synth', music, tracks).actions[0]?.stemId).toBe('o')
+  })
+
+  it('still prefers a name, and does not guess', () => {
+    expect(parsePrompt('mute vocals', music, tracks).actions).toEqual([{ type: 'set_mute', stemId: 'v', muted: true }])
+    expect(parsePrompt('mute the trumpet', music, tracks).actions).toEqual([])
+  })
+})

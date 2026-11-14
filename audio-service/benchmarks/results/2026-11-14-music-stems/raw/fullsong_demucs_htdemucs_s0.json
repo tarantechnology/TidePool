@@ -1,0 +1,26 @@
+{
+ "model": "demucs:htdemucs",
+ "shifts": 0,
+ "overlap": 0.25,
+ "file": "/workspace/music-bench/data/fullsong.wav",
+ "duration_s": 230.656875,
+ "load_s": 3.4881440909812227,
+ "runs": [
+  {
+   "total_s": 10.950704206014052,
+   "project_s": 0.4828142379410565,
+   "max_abs_mix_err": 1.7881393432617188e-07,
+   "peak_alloc_mb": 1101,
+   "peak_reserved_mb": 1868
+  },
+  {
+   "total_s": 10.070435362053104,
+   "project_s": 0.4730656599858776,
+   "max_abs_mix_err": 1.7881393432617188e-07,
+   "peak_alloc_mb": 1101,
+   "peak_reserved_mb": 1868
+  }
+ ],
+ "rtf_warm": 0.04365981010560861,
+ "tag": "demucs_htdemucs_s0"
+}

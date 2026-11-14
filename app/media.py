@@ -16,11 +16,66 @@ class InferenceError(RuntimeError):
         self.retryable = retryable
 
 
+# What the fake adapter's pretend splitter offers (the 4-stem Demucs vocabulary), and the
+# instrument tags and descriptive name it pretends to hear in each, so the UI can be exercised.
+FAKE_STEMS = ('vocals', 'drums', 'bass', 'other')
+FAKE_TAGS = {'vocals': [('Female singing', 0.82), ('Choir', 0.11)], 'drums': [('Drum kit', 0.9), ('Hi-hat', 0.41)],
+             'bass': [('Bass guitar', 0.77), ('Synthesizer', 0.18)], 'other': [('Piano', 0.71), ('Strings', 0.34), ('Synthesizer', 0.12)]}
+
+
+def fake_music_stems(audio, directory, requested, report):
+    """Mock music split: every stem is the mix scaled so all outputs sum back to it. Not separation."""
+    unknown = [s for s in requested if s not in FAKE_STEMS]
+    if unknown: raise InferenceError(f"INVALID_REQUEST: Unknown stems {', '.join(unknown)}; valid stems: {', '.join(FAKE_STEMS)}", 'INVALID_REQUEST', False)
+    names = list(requested or FAKE_STEMS)
+    # A subset split returns one residual holding the rest; a full split needs none.
+    residual = bool(requested) and set(requested) != set(FAKE_STEMS)
+    share = 1 / (len(names) + residual)
+    if report is not None:
+        report.update(model={'backend':'fake','is_mock':True}, warnings=['Fake adapter: music stems are scaled copies of the mix; no source separation performed'],
+                      routing={'mode':'music_stems','engine':'fake','model_id':None,'reason':'Fake adapter: music_stems requested','scores':None,'stems':names})
+    results = []
+    for name in names + (['residual'] if residual else []):
+        path = directory / (uid() + '.wav')
+        run('ffmpeg','-v','error','-y','-i',str(audio),'-af',f'volume={share}','-c:a','pcm_f32le',str(path))
+        tags = [{'label':t,'score':s} for t,s in FAKE_TAGS.get(name, [])] or None
+        # Like the service: "other" is named for its top tag; the label stays canonical.
+        title = 'residual' if name == 'residual' else tags[0]['label'] if name == 'other' else name.title()
+        results.append({'name':title,'path':path,'role':'residual' if name == 'residual' else 'target','prompt':None,'label':name,'tags':tags})
+    return results
+
+
+def route(audio, source_kind):
+    """The audio service's routing decision for this audio, without separating anything."""
+    if os.getenv('INFERENCE_ADAPTER', 'http') == 'fake':
+        song = source_kind == 'audio'
+        return {'mode':'music_stems' if song else 'prompted','engine':'fake','model_id':None,'scores':None,
+                'stems':list(FAKE_STEMS) if song else None,'is_mock':True,
+                'reason':'Fake adapter: an audio-only upload is treated as a song.' if song else 'Fake adapter: a video upload uses prompted separation.'}
+    from urllib.parse import urlsplit, urlunsplit
+    url = urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL', 'http://127.0.0.1:8001/separate'))
+    if not url.netloc: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
+    metadata = {'prompts':[], 'hints':{'source_kind':source_kind}}
+    try:
+        with open(audio, 'rb') as f:
+            response = httpx.post(urlunsplit((url.scheme,url.netloc,'/v1/route','','')), files={'audio':('audio.wav',f,'audio/wav')},
+                                  data={'metadata':json.dumps(metadata)}, timeout=float(os.getenv('ROUTE_TIMEOUT_SECONDS','120')))
+    except httpx.HTTPError as exc: raise InferenceError('Audio service routing is unavailable') from exc
+    if response.is_error: raise InferenceError(f'Audio service routing failed (HTTP {response.status_code})')
+    data = response.json()
+    decision = data.get('routing', data) if isinstance(data, dict) else None
+    if not isinstance(decision, dict): raise ValueError('Audio service returned no routing decision')
+    # Whitelist: the editor shows these, nothing else crosses over.
+    return {key: decision.get(key) for key in ('mode','engine','model_id','reason','scores','stems')}
+
+
 def separate(audio, directory, payload, report=None):
     directory.mkdir(parents=True, exist_ok=True)
     mode = os.getenv('INFERENCE_ADAPTER', 'http')
     if mode == 'fake':
-        passes=int((payload.get('options') or {}).get('passes') or 1)
+        opts = payload.get('options') or {}
+        if opts.get('mode') == 'music_stems': return fake_music_stems(audio, directory, opts.get('stems') or [], report)
+        passes=int(opts.get('passes') or 1)
         if report is not None:
             report.update(model={'backend':'fake','is_mock':True,'passes':passes}, warnings=['Fake adapter copies audio; no source separation performed'])
         # Deterministic fixtures, not source separation: each stem is a copy.
@@ -61,7 +116,7 @@ def separate(audio, directory, payload, report=None):
         raise InferenceError(message,code,retryable)
     result = response.json()
     if report is not None:
-        report.update({key:result[key] for key in ('model','warnings','source','request_id','contract_version') if key in result})
+        report.update({key:result[key] for key in ('model','warnings','source','request_id','contract_version','routing') if key in result})
     if not isinstance(result.get('stems'), list) or not result['stems']: raise ValueError('Inference returned no stems')
     source_info = probe(audio) if payload.get('source') else None
     stems = []
@@ -81,8 +136,18 @@ def separate(audio, directory, payload, report=None):
         stems.append({'name': name, 'path': path, 'role': item.get('role'), 'source_stem_id': item.get('stem_id'),
                       'prompt': item.get('prompt'), 'label': item.get('label'), 'sample_rate': item.get('sample_rate'),
                       'channels': item.get('channels'), 'format': item.get('format'), 'spans': item.get('spans'),
-                      'refinement': item.get('refinement') if isinstance(item.get('refinement'), dict) else None})
+                      'refinement': item.get('refinement') if isinstance(item.get('refinement'), dict) else None,
+                      'tags': tags_of(item.get('tags'))})
     return stems
+
+def tags_of(raw):
+    """The service's instrument tags, at most three well-formed ones, or None."""
+    if not isinstance(raw, list): return None
+    tags = [{'label': t['label'].strip()[:80], 'score': float(t['score'])} for t in raw
+            if isinstance(t, dict) and isinstance(t.get('label'), str) and t['label'].strip()
+            and type(t.get('score')) in (int, float) and math.isfinite(t['score'])]
+    return sorted(tags, key=lambda t: -t['score'])[:3] or None
+
 
 def read_wav(path):
     """Decode a PCM/float WAV into (float64 samples [frames, channels], sample_rate)."""
@@ -175,7 +240,9 @@ def capabilities():
     """Whitelist public capability fields; never expose URLs, paths or load errors."""
     if os.getenv('INFERENCE_ADAPTER','http') != 'http':
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Fake adapter: no AI separation or judge ranking.',
-                'backend':'fake','max_passes':max_passes(),'refine':True}
+                'backend':'fake','max_passes':max_passes(),'refine':True,
+                'music_stems':{'available':True,'model_id':None,'stems':list(FAKE_STEMS),'max_duration_seconds':None,'is_mock':True},
+                'routing':{'default_mode':'auto','classifier':None}}
     from urllib.parse import urlsplit, urlunsplit
     url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL','http://127.0.0.1:8001/separate'))
     try:
@@ -193,10 +260,18 @@ def capabilities():
                 'experimental_visual':True,**({'span_anchors': data['prompting_modes']['span_anchors']} if isinstance((data.get('prompting_modes') or {}).get('span_anchors'), bool) else {}),'reason':reason,'quality_mode':('ranker' if ranked else 'consistency') if quality else None,
                 'profiles':{'preview':guidance.options('preview', backend=identity['backend'] or 'sam'),
                             **({'quality':guidance.options('quality', backend=identity['backend'] or 'sam')} if quality else {})},
-                'long_window_promoted':False,'automatic_spans':False,**passes_capability(data)}
+                'long_window_promoted':False,'automatic_spans':False,**passes_capability(data),**music_capability(data)}
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.',
-                'max_passes':max_passes(),'refine':True}
+                'max_passes':max_passes(),'refine':True,'music_stems':{'available':False}}
+
+
+def music_capability(data):
+    """The service's music_stems and routing blocks, whitelisted; a service without them has no splitter."""
+    music, routing = data.get('music_stems'), data.get('routing')
+    result = {'music_stems': {k: music.get(k) for k in ('available','model_id','stems','max_duration_seconds')} if isinstance(music, dict) else {'available': False}}
+    if isinstance(routing, dict): result['routing'] = {k: routing.get(k) for k in ('default_mode','classifier')}
+    return result
 
 
 def passes_capability(data):

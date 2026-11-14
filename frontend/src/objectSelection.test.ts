@@ -5,9 +5,12 @@ import { detectorStatus } from './objects'
 
 describe('SAM selection with a text-only audio backend',()=>{
   it('offers a ready object detector when AudioSep visual conditioning is unavailable',()=>{
-    const caps=toCapabilities({backend:'audiosep',visual:false,vision:{available:true,model:'sam3.1',device:'cuda',weights_cached:true,selection_only:true}})
+    const caps=toCapabilities({backend:'audiosep',visual:false,suppression:{mode:'conservative'},music_stems:{available:true,stems:['vocals','drums']},vision:{available:true,model:'sam3.1',device:'cuda',weights_cached:true,selection_only:true}})
     expect(caps.visual).toBe(false)
     expect(caps.vision?.selectionOnly).toBe(true)
+    expect(caps.backend).toBe('audiosep')
+    expect(caps.preserveVoices).toBe(true)
+    expect(caps.musicStems).toEqual({available:true,stems:['vocals','drums']})
     expect(detectorStatus(caps.vision,{phase:'idle'},null).canStart).toBe(true)
   })
   it('starts a dog click with the same description as the verified text path',()=>{

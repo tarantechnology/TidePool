@@ -3,7 +3,7 @@ import json
 import shutil
 from pathlib import Path
 from fastapi import HTTPException
-from .core import connect, probe, project_dir, run, stem, uid
+from .core import connect, discard, probe, project_dir, run, stem, uid
 from .guidance import edit_target
 from .media import separate, export
 from .visual import file_sha256
@@ -163,6 +163,8 @@ def apply(job):
         after=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
         db.execute('INSERT INTO candidate_history(candidate_id,previous_rows,applied_revisions) VALUES(?,?,?)',(job['id'],json.dumps(current),json.dumps(revisions(after))))
         jid=completed_job(db,pid)
+    # Undo can restore the replaced files right now, so discard keeps them until it no longer can.
+    discard(pid,[r['path'] for r in current])
     return {'status':'applied','job_id':jid}
 
 
@@ -179,6 +181,7 @@ def undo(job):
             try: safe_path(pid,row['path'])
             except (ValueError,OSError) as exc: raise HTTPException(409,'Previous audio is unavailable') from exc
         # Restore complete prior rows, but revisions always advance to invalidate stale clients.
+        replaced=[r['path'] for r in current]
         db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
         for row in previous:
             row['revision']=revs[row['id']]+1
@@ -186,4 +189,5 @@ def undo(job):
             db.execute('INSERT INTO stems('+','.join(keys)+') VALUES('+','.join('?' for _ in keys)+')',list(row.values()))
         db.execute('UPDATE candidate_history SET undone=1 WHERE candidate_id=?',(job['id'],))
         jid=completed_job(db,pid)
+    discard(pid,replaced)
     return {'status':'undone','job_id':jid}

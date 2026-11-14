@@ -25,11 +25,14 @@ def test_real_audiosep_capabilities_drive_tidepool_preview(client,tmp_path,monke
     caps={'backend':'audiosep','is_mock':False,'independent_candidates':False,
           'model':{'loaded':True,'model_id':'audiosep-base-4M','backend':'audiosep'},
           'prompting_modes':{'visual':False,'span_anchors':False},
+          'music_stems':{'available':True,'model_id':'htdemucs_ft','stems':['vocals','drums','bass','other']},
           'defaults':{'suppression':{'mode':'conservative','strength':.9}},'limits':{}}
     monkeypatch.setattr(media.httpx,'get',lambda url,**kw:httpx.Response(200,request=httpx.Request('GET',url),json=caps))
     advertised=client.get(f'/api/projects/{pid}/capabilities',headers=headers).json()
     assert advertised['backend']=='audiosep' and advertised['model_id']=='audiosep-base-4M'
     assert advertised['suppression']['mode']=='conservative'
+    assert advertised['profiles']['preview']['chunk_batch']==1
+    assert advertised['music_stems']['available'] is True
     assert advertised['quality'] is False and advertised['visual'] is False
     seen=[]
     def capture(project,payload,cid):
@@ -41,6 +44,7 @@ def test_real_audiosep_capabilities_drive_tidepool_preview(client,tmp_path,monke
     assert wait(client,'/api/candidates/'+response.json()['candidate_id'],headers)['status']=='failed'
     assert seen[0]['options']['candidates']==seen[0]['options']['chunk_batch']==1
     assert seen[0]['options']['refine']=='off'
+    assert seen[0]['hints']=={'source_kind':'audio'}
     assert seen[0]['_processing_interval']==localization.get('processing_interval')
     assert seen[0]['_processing_time']==localization.get('processing_time')
     assert client.post(f'/api/projects/{pid}/candidates',headers=headers,json={'prompt':'dog barking','profile':'quality'}).status_code==422

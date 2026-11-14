@@ -1,0 +1,18 @@
+{
+ "tag": "sep_vocals_mel_band_roformer.ckpt",
+ "model": "sep:vocals_mel_band_roformer.ckpt",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 24.131356977974065,
+ "first_clip_s": 1.9271637169877067,
+ "mean_clip_s_excl_first": 0.948567410919112,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.13942472623862745,
+ "peak_alloc_mb": 1755,
+ "peak_reserved_mb": 2292,
+ "stems_native": [
+  "instrumental",
+  "vocals"
+ ]
+}

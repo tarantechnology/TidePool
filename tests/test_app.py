@@ -114,7 +114,8 @@ def test_http_inference_requires_prompt_before_job(client, tmp_path, monkeypatch
     subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=0.1',str(audio)],check=True)
     with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
     monkeypatch.setenv('INFERENCE_ADAPTER','http')
-    assert client.post(f'/api/projects/{pid}/process',headers=h,json={}).status_code==422
+    # With no prompts, only prompted mode is refused up front; auto lets the service route.
+    assert client.post(f'/api/projects/{pid}/process',headers=h,json={'mode':'prompted'}).status_code==422
     assert client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['  ']}).status_code==422
 
 

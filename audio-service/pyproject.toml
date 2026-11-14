@@ -35,6 +35,27 @@ sam = [
     "transformers>=4.54,<5",
     "sam_audio @ git+https://github.com/facebookresearch/sam-audio.git",
 ]
+# Music stems (AUDIO_STEM_SPLITTER=demucs) and the AST content classifier
+# (AUDIO_ROUTER_CLASSIFIER=ast). Lower bounds only: demucs 4.0.1 is the release with
+# htdemucs/htdemucs_ft/htdemucs_6s; ASTForAudioClassification has been in transformers since
+# 4.25. Tested pins come from the Phase 0 benchmark (scripts/setup_music_stems_venv.sh).
+music = [
+    "torch>=2.4",
+    "demucs>=4.0.1",
+    "transformers>=4.25",
+    # PANNs Cnn14, the default router classifier (AUDIO_ROUTER_CLASSIFIER=panns); 0.1.1 tested.
+    "panns-inference>=0.1.1",
+]
+# AUDIO_STEM_SPLITTER=chain additionally runs a RoFormer vocal model through audio-separator.
+music-chain = [
+    "audio-separator>=0.17",
+]
+# AUDIO_STEM_SPLITTER=roformer: native multi-stem BS-RoFormer built from its training YAML.
+music-roformer = [
+    "torch>=2.4",
+    "bs-roformer>=0.3",
+    "pyyaml>=6",
+]
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

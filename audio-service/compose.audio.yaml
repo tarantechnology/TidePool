@@ -30,6 +30,10 @@ services:
       # Empty = unset: 20 s for the real model, 0 for the mock (see config.py).
       AUDIO_CHUNK_SECONDS: ${AUDIO_CHUNK_SECONDS:-}
       AUDIO_MAX_DURATION_SECONDS: ${AUDIO_MAX_DURATION_SECONDS:-600}
+      # Music stems + routing (README "Music stems and model routing"); off unless set.
+      AUDIO_STEM_SPLITTER: ${AUDIO_STEM_SPLITTER:-off}
+      AUDIO_STEM_MODEL: ${AUDIO_STEM_MODEL:-htdemucs_ft}
+      AUDIO_ROUTER_CLASSIFIER: ${AUDIO_ROUTER_CLASSIFIER:-}
       # Shared media volume so file:// references (video + mask video for visual prompts) resolve.
       AUDIO_MEDIA_ROOT: /data
       HF_TOKEN: ${HF_TOKEN:-}

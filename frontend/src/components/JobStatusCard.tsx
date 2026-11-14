@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { getJob } from '../api/backend'
+import { describeRouting, getJob } from '../api/backend'
 import { pollJob, toJobStatus } from '../api/jobs'
 import type { JobStatus } from '../api/jobs'
 import { HttpStemSource } from '../api/stemSources'
@@ -102,6 +102,9 @@ export function JobStatusCard({ baseUrl, onLoadStems }: Props) {
           )}
         </div>
       </form>
+      {job?.routing && (
+        <p className="mt-2 break-words text-[11px] text-muted" title="How the audio service separated this job">{describeRouting(job.routing)}</p>
+      )}
       {(error || job?.error) && (
         <div className="mt-2 break-words font-mono text-[10px] text-red-600">{error || job?.error}</div>
       )}

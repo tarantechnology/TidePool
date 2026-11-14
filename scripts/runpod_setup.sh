@@ -7,6 +7,7 @@ set -euo pipefail
 WS=${WS:-$([ -d /workspace ] && echo /workspace || echo "$HOME/soundcanvas-work")}; mkdir -p "$WS"
 REPO=$WS/soundcanvas; VENV=$WS/venv; PY=$VENV/bin/python
 BRANCH=${1:-main}; LOG=$WS/audio.log
+PORT=${AUDIO_PORT:-8011}   # RunPod templates run nginx on 8001; tunnel from the Mac with -L 8001:127.0.0.1:$PORT
 cmd=${1:-setup}
 model_for_gpu() {
   local mb; mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
@@ -23,13 +24,13 @@ case "$cmd" in
     cd $REPO/audio-service
     AUDIO_BACKEND=sam AUDIO_MODEL_ID=$MODEL AUDIO_DEVICE=cuda AUDIO_CHUNK_SECONDS=$CHUNK AUDIO_CHUNK_BATCH=2 \
       AUDIO_LOAD_SPAN_PREDICTOR=${AUDIO_LOAD_SPAN_PREDICTOR:-false} AUDIO_LOAD_RANKERS=${AUDIO_LOAD_RANKERS:-false} \
-      AUDIO_MEDIA_ROOT=$WS/media AUDIO_PORT=8001 nohup $PY -m sam_audio_service > $LOG 2>&1 < /dev/null & disown
-    echo "audio service starting with $MODEL (chunk ${CHUNK}s); log: $LOG"
-    t0=$(date +%s); until curl -sf http://127.0.0.1:8001/ready >/dev/null; do sleep 5; [ $(( $(date +%s)-t0 )) -gt 1800 ] && { echo "not ready after 30 min; tail $LOG"; exit 1; }; done
-    echo "ready in $(( $(date +%s)-t0 ))s"; curl -s http://127.0.0.1:8001/health | $PY -c "import sys,json;m=json.load(sys.stdin)['model'];print({k:m[k] for k in ('model_id','device','loaded','load_seconds','parameters')})"
+      AUDIO_MEDIA_ROOT=$WS/media AUDIO_PORT=$PORT nohup $PY -m sam_audio_service > $LOG 2>&1 < /dev/null & disown
+    echo "audio service starting with $MODEL (chunk ${CHUNK}s) on port $PORT; log: $LOG"
+    t0=$(date +%s); until curl -sf http://127.0.0.1:$PORT/ready >/dev/null; do sleep 5; [ $(( $(date +%s)-t0 )) -gt 1800 ] && { echo "not ready after 30 min; tail $LOG"; exit 1; }; done
+    echo "ready in $(( $(date +%s)-t0 ))s"; curl -s http://127.0.0.1:$PORT/health | $PY -c "import sys,json;m=json.load(sys.stdin)['model'];print({k:m[k] for k in ('model_id','device','loaded','load_seconds','parameters')})"
     ;;
   stop) pkill -f sam_audio_service && echo stopped || echo "not running" ;;
-  status) curl -s http://127.0.0.1:8001/health || echo "not running"; echo; nvidia-smi --query-gpu=memory.used,memory.total --format=csv ;;
+  status) curl -s http://127.0.0.1:$PORT/health || echo "not running"; echo; nvidia-smi --query-gpu=memory.used,memory.total --format=csv ;;
   bench)  # full quality sweeps on the GPU (results in /workspace/bench)
     shift; cd $REPO/audio-service
     # Real speech on Linux: rsync the Mac's rendered `say` lines to $WS/say-cache

@@ -304,6 +304,25 @@ labels still work and unrelated audio can still use the existing detection path.
 This resolver does not judge separation quality or prove that untracked sounds in the
 original audio were removed.
 
+### Grouped effect tracks
+
+The timeline groups effect stems by `effect_group_id`, displays a shared row with the
+number of clips, and can expand to individual clip rows. Playback and export still use
+the original separate stems, so grouping itself does not change the mix. Group volume
+scales the members' gains proportionally; mute and solo controls explicitly set all
+member states. These edits are one local undo step. Individual clip arrow and delete
+controls use an authenticated, revision-checked candidate; applying creates a single
+undoable server edit. A group can also be selected in the EQ preview; its member files
+are rendered separately and applied atomically, preserving timing and other layers.
+
+On startup, older effect rows can recover group identity from applied replacement
+history only when at least two current clip IDs and file paths still match. Labels
+alone never cause automatic merging. The project agent resolves group mixer requests
+against saved effect identities, using the existing bounded LangChain resolver for
+nonliteral names. It asks for a displacement when a clip move has no amount and asks
+for clarification when names identify multiple groups. Grouping is a presentation
+and mixer operation, not a new sound detector or a guarantee of separation quality.
+
 
 ### Peak-aligned effect placement
 

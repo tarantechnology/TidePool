@@ -15,7 +15,7 @@ import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -64,6 +64,7 @@ export interface ProjectPanelHandle {
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
+  editClip: (stemId:string,operation:'move'|'delete',startOffset?:number)=>Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -357,7 +358,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const previewEffects = () => run(async () => {
     if (!project) return
     await flush();setMessage('Preparing layer effects preview…')
-    const id=await createEffectsPreview(config,project.project_id,effectsStem || null,effects)
+    const groupId=effectsStem.startsWith('group:') ? effectsStem.slice(6) : undefined
+    const id=await createEffectsPreview(config,project.project_id,groupId ? null : effectsStem || null,effects,groupId)
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`, JSON.stringify({id,sound:'Layer effects'})) } catch { /* Preview remains available. */ }
     setPrompt('Layer effects');await waitCandidate(config,project.project_id,id)
   })
@@ -381,7 +383,17 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await splitInto(config, project, null)
   })
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, visualAction: async (chosen, description, action) => {
+  const applyClipEdit = async (stemId:string,operation:'move'|'delete',startOffset?:number) => {
+    if(!project)throw new Error('Open a project first.')
+    await flush();const saved=await getSavedStems(config,project.project_id);const stem=saved.find(s=>s.id===stemId)
+    if(!stem || stem.role!=='effect')throw new Error('The effect clip is unavailable.')
+    setMessage(operation==='move'?'Moving sound…':'Removing sound…')
+    const id=await editEffectClip(config,project.project_id,stem,operation,startOffset)
+    for (;;) { const job=await getCandidate(config,id);if(job.status==='failed')throw new Error(job.error || 'Could not edit the sound.');if(job.status==='completed')break;await new Promise(resolve=>setTimeout(resolve,500)) }
+    const applied=await applyCandidate(config,id);await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
+    setJobId(applied.job_id);setUndoId(id);setProject(await getProject(config,project.project_id));setMessage(operation==='move'?'Sound moved.':'Sound removed.')
+  }
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
     if (busyRef.current) throw new Error('A project operation is already running.')
@@ -453,6 +465,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       let result:AgentPlan=directTimestamp && local ? {kind:'separate',description:local.description,remove:local.remove,edit_scope:local.editScope || {action:local.remove?'mute':'keep'},processing_time:local.processingTime,actions:[],message:''} : directCinematic || directCreative ? {kind:'director',description:null,remove:false,actions:[],message:''} : await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{
         if(music)return {kind:'separate',description:music.description,remove:music.remove,separation_mode:'music_stems',stems:music.stems,...(music.remove?{edit_scope:{action:'mute'}}:{}),use_visual:false,actions:[],message:''}
         if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
+      if(result.kind==='clip_edit') {
+        const edit=result.clip_edit
+        if(!edit || edit.operation!=='move' || !stems.some(s=>s.id===edit.stem_id && s.effectGroupId) || !Number.isFinite(edit.start_offset) || edit.start_offset<0)throw new Error('The clip edit could not be verified.')
+        await applyClipEdit(edit.stem_id,'move',edit.start_offset)
+        return {...result,message:'Sound moved. Use Undo the last apply to restore it.'}
+      }
       // "Remove the vocals" on a split song mutes its Vocals track; no new separation needed.
       if (result.kind === 'separate' && hasStems) {
         const muted = muteExistingStem(result, await getSavedStems(cfg, current.project_id))
@@ -710,7 +728,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
             {project && <div className="rounded-xl border border-line p-2 text-xs">
               <button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>effectsOpen ? setEffectsOpen(false) : openEffects()}>Adjust layer EQ &amp; compression</button>
               {effectsOpen && <div className="mt-2 space-y-2">
-                <label className="block">Layer<select aria-label="Effects layer" className={`${field} mt-1`} value={effectsStem} onChange={e=>setEffectsStem(e.target.value)}>{effectsStems.length ? effectsStems.map(stem=><option key={stem.id} value={stem.id}>{stem.name}</option>) : <option value="">Original audio</option>}</select></label>
+                <label className="block">Layer<select aria-label="Effects layer" className={`${field} mt-1`} value={effectsStem} onChange={e=>setEffectsStem(e.target.value)}>{effectsStems.length ? <>{Array.from(new Set(effectsStems.map(s=>s.effect_group_id).filter((id):id is string=>Boolean(id)))).map(id=>{const items=effectsStems.filter(s=>s.effect_group_id===id);return items.length>1?<option key={id} value={`group:${id}`}>{items[0].effect_label || items[0].name} · {items.length} clips</option>:null})}{effectsStems.map(stem=><option key={stem.id} value={stem.id}>{stem.name}</option>)}</> : <option value="">Original audio</option>}</select></label>
                 {([{key:'bass',label:'Bass',min:-12,max:12,step:.5,unit:'dB'}, {key:'treble',label:'Treble',min:-12,max:12,step:.5,unit:'dB'}, {key:'highpass',label:'Low-cut',min:0,max:200,step:5,unit:'Hz'}, {key:'compression',label:'Compression',min:1,max:6,step:.1,unit:':1'}] as const).map(control=><label key={control.key} className="block"><span className="flex justify-between"><span>{control.label}</span><span>{effects[control.key]}{control.unit}</span></span><input className="w-full accent-accent" aria-label={control.label} type="range" min={control.min} max={control.max} step={control.step} value={effects[control.key]} onChange={e=>setEffects({...effects,[control.key]:Number(e.target.value)})}/></label>)}
                 <p className="text-muted">Preview before applying. Applying renders these effects into the selected layer; later changes add to them. Undo restores the previous audio.</p>
                 <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={previewEffects}>Preview effects</button><button type="button" className={secondary} disabled={busy} onClick={()=>setEffects({bass:0,treble:0,highpass:0,compression:1})}>Reset controls</button></div>

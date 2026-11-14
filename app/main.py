@@ -327,6 +327,9 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     import re
     if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
+    from .effect_group_commands import plan_group_command
+    group_plan=plan_group_command(body.prompt,rows)
+    if group_plan is not None:return group_plan
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -525,10 +528,38 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
 
 class LayerEffectsRequest(BaseModel):
     stem_id: str | None = Field(default=None,max_length=100)
+    effect_group_id: str | None = Field(default=None,max_length=100)
     bass: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
     treble: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
     highpass: float = Field(default=0,ge=0,le=200,allow_inf_nan=False)
     compression: float = Field(default=1,ge=1,le=6,allow_inf_nan=False)
+
+class EffectClipEdit(BaseModel):
+    stem_id: str = Field(min_length=1,max_length=100)
+    expected_revision: int = Field(ge=0)
+    operation: Literal['move','delete']
+    start_offset: float | None = Field(default=None,ge=0,le=86400,allow_inf_nan=False)
+    @model_validator(mode='after')
+    def fields_match(self):
+        if self.operation=='move' and self.start_offset is None:raise ValueError('Choose a new position.')
+        if self.operation=='delete' and self.start_offset is not None:raise ValueError('Deletion does not take a position.')
+        return self
+
+@app.post('/api/projects/{pid}/effect-clip-edit',status_code=202)
+def effect_clip_edit(pid: str,body: EffectClipEdit,authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']:raise HTTPException(409,'Upload media first.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db:rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    item=next((r for r in rows if r['id']==body.stem_id and r.get('role')=='effect'),None)
+    if not item:raise HTTPException(404,'Effect clip not found.')
+    if item['revision']!=body.expected_revision:raise HTTPException(409,'The clip changed; reload and try again.')
+    try:
+        source=safe_path(pid,p['audio']);snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+        if body.start_offset is not None and body.start_offset>=probe(source)['duration']:raise HTTPException(422,'Move the clip within the project.')
+    except (ValueError,OSError) as exc:raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_clip_edit':True,'_candidate':snapshot,**body.model_dump()}),'status':'queued'}
 
 @app.post('/api/projects/{pid}/effects-preview',status_code=202)
 def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | None=Header(None)):
@@ -537,15 +568,18 @@ def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | No
     refuse_during_refine(pid)
     from .candidates import safe_path
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-    if (rows and not any(r['id']==body.stem_id for r in rows)) or (not rows and body.stem_id is not None):
+    if body.effect_group_id and body.stem_id: raise HTTPException(422,'Choose a layer or a group, not both.')
+    if body.effect_group_id and not any(r['role']=='effect' and r['effect_group_id']==body.effect_group_id for r in rows):
+        raise HTTPException(422,'Select an effect group in this project.')
+    if not body.effect_group_id and ((rows and not any(r['id']==body.stem_id for r in rows)) or (not rows and body.stem_id is not None)):
         raise HTTPException(422,'Select a layer in this project.')
     try:
         source=safe_path(pid,p['audio'])
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
                   'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
-    effects=body.model_dump(exclude={'stem_id'})
-    return {'candidate_id':start(pid,'candidate',{'_effects':True,'_candidate':snapshot,'stem_id':body.stem_id,'effects':effects}),'status':'queued'}
+    effects=body.model_dump(exclude={'stem_id','effect_group_id'})
+    return {'candidate_id':start(pid,'candidate',{'_effects':True,'_candidate':snapshot,'stem_id':body.stem_id,'effect_group_id':body.effect_group_id,'effects':effects}),'status':'queued'}
 
 class CinematicRequest(BaseModel):
     style: Literal['subtle', 'cinematic', 'dramatic'] = 'cinematic'

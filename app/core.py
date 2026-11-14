@@ -26,6 +26,29 @@ def connect():
     db.execute('PRAGMA busy_timeout=30000')
     return db
 
+
+def restore_legacy_effect_groups(db):
+    """Recover groups only from applied previews whose clip paths still match."""
+    if 'output' not in {row[1] for row in db.execute('PRAGMA table_info(jobs)')}:return
+    jobs=db.execute("SELECT j.id,j.project_id,j.output FROM candidate_history h JOIN jobs j ON j.id=h.candidate_id WHERE h.undone=0 AND j.output IS NOT NULL ORDER BY h.rowid DESC").fetchall()
+    for job in jobs:
+        try:
+            data=json.loads(job['output'])
+            if not isinstance(data,dict):continue
+            meta=data.get('_replacement_edit') or {}
+            if not isinstance(meta,dict):continue
+            ids=set(meta.get('effect_ids') or []);label=meta.get('effect_label')
+            if not ids or not label:continue
+            proposed={r['id']:r for r in data.get('proposed',[]) if r.get('id') in ids and r.get('role')=='effect'}
+            current=db.execute("SELECT id,path FROM stems WHERE project_id=? AND role='effect' AND effect_group_id IS NULL",(job['project_id'],)).fetchall()
+            matched=[r['id'] for r in current if r['id'] in proposed and r['path']==proposed[r['id']]['path']]
+            if len(matched)<2:continue
+            for sid in matched:
+                db.execute('UPDATE stems SET effect_group_id=?,effect_asset_id=?,effect_label=? WHERE id=? AND project_id=? AND effect_group_id IS NULL',
+                           (meta.get('effect_group_id') or job['id'],meta.get('effect_asset_id'),label,sid,job['project_id']))
+        except (AttributeError,TypeError,ValueError,KeyError):
+            continue
+
 # Columns added after the first release. The audio service reports the stem fields; they
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
@@ -51,6 +74,7 @@ def init():
             db.execute("ALTER TABLE projects ADD COLUMN uploaded_original TEXT")
             db.execute("UPDATE projects SET uploaded_original=original")
         db.execute("CREATE TABLE IF NOT EXISTS candidate_history (candidate_id TEXT PRIMARY KEY REFERENCES jobs(id), previous_rows TEXT NOT NULL, applied_revisions TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0)")
+        restore_legacy_effect_groups(db)
         # Staged (vision) jobs restart from the queued stage; others keep their old 0 progress.
         db.execute("UPDATE jobs SET status='queued', progress=CASE WHEN stage IS NULL THEN 0 ELSE 5 END, stage=CASE WHEN stage IS NULL THEN NULL ELSE 'queued' END WHERE status='processing'")
 

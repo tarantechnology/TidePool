@@ -125,6 +125,13 @@ def apply(job):
         project=db.execute('SELECT audio FROM projects WHERE id=?',(pid,)).fetchone()
         if project['audio']!=snapshot.get('project_audio',project['audio']): raise HTTPException(409,'Project media changed since preview; regenerate it.')
         old=revisions(current)
+        remove_ids=data.get('remove_ids',[])
+        if remove_ids:
+            proposed_ids={r['id'] for r in data['proposed']}
+            removable={r['id'] for r in current if r.get('role')=='effect'}
+            if (data.get('provenance') or {}).get('kind')!='effect-clip-edit' or len(remove_ids)!=len(set(remove_ids)) or not set(remove_ids)<=removable or set(remove_ids)&proposed_ids:
+                raise HTTPException(409,'The requested clip removal is no longer valid.')
+            db.executemany('DELETE FROM stems WHERE id=? AND project_id=?',[(sid,pid) for sid in remove_ids])
         for item in data['proposed']:
             if item['id'] in old:
                 # The snapshot is unchanged, including every existing edit.
@@ -161,7 +168,7 @@ def undo(job):
         replaced=[r['path'] for r in current]
         db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
         for row in previous:
-            row['revision']=revs[row['id']]+1
+            row['revision']=revs.get(row['id'],row['revision'])+1
             keys=list(row)
             db.execute('INSERT INTO stems('+','.join(keys)+') VALUES('+','.join('?' for _ in keys)+')',list(row.values()))
         db.execute('UPDATE candidate_history SET undone=1 WHERE candidate_id=?',(job['id'],))

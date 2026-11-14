@@ -24,6 +24,9 @@ export interface Stem {
   refinement?: Refinement
   /** Instruments heard in a music stem, most likely first ("Piano", "Strings"). Read-only here. */
   tags?: string[]
+  /** Related effect clips share an identity even when their names change. */
+  effectGroupId?: string
+  effectLabel?: string
 }
 
 /**

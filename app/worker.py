@@ -167,7 +167,9 @@ def work_once():
             output=prepare_effect(p,payload)
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='candidate':
-            if payload.get('_replacement_adjust'):
+            if payload.get('_clip_edit'):
+                from .effect_clip import build
+            elif payload.get('_replacement_adjust'):
                 from .replacement import adjust as build
             elif payload.get('_auto_replacement'):
                 from .replacement import auto_build as build

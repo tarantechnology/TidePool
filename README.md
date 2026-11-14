@@ -139,3 +139,9 @@ layers at their current positions, without another audio separation. The preview
 preserves existing layer edits and warns that original video audio was not searched.
 Less literal references can use the configured LangChain/OpenAI resolver; it chooses
 only among known project effect labels and asks for clarification when uncertain.
+
+Related effect clips appear on one timeline track with a clip count. Expand the track
+to adjust or remove individual clips; the group controls adjust all member clips and
+the EQ selector offers the group as one choice. “Mute all” and “Unmute all” set each
+clip's mute state, and Undo restores the previous edit. Separate effect groups stay
+separate even when they have the same name.

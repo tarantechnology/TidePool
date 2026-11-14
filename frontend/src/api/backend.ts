@@ -28,6 +28,9 @@ export interface BackendStem {
   start_offset?: number
   mute_ranges?: MuteRange[]
   role?: string
+  effect_group_id?: string | null
+  effect_label?: string | null
+  effect_asset_id?: string | null
   source_stem_id?: string
   prompt?: string
   label?: string
@@ -244,6 +247,7 @@ export function toStem(stem: BackendStem, url: string): Stem {
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
     muteRanges: stem.mute_ranges ?? [],
+    ...(stem.role === 'effect' && stem.effect_group_id ? { effectGroupId: stem.effect_group_id, effectLabel: stem.effect_label || stem.name } : {}),
     ...(refinement ? { refinement } : {}),
     ...(tags.length ? { tags } : {}),
   }
@@ -430,7 +434,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -482,8 +486,12 @@ export async function getCapabilities(config:BackendConfig,projectId:string):Pro
 }
 export type CinematicStyle = 'subtle'|'cinematic'|'dramatic'
 export interface LayerEffects {bass:number;treble:number;highpass:number;compression:number}
-export async function createEffectsPreview(config:BackendConfig,projectId:string,stemId:string|null,effects:LayerEffects):Promise<string> {
-  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effects-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,...effects})})
+export async function editEffectClip(config:BackendConfig,projectId:string,stem:SavedStem,operation:'move'|'delete',startOffset?:number):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effect-clip-edit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stem.id,expected_revision:stem.revision,operation,...(startOffset===undefined ? {} : {start_offset:startOffset})})})
+  return ((await response.json()) as {candidate_id:string}).candidate_id
+}
+export async function createEffectsPreview(config:BackendConfig,projectId:string,stemId:string|null,effects:LayerEffects,groupId?:string):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effects-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,...(groupId ? {effect_group_id:groupId} : {}),...effects})})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
 export type DirectorIntent = 'cinematic'|'dramatic'|'cool'|'funny'

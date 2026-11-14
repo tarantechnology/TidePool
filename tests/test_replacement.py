@@ -179,6 +179,76 @@ def test_langchain_effect_resolution_validates_only_known_labels(monkeypatch):
     assert resolve_effect_reference('footsteps',rows)==[]
 
 
+def test_group_commands_do_not_mix_distinct_groups(monkeypatch):
+    from app.effect_group_commands import plan_group_command
+    rows=[{'id':'a','role':'effect','name':'gong','effect_label':'gong','effect_group_id':'one','volume':1,'start_offset':1},
+          {'id':'b','role':'effect','name':'gong 2','effect_label':'gong','effect_group_id':'two','volume':.5,'start_offset':2}]
+    result=plan_group_command('make the gongs quieter',rows)
+    assert result['kind']=='clarify' and result['actions']==[]
+    result=plan_group_command('move the second gong later by 0.2 seconds',rows)
+    assert result['kind']=='clarify' and result['actions']==[]
+
+
+def test_group_effects_preview_apply_and_undo(client,tmp_path):
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,duration in [(audio,4),(fx,.2)]:
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency=440:duration={duration}','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('fx.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'gong','source_prompt':'sound','mode':'add','intervals':[{'start':1,'end':1.01},{'start':2,'end':2.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed'
+    assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();clips=[s for s in before if s['role']=='effect'];gid=clips[0]['effect_group_id']
+    url=f'/api/projects/{pid}/effects-preview'
+    assert client.post(url,json={'effect_group_id':gid,'bass':4}).status_code==401
+    assert client.post(url,headers=h,json={'effect_group_id':'not-a-group','bass':4}).status_code==422
+    response=client.post(url,headers=h,json={'effect_group_id':gid,'bass':4});assert response.status_code==202,response.text
+    eqid=response.json()['candidate_id'];assert wait(client,eqid,h)['status']=='completed'
+    assert client.post('/api/candidates/'+eqid+'/apply',headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [(s['id'],s['start_offset'],s['effect_group_id']) for s in after]==[(s['id'],s['start_offset'],s['effect_group_id']) for s in before]
+    assert client.post('/api/candidates/'+eqid+'/undo',headers=h).status_code==200
+    restored=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [(s['id'],s['start_offset'],s['effect_group_id']) for s in restored]==[(s['id'],s['start_offset'],s['effect_group_id']) for s in before]
+
+
+def test_group_commands_and_clip_edits_are_revision_checked_and_undoable(client,tmp_path):
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,duration in [(audio,4),(fx,.2)]:subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency=440:duration={duration}','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('fx.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'gong','source_prompt':'sound','mode':'add','intervals':[{'start':1,'end':1.01},{'start':2,'end':2.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed';assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();clips=[s for s in before if s['role']=='effect']
+    # Recover legacy rows only when an applied candidate still references their exact files.
+    from app.core import connect,restore_legacy_effect_groups
+    with connect() as db:
+        db.execute("UPDATE stems SET effect_group_id=NULL,effect_asset_id=NULL,effect_label=NULL WHERE project_id=? AND role='effect'",(pid,))
+        restore_legacy_effect_groups(db)
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();clips=[s for s in before if s['role']=='effect']
+    assert clips[0]['effect_group_id'] and clips[0]['effect_group_id']==clips[1]['effect_group_id']
+    agent={'prompt':'make the gongs quieter','stems':[],'tracks':[],'duration':4,'has_project_stems':True}
+    plan=client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json();assert plan['kind']=='edit' and {a['stemId'] for a in plan['actions']}=={c['id'] for c in clips}
+    agent['prompt']='move the second gong later';assert 'How many seconds' in client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json()['message']
+    agent['prompt']='move the second gong later by 0.2 seconds';plan=client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json()
+    assert plan['kind']=='clip_edit' and plan['clip_edit']['stem_id']==clips[1]['id'] and plan['clip_edit']['start_offset']==pytest.approx(clips[1]['start_offset']+.2)
+    url=f'/api/projects/{pid}/effect-clip-edit';body={'stem_id':clips[1]['id'],'expected_revision':clips[1]['revision'],'operation':'move','start_offset':clips[1]['start_offset']+.2}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json={**body,'expected_revision':999}).status_code==409
+    result=client.post(url,headers=h,json=body);assert result.status_code==202,result.text
+    move=result.json()['candidate_id'];assert wait(client,move,h)['status']=='completed';assert client.post('/api/candidates/'+move+'/apply',headers=h).status_code==200
+    moved=client.get(f'/api/projects/{pid}/stems',headers=h).json();assert next(s for s in moved if s['id']==clips[1]['id'])['start_offset']==pytest.approx(body['start_offset'])
+    assert client.post('/api/candidates/'+move+'/undo',headers=h).status_code==200
+    restored=client.get(f'/api/projects/{pid}/stems',headers=h).json();clip=next(s for s in restored if s['id']==clips[1]['id'])
+    deletion=client.post(url,headers=h,json={'stem_id':clip['id'],'expected_revision':clip['revision'],'operation':'delete'}).json()['candidate_id']
+    assert wait(client,deletion,h)['status']=='completed';assert client.post('/api/candidates/'+deletion+'/apply',headers=h).status_code==200
+    assert clip['id'] not in {s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}
+    assert client.post('/api/candidates/'+deletion+'/undo',headers=h).status_code==200
+    assert clip['id'] in {s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}
+
+
 def test_automatic_no_matches_asks_for_time(client,tmp_path,monkeypatch):
     import app.discovery as discovery
     monkeypatch.setenv('SOUNDCANVAS_SFX_CLI','/unused')

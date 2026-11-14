@@ -210,47 +210,102 @@ def test_demucs_split_before_load_fails():
 
 
 # ---------------------------------------------------------------- chain with a fake audio-separator
-def test_chain_splitter_vocal_model_then_demucs(monkeypatch):
-    class FakeSeparator:
-        def __init__(self, output_dir, output_format, **kwargs):
-            self.output_dir = output_dir
+def fake_separator_module(monkeypatch, *, modern: bool = True):
+    """audio-separator stand-in that mimics its gain handling: input and outputs are peak-
+    normalised to ``normalization_threshold`` (0.9 by default) and the scaling is never undone."""
+    from sam_audio_service.audio_io import decode
+
+    def normalise(x, threshold):
+        peak = float(np.max(np.abs(x)))
+        return x * (threshold / peak) if peak > threshold else x
+
+    class Separator:
+        instances: list = []
+
+        def _setup(self, output_dir, normalization_threshold=0.9, kwargs=None):
+            self.output_dir, self.threshold, self.kwargs = output_dir, normalization_threshold, kwargs or {}
+            Separator.instances.append(self)
 
         def load_model(self, model_filename):
             self.model = model_filename
 
         def separate(self, path):
-            from sam_audio_service.audio_io import decode
-
-            mix = decode(path=path).samples
-            names = {"Vocals": 0.25 * mix, "Instrumental": 0.75 * mix}
+            mix = normalise(decode(path=path).samples, self.threshold)
             out = []
-            for key, audio in names.items():
+            for key, audio in {"Vocals": 0.25 * mix, "Instrumental": 2.0 * mix}.items():  # instrumental is junk on purpose
                 name = f"mix_({key})_{self.model}.wav"
                 with open(f"{self.output_dir}/{name}", "wb") as f:
-                    f.write(encode_wav_pcm16(audio, SR))
+                    f.write(encode_wav_pcm16(normalise(audio, self.threshold), SR))
                 out.append(name)
             return out
 
+    if modern:
+        class Modern(Separator):
+            def __init__(self, output_dir="/tmp", output_format="WAV", normalization_threshold=0.9, sample_rate=44100, use_soundfile=False,
+                         mdxc_params={"segment_size": 256, "batch_size": 1, "overlap": 8}, model_file_dir="/tmp"):  # noqa: B006 - mirrors the library
+                self._setup(output_dir, normalization_threshold, {"sample_rate": sample_rate, "use_soundfile": use_soundfile, "mdxc_params": mdxc_params})
+        cls = Modern
+    else:
+        class Old(Separator):
+            def __init__(self, output_dir="/tmp", output_format="WAV", model_file_dir="/tmp"):
+                self._setup(output_dir)
+        cls = Old
     monkeypatch.setitem(sys.modules, "audio_separator", types.ModuleType("audio_separator"))
-    monkeypatch.setitem(sys.modules, "audio_separator.separator", types.SimpleNamespace(Separator=FakeSeparator))
+    monkeypatch.setitem(sys.modules, "audio_separator.separator", types.SimpleNamespace(Separator=cls))
+    return Separator
 
-    class StubDemucs(DemucsSplitter):
-        def load(self):
-            self.model = object()
 
-        def split(self, mixture):
-            self.seen = mixture
-            return {"drums": mixture * 0.5, "bass": mixture * 0.3, "other": mixture * 0.1, "vocals": mixture * 0.1}
+class StubDemucs(DemucsSplitter):
+    def load(self):
+        self.model = object()
 
+    def split(self, mixture, progress=None, cancel=None):
+        self.seen = mixture
+        return {"drums": mixture * 0.5, "bass": mixture * 0.3, "other": mixture * 0.1, "vocals": mixture * 0.1}
+
+
+def test_chain_undoes_gain_and_derives_the_instrumental(monkeypatch):
+    fake = fake_separator_module(monkeypatch)
     demucs = StubDemucs("htdemucs")
-    chain = ChainSplitter("vocals.ckpt", demucs)
+    chain = ChainSplitter("vocals.ckpt", demucs, vocal_overlap=4)
     chain.load()
-    mix = song(seconds=0.5)
+    sep = fake.instances[-1]
+    assert sep.threshold == 1.0 and sep.kwargs["sample_rate"] == 44_100 and sep.kwargs["use_soundfile"] is True
+    assert sep.kwargs["mdxc_params"] == {"segment_size": 256, "batch_size": 1, "overlap": 4}
+    mix = song(seconds=0.5) * 1.5  # peak above HEADROOM: the input is scaled down, then undone
+    assert np.max(np.abs(mix)) > 0.5
     stems = chain.split(mix)
-    assert set(stems) == {"drums", "bass", "other", "vocals"}
-    assert np.max(np.abs(demucs.seen - 0.75 * mix)) < 1e-3  # Demucs ran on the instrumental
-    assert np.max(np.abs(stems["vocals"] - 0.25 * mix)) < 1e-3
-    assert np.max(np.abs(stems["other"] - 0.15 * mix)) < 1e-3  # Demucs's vocal leakage folded into other
+    assert np.max(np.abs(stems["vocals"] - 0.25 * mix)) < 2e-3  # 16-bit fake output
+    assert np.max(np.abs(demucs.seen - (mix - stems["vocals"]))) < 1e-6  # instrumental = mix - vocals, file ignored
+    assert np.max(np.abs(stems["vocals"] + demucs.seen - mix)) < 1e-6  # vocals + instrumental == mix before consistency
+    assert np.max(np.abs(stems["other"] - 0.2 * demucs.seen)) < 1e-6  # Demucs's vocal leakage folded into other
     assert not any(chain.output_dir.iterdir())  # per-request files are cleaned up
-    assert chain.info()["model_id"] == "vocals.ckpt+htdemucs"
+    info = chain.info()
+    assert info["model_id"] == "vocals.ckpt+htdemucs" and info["vocal_overlap"] == 4 and "MIT" in info["license"]
+    chain.unload()
+
+
+def test_chain_tolerates_an_older_audio_separator(monkeypatch):
+    fake = fake_separator_module(monkeypatch, modern=False)
+    chain = ChainSplitter("vocals.ckpt", StubDemucs("htdemucs"))
+    chain.load()  # unknown keyword arguments are not passed
+    assert fake.instances[-1].threshold == 0.9
+    chain.unload()
+
+
+def test_chain_progress_stages_and_cancel(monkeypatch):
+    import threading
+
+    from sam_audio_service.errors import Cancelled
+
+    fake_separator_module(monkeypatch)
+    chain = ChainSplitter("vocals.ckpt", StubDemucs("htdemucs"))
+    chain.load()
+    seen = []
+    chain.split(song(seconds=0.2), progress=lambda f, stage: seen.append((f, stage)))
+    assert seen == [(0.0, "vocals"), (0.5, "instruments"), (1.0, "done")]
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(Cancelled):
+        chain.split(song(seconds=0.2), cancel=cancel)
     chain.unload()

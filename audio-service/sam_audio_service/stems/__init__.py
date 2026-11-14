@@ -1,6 +1,6 @@
 """Music stem splitters (``AUDIO_STEM_SPLITTER``): one stereo song in, one track per instrument.
 
-``mock`` is a frequency-band stand-in for CI; ``demucs`` and ``chain`` load real models
+``mock`` is a frequency-band stand-in for CI; ``demucs``, ``chain`` and ``roformer`` load real models
 lazily (``pip install -e ".[music]"``).
 """
 from __future__ import annotations
@@ -19,6 +19,11 @@ def create_splitter(settings: Settings) -> StemSplitter | None:
         from .mock import MockStemSplitter
 
         return MockStemSplitter(six_stems=settings.stem_model.endswith("6s"))
+    if kind == "roformer":
+        from .roformer import RoformerSplitter
+
+        return RoformerSplitter(settings.stem_roformer_ckpt, settings.stem_roformer_config, device=settings.device,
+                                overlap=settings.stem_roformer_overlap, fp16=settings.stem_roformer_fp16, batch=settings.stem_roformer_batch)
     from .demucs import DemucsSplitter
 
     demucs = DemucsSplitter(settings.stem_model, device=settings.device, shifts=settings.stem_shifts, overlap=settings.stem_overlap, segment=settings.stem_segment)
@@ -27,7 +32,7 @@ def create_splitter(settings: Settings) -> StemSplitter | None:
     if kind == "chain":
         from .chain import ChainSplitter
 
-        return ChainSplitter(settings.stem_vocal_model, demucs, model_dir=settings.stem_model_dir)
+        return ChainSplitter(settings.stem_vocal_model, demucs, model_dir=settings.stem_model_dir, vocal_overlap=settings.stem_vocal_overlap)
     raise ValueError(f"unknown stem splitter {kind!r}")
 
 

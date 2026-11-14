@@ -40,6 +40,12 @@ music = [
 music-chain = [
     "audio-separator>=0.17",
 ]
+# AUDIO_STEM_SPLITTER=roformer: native multi-stem BS-RoFormer built from its training YAML.
+music-roformer = [
+    "torch>=2.4",
+    "bs-roformer>=0.3",
+    "pyyaml>=6",
+]
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

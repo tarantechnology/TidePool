@@ -96,6 +96,14 @@ class Settings:
     stem_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_MODEL", "htdemucs_ft"))
     stem_vocal_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_VOCAL_MODEL", "model_bs_roformer_ep_317_sdr_12.9755.ckpt"))  # chain only
     stem_model_dir: str | None = field(default_factory=lambda: os.getenv("AUDIO_STEM_MODEL_DIR") or None)  # chain only
+    # chain only: audio-separator mdxc_params["overlap"] for the vocal model (more = slower, smoother).
+    stem_vocal_overlap: int = field(default_factory=lambda: _int("AUDIO_STEM_VOCAL_OVERLAP", 8))
+    # roformer only: native multi-stem BS-RoFormer checkpoint + its training YAML.
+    stem_roformer_ckpt: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_ROFORMER_CKPT", ""))
+    stem_roformer_config: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_ROFORMER_CONFIG", ""))
+    stem_roformer_overlap: int = field(default_factory=lambda: _int("AUDIO_STEM_ROFORMER_OVERLAP", 2))
+    stem_roformer_fp16: bool = field(default_factory=lambda: _bool("AUDIO_STEM_ROFORMER_FP16", False))
+    stem_roformer_batch: int = field(default_factory=lambda: _int("AUDIO_STEM_ROFORMER_BATCH", 1))
     # Demucs apply_model knobs: random-shift averaging (cost x shifts), segment overlap, and
     # segment length in seconds (unset = the model's own; htdemucs caps it at ~7.8 s).
     stem_shifts: int = field(default_factory=lambda: _int("AUDIO_STEM_SHIFTS", 1))
@@ -193,7 +201,7 @@ class Settings:
         elif self.pass_min_similarity is None:
             self.pass_min_similarity = 0.6 if self.backend == "sam" else 0.0
         if not self.router_classifier:
-            self.router_classifier = "ast" if self.stem_splitter in {"demucs", "chain"} else "off"
+            self.router_classifier = "ast" if self.stem_splitter in {"demucs", "chain", "roformer"} else "off"
         if not self.refine:
             # Measured 2026-11-13 on sam-audio-small: the mask improved every fixture (+1.8 to
             # +5.9 dB SI-SDRi, 1.7-6.5 dB less leakage) at no GPU cost, so it is on for the real
@@ -249,8 +257,16 @@ class Settings:
             raise ValueError("AUDIO_CANDIDATES must be between 1 and 8")
         if self.candidate_select not in {"first", "overlap", "mean", "auto"}:
             raise ValueError("AUDIO_CANDIDATE_SELECT must be 'first', 'overlap' or 'mean'")
-        if self.stem_splitter not in {"off", "mock", "demucs", "chain"}:
-            raise ValueError("AUDIO_STEM_SPLITTER must be 'off', 'mock', 'demucs' or 'chain'")
+        if self.stem_splitter not in {"off", "mock", "demucs", "chain", "roformer"}:
+            raise ValueError("AUDIO_STEM_SPLITTER must be 'off', 'mock', 'demucs', 'chain' or 'roformer'")
+        if self.stem_splitter == "roformer" and not (self.stem_roformer_ckpt and self.stem_roformer_config):
+            raise ValueError("AUDIO_STEM_SPLITTER=roformer needs AUDIO_STEM_ROFORMER_CKPT and AUDIO_STEM_ROFORMER_CONFIG")
+        if not 1 <= self.stem_vocal_overlap <= 16:
+            raise ValueError("AUDIO_STEM_VOCAL_OVERLAP must be between 1 and 16")
+        if not 1 <= self.stem_roformer_overlap <= 16:
+            raise ValueError("AUDIO_STEM_ROFORMER_OVERLAP must be between 1 and 16")
+        if not 1 <= self.stem_roformer_batch <= 16:
+            raise ValueError("AUDIO_STEM_ROFORMER_BATCH must be between 1 and 16")
         if not self.stem_model:
             raise ValueError("AUDIO_STEM_MODEL must not be empty")
         if not 0 <= self.stem_shifts <= 20:

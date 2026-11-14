@@ -272,8 +272,13 @@ split returns no residual; a subset returns one `residual` (the sum of the other
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `AUDIO_STEM_SPLITTER` | `off` | `off`, `mock` (frequency bands; CI only), `demucs`, or `chain` (RoFormer vocal model via `audio-separator`, then Demucs on the instrumental; `pip install -e ".[music,music-chain]"`). Off by default for every backend, the mock included, so existing deployments and the "empty prompts → 400" contract are unchanged until it is switched on. |
+| `AUDIO_STEM_SPLITTER` | `off` | `off`, `mock` (frequency bands; CI only), `demucs`, `chain` (RoFormer vocal model via `audio-separator`, then Demucs on `mixture - vocals`; `pip install -e ".[music,music-chain]"`), or `roformer` (native multi-stem BS-RoFormer such as ZFTurbo's 4-stem checkpoint; `pip install -e ".[music-roformer]"`). Off by default for every backend, the mock included, so existing deployments and the "empty prompts → 400" contract are unchanged until it is switched on. |
 | `AUDIO_STEM_MODEL` | `htdemucs_ft` | Demucs model: `htdemucs`, `htdemucs_ft` (4 stems, ~4x slower than `htdemucs`), `htdemucs_6s` (adds guitar and piano). May change after the Phase 0 benchmark. A name ending in `6s` also gives the mock six bands. |
+| `AUDIO_STEM_VOCAL_OVERLAP` | `8` | `chain` only: audio-separator `mdxc_params.overlap` for the vocal model (1-16). To be set from the benchmark. |
+| `AUDIO_STEM_ROFORMER_CKPT` / `AUDIO_STEM_ROFORMER_CONFIG` | none | `roformer` only (both required): checkpoint and its training YAML. The model is built from the YAML's `model` section (keys the installed `bs_roformer` does not accept are dropped and logged); a checkpoint missing more than 2% of the parameters fails the load. |
+| `AUDIO_STEM_ROFORMER_OVERLAP` | `2` | `roformer` only: windows per `audio.chunk_size` (step = chunk / overlap), overlap-added with a triangular window (1-16). |
+| `AUDIO_STEM_ROFORMER_BATCH` | `1` | `roformer` only: windows per forward pass (1-16). |
+| `AUDIO_STEM_ROFORMER_FP16` | `false` | `roformer` only: run the model in float16. |
 | `AUDIO_STEM_VOCAL_MODEL` | `model_bs_roformer_ep_317_sdr_12.9755.ckpt` | `chain` only: the `audio-separator` vocal model. `AUDIO_STEM_MODEL_DIR` sets where its weights live. |
 | `AUDIO_STEM_SHIFTS` | `1` | Demucs random-shift averaging (0-20). Cost scales linearly. |
 | `AUDIO_STEM_OVERLAP` | `0.25` | Demucs segment overlap, `[0, 1)`. |
@@ -285,5 +290,11 @@ split returns no residual; a subset returns one `residual` (the sum of the other
 The splitter and classifier load lazily on first use (not at startup), share the GPU and
 the inference lock with the prompted model, and are reported under `splitter` and
 `classifier` in `/health`; `/capabilities` lists `music_stems` (stems, aliases) and
-`routing`. Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
+`routing` (including the splitter's weight `license`). Splitters report progress through
+an optional callback (the service logs each 10%; RoFormer reports per chunk, chain per
+stage, Demucs only start and end because `apply_model` has no hook) and accept a cancel
+event checked between chunks (`409 CANCELLED`; nothing in the synchronous HTTP API sets it
+yet). The chain splitter disables audio-separator's peak normalisation
+(`normalization_threshold=1.0`), feeds it at most 0.5 peak and undoes that gain on the vocals.
+Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
 the splitter, duplicates mono to stereo and folds the stems back to mono.

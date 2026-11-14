@@ -111,6 +111,19 @@ def _cuda_for(device: Any):
     return torch.cuda if torch is not None and torch.cuda.is_available() and str(device or "").startswith("cuda") else None
 
 
+def _log_progress(name: str):
+    """Progress callback for the (synchronous) HTTP path: logs each new 10% and each stage."""
+    last = {"decile": -1, "stage": None}
+
+    def progress(fraction: float, stage: str) -> None:
+        decile = int(fraction * 10)
+        if decile != last["decile"] or stage != last["stage"]:
+            last["decile"], last["stage"] = decile, stage
+            log.info("%s stem split: %s %d%%", name, stage, round(fraction * 100))
+
+    return progress
+
+
 class Engine:
     def __init__(self, settings: Settings, backend: Backend | None = None, splitter: StemSplitter | None = None, classifier: ContentClassifier | None = None):
         self.settings = settings
@@ -310,8 +323,8 @@ class Engine:
             if cuda:
                 cuda.reset_peak_memory_stats()
             try:
-                raw = splitter.split(mixture)
-            except AudioServiceError:
+                raw = splitter.split(mixture, progress=_log_progress(splitter.name))
+            except AudioServiceError:  # includes Cancelled
                 raise
             except Exception as exc:  # noqa: BLE001
                 if is_out_of_memory(exc):

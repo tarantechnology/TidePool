@@ -6,12 +6,13 @@ bands partition the spectrum, so the stems sum back to the mixture.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
 
 from ..backends.mock import _istft, _stft
-from .base import StemSplitter
+from .base import Progress, StemSplitter, check_cancel, report
 
 # (stem, low Hz, high Hz); contiguous so the masks partition the spectrum.
 BANDS_4 = (("bass", 0.0, 150.0), ("vocals", 150.0, 3500.0), ("other", 3500.0, 8000.0), ("drums", 8000.0, float("inf")))
@@ -41,16 +42,19 @@ class MockStemSplitter(StemSplitter):
         return self._loaded
 
     def info(self) -> dict[str, Any]:
-        return {"model_id": self.model_id, "device": "cpu", "dtype": "float32", "warning": "mock stem splitter: frequency bands, not source separation"}
+        return {"model_id": self.model_id, "device": "cpu", "dtype": "float32", "license": "n/a (no weights)", "warning": "mock stem splitter: frequency bands, not source separation"}
 
-    def split(self, mixture: np.ndarray) -> dict[str, np.ndarray]:
+    def split(self, mixture: np.ndarray, progress: Progress | None = None, cancel: threading.Event | None = None) -> dict[str, np.ndarray]:
         n = mixture.shape[1]
         freqs = np.fft.rfftfreq(self.n_fft, 1.0 / self.sample_rate)
         out = {name: np.zeros(mixture.shape, dtype=np.float32) for name in self.stems}
         for c in range(mixture.shape[0]):
+            check_cancel(cancel)
+            report(progress, c / mixture.shape[0], "bands")
             x = np.pad(mixture[c].astype(np.float64), (0, max(0, self.n_fft - n)))
             spec = _stft(x, self.n_fft, self.hop, self._window)
             for name, low, high in self.bands:
                 mask = ((freqs >= low) & (freqs < high)).astype(np.float64)
                 out[name][c] = _istft(spec * mask[None, :], self.n_fft, self.hop, self._window, len(x))[:n]
+        report(progress, 1.0, "done")
         return out

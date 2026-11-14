@@ -349,10 +349,10 @@ their energy), so:
 - a subset returns exactly one `residual` (the sum of the other stems; `options.residual:
   "none"` drops it; `residual_name` names it).
 
-`model.backend` reports what actually ran (`mock`, `demucs`, `chain` for music stems;
+`model.backend` reports what actually ran (`mock`, `demucs`, `chain`, `roformer` for music stems;
 `mock`, `sam`, `audiosep` for prompted), with `stereo_mode: "native"`. `output_format`,
 `return_mode` and `AUDIO_MAX_DURATION_SECONDS` apply unchanged. `GET /capabilities` adds
-`music_stems: {available, backend, is_mock, model_id, stems, aliases, max_duration_seconds}`
+`music_stems: {available, backend, is_mock, model_id, license, stems, aliases, max_duration_seconds}`
 and `routing: {default_mode, modes, classifier, music_threshold}`; `GET /health` adds
 `splitter` (null when off) and `classifier` status.
 
@@ -523,6 +523,7 @@ served at `GET /capabilities` under `error_codes`.
 | `INSUFFICIENT_GPU_MEMORY` | 503 | **yes** | CUDA OOM on load or during inference. `details` carries the window length; retry with a shorter input, `chunk_seconds`, or fewer reranking candidates. |
 | `INFERENCE_FAILURE` | 500 | no | The model raised. `message` is `TypeName: text`; the traceback is in our logs only. |
 | `STORAGE_FAILURE` | 500 | **yes** | Could not write a stem (`return_mode: "file"`) or fetch an http(s) reference. |
+| `CANCELLED` | 409 | **yes** | A stem split was cancelled between chunks. Reserved: the synchronous HTTP API has no way to cancel yet. |
 | `SERVICE_BUSY` | 503 | **yes** | Reserved for admission control. Not raised today — one request at a time is serialised by a lock instead. |
 | `INTERNAL_ERROR` | 500 | no | Anything unhandled. `message` carries the exception type only. |
 

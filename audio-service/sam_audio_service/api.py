@@ -117,10 +117,10 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     def _music_stems_capabilities() -> dict[str, Any]:
         splitter = engine.splitter
         if splitter is None:
-            return {"available": False, "backend": None, "model_id": None, "stems": [], "max_duration_seconds": settings.max_duration_seconds}
+            return {"available": False, "backend": None, "model_id": None, "license": None, "stems": [], "max_duration_seconds": settings.max_duration_seconds}
         stems = requestable(splitter.stems)
         return {
-            "available": True, "backend": splitter.name, "is_mock": splitter.is_mock, "model_id": splitter.info().get("model_id"),
+            "available": True, "backend": splitter.name, "is_mock": splitter.is_mock, "model_id": splitter.info().get("model_id"), "license": splitter.info().get("license"),
             "stems": stems, "aliases": {alias: c for alias, c in STEM_ALIASES.items() if c in stems and alias != c},
             "max_duration_seconds": settings.max_duration_seconds,
         }

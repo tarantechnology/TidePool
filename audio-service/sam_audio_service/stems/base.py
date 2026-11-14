@@ -6,10 +6,27 @@ run, so forcing it through ``Backend.separate`` would mean N runs or an output c
 """
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+
+from ..errors import Cancelled
+
+# progress(fraction in [0, 1], stage) - called from the inference thread; must be cheap.
+Progress = Callable[[float, str], None]
+
+
+def report(progress: Progress | None, fraction: float, stage: str) -> None:
+    if progress is not None:
+        progress(min(1.0, max(0.0, fraction)), stage)
+
+
+def check_cancel(cancel: threading.Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise Cancelled("stem split was cancelled")
 
 
 class StemSplitter(ABC):
@@ -27,10 +44,12 @@ class StemSplitter(ABC):
         """Model id, device and anything useful for /health and /capabilities."""
 
     @abstractmethod
-    def split(self, mixture: np.ndarray) -> dict[str, np.ndarray]:
+    def split(self, mixture: np.ndarray, progress: Progress | None = None, cancel: threading.Event | None = None) -> dict[str, np.ndarray]:
         """``mixture`` is float32 ``(channels, n)`` at ``sample_rate``, 1 or 2 channels.
 
         Returns one float32 array of exactly the same shape per name in :attr:`stems`.
+        ``progress`` is called as work completes, as finely as the model allows; ``cancel``
+        is checked between units of work and raises :class:`~sam_audio_service.errors.Cancelled`.
         """
 
     @property

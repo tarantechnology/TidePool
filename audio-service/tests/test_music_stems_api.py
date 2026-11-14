@@ -149,6 +149,8 @@ def test_capabilities_and_health(music_client, client):
     assert caps["music_stems"]["available"] and caps["music_stems"]["backend"] == "mock"
     assert caps["music_stems"]["stems"] == ["vocals", "drums", "bass", "other", "instrumental"]
     assert caps["music_stems"]["aliases"]["karaoke"] == "instrumental"
+    assert caps["music_stems"]["license"] == "n/a (no weights)"
+    assert caps["error_codes"]["CANCELLED"]["http_status"] == 409
     assert caps["routing"] == {"default_mode": "auto", "modes": ["auto", "prompted", "music_stems"], "classifier": "off", "music_threshold": 0.5}
     health = music_client.get("/health").json()
     assert health["splitter"]["backend"] == "mock" and set(health["splitter"]["stems"]) == {"vocals", "drums", "bass", "other"}
@@ -156,3 +158,12 @@ def test_capabilities_and_health(music_client, client):
     off = client.get("/capabilities").json()["music_stems"]
     assert off["available"] is False and off["stems"] == []
     assert client.get("/health").json()["splitter"] is None
+
+
+def test_engine_logs_split_progress(music_client, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="sam_audio_service"):
+        assert post(music_client, {"options": {"mode": "music_stems"}}).status_code == 200
+    lines = [r.getMessage() for r in caplog.records if "stem split" in r.getMessage()]
+    assert lines and lines[-1] == "mock stem split: done 100%"

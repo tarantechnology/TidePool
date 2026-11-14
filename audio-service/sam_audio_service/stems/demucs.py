@@ -10,11 +10,12 @@ songs use Demucs's own overlapping-segment loop (``apply_model(split=True)``).
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
 
-from .base import StemSplitter, fit_length
+from .base import Progress, StemSplitter, check_cancel, fit_length, report
 
 
 def resolve_device(requested: str) -> str:
@@ -52,7 +53,8 @@ class DemucsSplitter(StemSplitter):
         return self.model is not None
 
     def info(self) -> dict[str, Any]:
-        return {"model_id": self.model_name, "device": self.device, "dtype": "float32", "shifts": self.shifts, "overlap": self.overlap, "segment": self.segment}
+        return {"model_id": self.model_name, "device": self.device, "dtype": "float32", "license": "MIT (Demucs code and htdemucs* weights)",
+                "shifts": self.shifts, "overlap": self.overlap, "segment": self.segment}
 
     def load(self) -> None:
         if self.loaded:
@@ -65,9 +67,13 @@ class DemucsSplitter(StemSplitter):
         self.stems = tuple(model.sources)
         self.model = model
 
-    def split(self, mixture: np.ndarray) -> dict[str, np.ndarray]:
+    def split(self, mixture: np.ndarray, progress: Progress | None = None, cancel: threading.Event | None = None) -> dict[str, np.ndarray]:
+        """Progress is reported at start and end only, and cancel is checked only before the
+        model runs: ``apply_model`` has no per-segment callback (just a tqdm bar)."""
         if not self.loaded:
             raise RuntimeError("Demucs is not loaded")
+        check_cancel(cancel)
+        report(progress, 0.0, "demucs")
         import torch
         from demucs.apply import apply_model
         from demucs.audio import convert_audio
@@ -85,10 +91,13 @@ class DemucsSplitter(StemSplitter):
                 progress=False, device=self.device, segment=self.segment,
             )[0]  # (sources, channels, frames) at model.samplerate
             out = convert_audio(out, self.model.samplerate, self.sample_rate, 2)
-        stems = to_numpy(out).astype(np.float32) * std + mean
+        # Undo the normalisation; the mean goes in once overall (split across stems) so the
+        # stems still sum to the mix, as the Phase 0 benchmark runner does.
+        stems = to_numpy(out).astype(np.float32) * std + mean / len(self.model.sources)
         stems = fit_length(stems, n)
         if channels == 1:
             stems = stems.mean(axis=1, keepdims=True)
+        report(progress, 1.0, "demucs")
         return {name: np.ascontiguousarray(stems[i]) for i, name in enumerate(self.model.sources)}
 
     def unload(self) -> None:

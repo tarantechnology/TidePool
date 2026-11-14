@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/engine'
 import type { VisualMetadata } from '../api/backend'
-import { frameAt, selectVisual } from '../visual'
-import { overlayBoxes, readShowObjects, trackColor, writeShowObjects } from '../objects'
+import { frameAt, selectVisual, objectSound } from '../visual'
+import { objectTracks, overlayBoxes, readShowObjects, trackColor, writeShowObjects } from '../objects'
 import type { VisualSelection } from '../visual'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { MaskOverlay } from './MaskOverlay'
@@ -25,6 +25,7 @@ interface Props {
   visual: VisualMetadata | null
   onSelection: (selection: VisualSelection) => void
   selection: VisualSelection | null
+  onClearSelection: () => void
   onVisualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
   /** Seek requests from outside, such as the object list. `n` makes a repeat of the same time count. */
   seekTo?: { time: number; n: number } | null
@@ -35,15 +36,20 @@ interface Props {
 /** Fixed bar heights for the audio-only placeholder; a shape, not the file's waveform. */
 const BARS = Array.from({ length: 48 }, (_, i) => 10 + Math.round(30 * Math.abs(Math.sin(i * 0.55) * Math.cos(i * 0.21))))
 
-export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onVisualAction, seekTo, audioOnly = false }: Props) {
+export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onClearSelection, onVisualAction, seekTo, audioOnly = false }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
   const picker = useRef<HTMLInputElement>(null)
   const [previewTime, setPreviewTime] = useState(0)
   const [sound, setSound] = useState('')
+  const [soundSelection,setSoundSelection] = useState('')
+  const selectionKey = selection ? `${selection.analysis_id}:${selection.track_id}` : ''
+  const soundDescription = soundSelection === selectionKey ? sound : objectSound(selection?.label || '')
   const [actionPending, setActionPending] = useState(false)
   const [bounds, setBounds] = useState({width:0,height:0,videoWidth:0,videoHeight:0})
   const [showObjects, setShowObjects] = useState(readShowObjects)
+  const automaticTracks = useMemo(() => visual?.discovery_mode === 'automatic'
+    ? new Set(objectTracks(visual).map(track => track.trackId)) : null, [visual])
   useEffect(() => {
     if (!seekTo) return
     // With stems loaded the engine is the clock and the video follows it.
@@ -94,7 +100,7 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
     const frame=frameAt(visual,current)
     const selectedTrack=selection?.track_id ?? null
     // With Show objects off, only the selected object stays visible.
-    const boxes=overlayBoxes(frame,selectedTrack).filter(b=>showObjects || b.selected)
+    const boxes=overlayBoxes(frame,selectedTrack).filter(b=>(!automaticTracks || automaticTracks.has(b.trackId)) && (showObjects || b.selected))
     return {w,h,vw,vh,left,top,current,selectedTrack,boxes}
   })()
   // The action card sits beside the selected object when it is on screen, else bottom left.
@@ -131,7 +137,7 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
             return <button key={b.object.detection_id} type="button" title={`Select ${b.label}`} aria-label={`Select ${b.label}`} aria-pressed={b.selected}
               className={`pointer-events-auto absolute rounded-md transition-[box-shadow,opacity,background-color] duration-200 ${b.selected ? 'border-[3px] [animation:box-pulse_1.8s_ease-in-out_infinite]' : 'border-2 opacity-75 hover:bg-white/10 hover:opacity-100 hover:shadow-[0_0_0_4px_rgb(140_196_242/0.55),0_0_24px_rgb(140_196_242/0.6)]'}`}
               style={{left:overlay.left+x1*overlay.vw,top:overlay.top+y1*overlay.vh,width:(x2-x1)*overlay.vw,height:(y2-y1)*overlay.vh,borderColor:b.color}}
-              onClick={() => {const selected=selectVisual(visual!,overlay.current,b.object); if(selected) { video.current?.pause(); engine?.pause(); setSound(b.label); onSelection(selected) }}}>
+              onClick={() => {const selected=selectVisual(visual!,overlay.current,b.object); if(selected) { video.current?.pause(); engine?.pause(); setSound(objectSound(b.object.label)); setSoundSelection(`${selected.analysis_id}:${selected.track_id}`); onSelection(selected) }}}>
               <span className={`absolute -top-5 left-[-2px] whitespace-nowrap rounded-md px-1.5 text-[10px] leading-4 font-medium text-white shadow-sm ${b.selected ? '' : 'opacity-90'}`} style={{background:b.color}}>{b.label}</span>
             </button>
           })}
@@ -139,12 +145,13 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
         {visual && <label className="absolute top-2 left-2 z-10 flex cursor-pointer items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-1 text-[11px] text-fg shadow-sm backdrop-blur">
           <input type="checkbox" className="accent-accent" checked={showObjects} onChange={e => { setShowObjects(e.target.checked); writeShowObjects(e.target.checked) }} />Show objects
         </label>}
-        {visual && !selection && showObjects && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur">{FEATURES.visual}: click an object to hear just that sound</div>}
-        {selection && <div className="rise-in shadow-card absolute z-20 w-64 space-y-2 rounded-xl border border-line bg-surface p-3 text-xs text-fg" style={popoverStyle} aria-label="Selected object actions">
-          <div className="flex items-center justify-between gap-2"><p className="flex items-center gap-1.5 font-semibold">{selection.label}<FeatureTag name={FEATURES.visual} /></p><span className="text-[10px] text-subtle">{selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s</span></div>
-          <label className="block text-muted">What does it sound like?<input aria-label="Selected object sound" className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15" value={sound} onChange={e=>setSound(e.target.value)} placeholder="e.g. dog barking" /></label>
-          <div className="grid grid-cols-3 gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !sound.trim()} className={`rounded-lg px-2 py-1.5 font-medium capitalize transition-colors disabled:opacity-40 ${action==='isolate' ? 'bg-accent text-white hover:bg-[#1b62b3]' : 'border border-line text-fg hover:bg-surface-2'}`} onClick={()=>{setActionPending(true);void onVisualAction(selection,sound,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action}</button>)}</div>
-          <p className="text-[10px] text-subtle">Seeing an object does not guarantee it makes a sound.</p>
+        {visual && !selection && showObjects && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur">{FEATURES.visual}: click an object, then choose its sound</div>}
+        {selection && <div className="rise-in shadow-card absolute z-20 max-h-[90%] w-64 max-w-[calc(100%-1rem)] overflow-y-auto space-y-2 rounded-xl border border-line bg-surface p-3 text-xs text-fg" style={popoverStyle} aria-label="Selected object actions">
+          <div className="flex items-center justify-between gap-2"><p className="flex items-center gap-1.5 font-semibold">{selection.label}<FeatureTag name={FEATURES.visual} /></p>{!visual?.selection_only && <span className="text-[10px] text-subtle">{selection.interval.start_seconds.toFixed(1)}–{selection.interval.end_seconds.toFixed(1)}s</span>}<button type="button" aria-label="Close object actions" className="px-1 text-muted" onClick={onClearSelection}>×</button></div>
+          <label className="block text-muted">Sound to edit<input aria-label="Selected object sound" className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15" value={soundDescription} onChange={e=>{setSound(e.target.value);setSoundSelection(selectionKey)}} placeholder={objectSound(selection.label) ? 'e.g. dog barking' : 'e.g. a man imitating a dog barking'} /></label>
+          {!objectSound(selection.label) && <p className="text-[10px] text-subtle">Describe what you hear this person doing. Their outline does not identify their voice.</p>}
+          <div className="grid grid-cols-3 gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !soundDescription.trim()} className={`rounded-lg px-2 py-1.5 font-medium capitalize transition-colors disabled:opacity-40 ${action==='isolate' ? 'bg-accent text-white hover:bg-[#1b62b3]' : 'border border-line text-fg hover:bg-surface-2'}`} onClick={()=>{setActionPending(true);void onVisualAction(selection,soundDescription,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action}</button>)}</div>
+          <p className="text-[10px] text-subtle">{visual?.selection_only ? 'Edits matching sounds throughout the clip. Similar sounds may also be affected.' : 'Seeing an object does not guarantee it makes a sound.'}</p>
         </div>}
         {input}
         <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">{pickButton}</div>

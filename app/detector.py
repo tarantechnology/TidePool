@@ -96,6 +96,9 @@ def _probe_import():
 
 def status(refresh=False):
     """Capabilities ``vision`` block. Availability is cached; weights presence is re-checked."""
+    from .object_selection import service_url, status as object_status
+    if service_url():
+        return object_status()
     global _import_error
     with _lock:
         if refresh:

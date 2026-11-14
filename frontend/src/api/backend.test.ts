@@ -8,6 +8,19 @@ const fetchMock = vi.fn<typeof fetch>()
 
 const bodyOf = (call = 0) => JSON.parse(String(fetchMock.mock.calls[call][1]?.body)) as Record<string, unknown>
 
+describe('separator identity', () => {
+  it('uses the serving model and voice-preservation status from capabilities', () => {
+    expect(toCapabilities({backend:'audiosep',model_id:'audiosep-base-4M',loaded:true,quality:false,visual:false,suppression:{mode:'conservative',strength:.9}})).toMatchObject({
+      backend:'audiosep',modelId:'audiosep-base-4M',loaded:true,preserveVoices:true,quality:false,visual:false,
+    })
+  })
+  it('does not invent a model or processing mode for an older server', () => {
+    const caps=toCapabilities({quality:false,visual:false})
+    expect(caps).not.toHaveProperty('backend')
+    expect(caps).not.toHaveProperty('preserveVoices')
+  })
+})
+
 describe('processProject', () => {
   beforeEach(() => {
     fetchMock.mockReset()

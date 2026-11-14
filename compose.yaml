@@ -7,14 +7,16 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       STORAGE_ROOT: /data
-      INFERENCE_ADAPTER: ${INFERENCE_ADAPTER:-fake}
-      SAM_AUDIO_SERVICE_URL: ${SAM_AUDIO_SERVICE_URL:-}
+      INFERENCE_ADAPTER: ${INFERENCE_ADAPTER:-http}
+      SAM_AUDIO_SERVICE_URL: ${SAM_AUDIO_SERVICE_URL:-http://host.docker.internal:8001/separate}
       INFERENCE_TIMEOUT_SECONDS: ${INFERENCE_TIMEOUT_SECONDS:-3600}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-gpt-6-luna}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-524288000}
     volumes:
       - ./storage:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
   editor:
     build: ./frontend
     ports:

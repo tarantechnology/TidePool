@@ -1,5 +1,12 @@
 import type { VisualFrame, VisualMetadata, VisualObject } from './api/backend'
 
+export function objectSound(label:string):string {
+  if (/^(dog|puppy)$/i.test(label.trim())) return 'dog barking'
+  // Appearance identifies an object, not its audible action or voice.
+  if (/\b(person|people|man|woman|boy|girl|guy|hoodie)\b/i.test(label)) return ''
+  return label.trim()
+}
+
 export interface VisualSelection extends VisualObject {
   schema_version:string; kind:string; video_id:string; analysis_id:string; source:string; source_sha256:string
   frame_width:number; frame_height:number; frame_index:number; timestamp_seconds:number; clicked_at_seconds:number

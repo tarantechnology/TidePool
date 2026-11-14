@@ -3,6 +3,9 @@
 # Run ON THE POD as root:  bash runpod_setup.sh [branch]      (HF_TOKEN must be in the environment)
 # Afterwards:  bash /workspace/soundcanvas/scripts/runpod_setup.sh start|stop|status|bench
 set -euo pipefail
+if [ "${AUDIO_BACKEND:-audiosep}" = audiosep ]; then
+  exec bash "$(dirname "$0")/runpod_audiosep.sh" "${1:-setup}"
+fi
 # Work directory: /workspace on RunPod, else $HOME/soundcanvas-work; override with WS=... .
 WS=${WS:-$([ -d /workspace ] && echo /workspace || echo "$HOME/soundcanvas-work")}; mkdir -p "$WS"
 REPO=$WS/soundcanvas; VENV=$WS/venv; PY=$VENV/bin/python

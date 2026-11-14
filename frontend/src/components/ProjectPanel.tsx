@@ -7,8 +7,7 @@ import type { VisualSelection } from '../visual'
 import { separationCommand } from '../separationCommand'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
-import { pollJob, toJobStatus } from '../api/jobs'
+import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
 import { HttpStemSource } from '../api/stemSources'
@@ -53,12 +52,10 @@ export interface ProjectPanelHandle {
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
 }
 
-/** Project credentials remain in component memory; the user may copy them for resuming. */
+/** The project token stays in component memory and is sent only as a bearer header. */
 export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, previewSlot, onBusy}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
-  const [resumeId, setResumeId] = useState('')
-  const [resumeToken, setResumeToken] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [prompt, setPrompt] = useState('')
   const [selection, setSelection] = useState<unknown>(null)
@@ -92,7 +89,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [offset, setOffset] = useState('0')
   const [clearRanges, setClearRanges] = useState(false)
   const [messages, setMessages] = useState<Array<{id:string;text:string}>>([])
-  const [resumeVisual, setResumeVisual] = useState<{projectId:string;jobId:string}|null>(null)
   const [passes, setPasses] = useState(1)
   const [retryPasses, setRetryPasses] = useState(1)
   const [refining, setRefining] = useState(false)
@@ -125,27 +121,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     // Authenticated media is fetched into a blob; the token never enters a URL.
     onVideo(await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(info.project_id)}/preview`, 3_600_000))
   }
-  const track = async (cfg: BackendConfig, id: string) => {
-    abort.current?.abort(); const controller = new AbortController(); abort.current = controller
-    const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {
-      signal: controller.signal, onUpdate: status => setMessage(status.progress !== undefined ? `Separating the sound… ${status.progress}%` : 'Separating the sound…'),
-    })
-    if (result.state === 'failed') throw new Error(result.error || 'Processing failed')
-    const job = await getJob(cfg, id)
-    await onLoadStems(new HttpStemSource(cfg, id), 'Project stems')
-    setJobId(id)
-    const model = job.inference?.model
-    setMockStems(model?.is_mock ?? null)
-    const summary = model?.is_mock ? 'Layers ready (demo model).' : model?.is_mock === false ? 'Layers ready to edit.' : 'Layers ready.'
-    setMessage([summary, ...(job.inference?.warnings || [])].join(' '))
-    return job.inference?.warnings || []
-  }
   const uploadMedia = (media: File) => run(async () => {
     await flush()
     const created = await createProject(baseUrl)
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
-    setProject(created); setToken(created.access_token); setResumeId(created.project_id); setResumeToken(created.access_token)
+    setProject(created); setToken(created.access_token);
     setMockStems(null);setJobId(''); setUndoId('');setAnchors([]); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
@@ -157,26 +138,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav')
     await loadVideo(cfg, info)
     setMessage('Uploaded. Pick a sound to separate.')
-  })
-  const resume = () => run(async () => {
-    if (!resumeId.trim() || !resumeToken.trim()) throw new Error('Enter both project ID and token.')
-    await flush()
-    const cfg = {baseUrl,token:resumeToken.trim()}; const info = await getProject(cfg,resumeId.trim())
-    attachedVideo.current = null
-    setUndoId('');setCandidateId('');setCandidateUrl('');setMixUrl('');setCurrentUrl('');setRetryStems([]);setAnchors([])
-    setToken(cfg.token); setProject(info); setJobId(info.last_completed_job_id || ''); setSettingsStems([]); setMessages([])
-    setFormat(info.metadata?.has_video ? 'mp4' : 'wav'); setSelection(null); onClearSelection(); setVisualName(''); setSelectionName('')
-    try { onVisual(info.visual_metadata ? asVisualMetadata(info.visual_metadata) : null) } catch { onVisual(null) }
-    await loadVideo(cfg, info)
-    const original=info.metadata ? await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(info.project_id)}/original-audio`, 3_600_000) : null
-    onOriginalAudio(original)
-    const visualJob = info.latest_visual_job
-    // The Objects section follows it, without holding up the rest of the restore.
-    setResumeVisual(visualJob && (visualJob.status === 'queued' || visualJob.status === 'processing') ? {projectId:info.project_id,jobId:visualJob.id} : null)
-    const latest = info.latest_job
-    if (latest && (latest.status === 'queued' || latest.status === 'processing')) await track(cfg, latest.id)
-    else if (info.last_completed_job_id) { await onLoadStems(new HttpStemSource(cfg,info.last_completed_job_id), 'Project stems'); setMessage('Project restored.') }
-    else { await onLoadStems({load: async () => original ? [{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}] : []}, original ? 'Original audio' : 'No stems yet'); setMessage('Project restored. Upload or start processing.') }
   })
   const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1) => {
     await flush()
@@ -224,7 +185,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       const created=await createProject(baseUrl)
       if (!created.access_token) throw new Error('Project token was not returned.')
       const cfg={baseUrl,token:created.access_token}
-      setProject(created); setToken(cfg.token); setResumeId(created.project_id); setResumeToken(cfg.token)
+      setProject(created); setToken(cfg.token);
       setJobId(''); setSettingsStems([]); setMessages([]); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
       await uploadProject(cfg,created.project_id,video)
       attachedVideo.current=video
@@ -244,7 +205,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if (!created.access_token) throw new Error('Project token was not returned.')
         currentToken=created.access_token
         const cfg={baseUrl,token:currentToken}
-        setProject(created); setToken(currentToken); setResumeId(created.project_id); setResumeToken(currentToken)
+        setProject(created); setToken(currentToken);
         setJobId(''); currentJob=''; setSettingsStems([]); setMessages([])
         onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
         setMessage('Uploading video…')
@@ -443,7 +404,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
           summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
           <div className="space-y-3">
-            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
                 : <p className="text-muted">{visual ? 'Click an object in the video, or describe' : 'Describe'} the sound in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}
@@ -486,8 +447,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     <details className="border-t border-line text-xs">
       <summary className="cursor-pointer list-none px-3 py-2 text-subtle hover:text-fg">Advanced</summary>
       <div className="max-h-56 space-y-3 overflow-y-auto px-3 pb-3">
-        {project && <div><p className="font-medium text-fg">Project credentials</p><p className="mt-1 break-all text-muted">ID: {project.project_id}</p><label className="mt-1 block">Token<input className={field} readOnly value={token} type="text" onFocus={e => e.currentTarget.select()} /></label><p className="text-subtle">Copy these to resume this project later.</p></div>}
-        <div><p className="font-medium text-fg">Resume a project</p><div className="mt-1 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={resume}>Resume</button></div></div>
         {project && <div><p className="font-medium text-fg">Import detections</p><p className="my-1 text-muted">Detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</div>}
         {jobId && <div><p className="font-medium text-fg">Layer settings</p><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load layer settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save layer settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>{FEATURES.refine}: extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-muted">{refineBlocked}</p>}</div>}</div>}
         {jobId && <div><p className="font-medium text-fg">Try another separation</p>

@@ -90,6 +90,20 @@ class InferenceOptions(BaseModel):
     # Multi-pass separation: rerun each prompt on its own residual up to this many times.
     # The upper bound is AUDIO_MAX_PASSES (checked by the engine, 400 INVALID_REQUEST).
     passes: int | None = Field(default=None, ge=1, strict=True, description="1..AUDIO_MAX_PASSES; default 1")
+    # Time-frequency mask refinement of each target (post-processing; see refine.py).
+    # None falls back to the AUDIO_REFINE* settings, which default to off.
+    refine: Literal["off", "mask"] | None = None
+    refine_p: float | None = Field(default=None, gt=0, le=8, allow_inf_nan=False)
+    refine_n_fft: Literal[512, 1024, 2048, 4096] | None = None
+    refine_floor: float | None = Field(default=None, ge=0, le=0.5, allow_inf_nan=False)
+    refine_blend: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    refine_threshold: float | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+    refine_residual_threshold: float | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+    refine_gate_db: float | None = Field(default=None, ge=0, le=80, allow_inf_nan=False)
+    # Independent noise draws returned per chunk window and the rule that picks one
+    # (distinct from reranking_candidates, which the model ranks internally). See candidates.py.
+    candidates: int | None = Field(default=None, ge=1, le=8)
+    candidate_select: Literal["first", "overlap", "mean", "auto"] | None = None
     output_format: Literal["pcm_f32le", "pcm_s16le"] = "pcm_f32le"
     # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
     # AUDIO_OUTPUT_ROOT and returns file:// references instead.
@@ -215,6 +229,7 @@ class Refinement(BaseModel):
     passes_run: int
     per_pass_energy_db: list[float] = Field(description="10*log10(energy of pass i's extra target / mixture energy), floored at -120")
     stopped_early: bool
+    stop_reason: str | None = Field(default=None, description="Why the chain stopped early: negligible | too_much | dissimilar | silent_residual | silent_first_pass")
 
 
 class StemResult(BaseModel):
@@ -264,6 +279,9 @@ class ModelInfo(BaseModel):
     effective_chunk_batch: int = 1
     peak_memory_bytes: int | None = None
     is_mock: bool = False
+    refine: dict[str, Any] | None = Field(default=None, description="Effective mask refinement {mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}; null when off")
+    candidates: int = Field(default=1, description="Noise draws returned per window (options.candidates)")
+    candidate_select: str = Field(default="first", description="How a draw was picked per window; 'first' when candidates == 1")
 
 
 class SeparationResponse(BaseModel):

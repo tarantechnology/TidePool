@@ -1,0 +1,322 @@
+{
+  "schema": "soundcanvas/audio-benchmark-1",
+  "generated_at": "2026-11-13T18:34:43+00:00",
+  "command": "python -m benchmarks.run_benchmark --backend sam --seconds 6 --latency-seconds 15 --long-seconds 24 --speech-mode say --seed 1234 --out benchmarks/out/baseline",
+  "backend": {
+    "mode": "engine",
+    "name": "sam",
+    "is_mock": false,
+    "model_id": "facebook/sam-audio-small",
+    "device": "mps",
+    "dtype": "float32"
+  },
+  "is_mock": false,
+  "mock_disclaimer": null,
+  "settings": {
+    "seconds": 6.0,
+    "long_seconds": 24.0,
+    "latency_seconds": 15.0,
+    "repeat": 1,
+    "speech_mode": "say",
+    "config_name": null,
+    "passes": 1,
+    "seed": 1234,
+    "candidates": null,
+    "window_candidates": null,
+    "select": null,
+    "refine": null,
+    "refine_p": null,
+    "refine_nfft": null,
+    "refine_floor": null,
+    "refine_blend": null,
+    "refine_threshold": null,
+    "refine_gate_db": null,
+    "chunk_seconds": null,
+    "chunk_overlap": null,
+    "ode_step": null,
+    "model_id": null,
+    "request_options": {
+      "seed": 1234
+    },
+    "effective_model_id": "facebook/sam-audio-small",
+    "effective_ode_step": 0.0625,
+    "effective_chunk_overlap": 2.0,
+    "peak_rss_bytes": 10950443008
+  },
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.6",
+    "numpy": "1.26.4"
+  },
+  "fixtures": [
+    {
+      "fixture": "speech_plus_siren",
+      "prompt": "siren",
+      "target_source": "siren",
+      "sources": [
+        "speech",
+        "siren"
+      ],
+      "duration": 6.0,
+      "channels": 2,
+      "speech_source": "say:Daniel",
+      "notes": "Cinematic demo case: siren must come out as its own stem, 6 dB under the voice, panned right.",
+      "stems": [
+        "siren",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 5.570474382233861,
+        "si_sdr_input_db": -6.592645217463677,
+        "si_sdri_db": 12.163119599697538,
+        "sdr_db": 6.62598136845282,
+        "leakage_db": -12.792631670831664,
+        "reconstruction_error": 8.463393896818161e-08,
+        "has_residual": true,
+        "latency_seconds": 7.68847970799834,
+        "latency_seconds_all": [
+          7.6885
+        ],
+        "real_time_factor": 1.28141328466639,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "peak_memory_bytes": null,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 1,
+        "passes": 1,
+        "elapsed_seconds": 7.688,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "fixture": "two_speakers",
+      "prompt": "man speaking",
+      "target_source": "speaker_low",
+      "sources": [
+        "speaker_low",
+        "speaker_high"
+      ],
+      "duration": 6.0,
+      "channels": 2,
+      "speech_source": "low=say:Daniel high=say:Samantha",
+      "notes": "Two talkers at equal level, ~100 Hz vs ~205 Hz f0, panned apart. Hard case: prompts cannot name a person.",
+      "stems": [
+        "man speaking",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 10.712989945609767,
+        "si_sdr_input_db": 0.4873615675328236,
+        "si_sdri_db": 10.225628378076943,
+        "sdr_db": 11.019988677798462,
+        "leakage_db": -12.214019175030703,
+        "reconstruction_error": 4.470348358154297e-08,
+        "has_residual": true,
+        "latency_seconds": 6.854636374999245,
+        "latency_seconds_all": [
+          6.8546
+        ],
+        "real_time_factor": 1.1424393958332075,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "peak_memory_bytes": null,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 1,
+        "passes": 1,
+        "elapsed_seconds": 6.854,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "fixture": "music_mix",
+      "prompt": "guitar",
+      "target_source": "guitar",
+      "sources": [
+        "drums",
+        "guitar"
+      ],
+      "duration": 6.0,
+      "channels": 2,
+      "speech_source": "n/a",
+      "notes": "Percussive kit vs sustained harmonic tone; overlapping low band makes band-pass mocks fail here.",
+      "stems": [
+        "guitar",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 13.901609833579844,
+        "si_sdr_input_db": 1.0013333650405525,
+        "si_sdri_db": 12.90027646853929,
+        "sdr_db": 13.671673132592852,
+        "leakage_db": -28.81009193455235,
+        "reconstruction_error": 7.35744833946228e-08,
+        "has_residual": true,
+        "latency_seconds": 6.954108375000942,
+        "latency_seconds_all": [
+          6.9541
+        ],
+        "real_time_factor": 1.159018062500157,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "peak_memory_bytes": null,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 1,
+        "passes": 1,
+        "elapsed_seconds": 6.953,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "fixture": "competing_voices",
+      "prompt": "man speaking",
+      "target_source": "speaker_low",
+      "sources": [
+        "speaker_low",
+        "speaker_high"
+      ],
+      "duration": 24.0,
+      "channels": 2,
+      "speech_source": "low=say:Daniel high=say:Samantha",
+      "notes": "24s, two talkers taking turns and overlapping across chunk boundaries, panned apart. Long-form speaker separation: catches per-window speaker flips.",
+      "stems": [
+        "man speaking",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 10.591672682246305,
+        "si_sdr_input_db": 0.4817373478393354,
+        "si_sdri_db": 10.10993533440697,
+        "sdr_db": 10.85806195733616,
+        "leakage_db": -13.595955719582811,
+        "reconstruction_error": 4.470348358154297e-08,
+        "has_residual": true,
+        "latency_seconds": 32.03958533400146,
+        "latency_seconds_all": [
+          32.0396
+        ],
+        "real_time_factor": 1.3349827222500608,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "peak_memory_bytes": null,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "passes": 1,
+        "elapsed_seconds": 32.039,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "fixture": "long_mixture_15s",
+      "prompt": "siren",
+      "target_source": "siren",
+      "sources": [
+        "speech",
+        "siren"
+      ],
+      "duration": 15.0,
+      "channels": 1,
+      "speech_source": "say:Daniel",
+      "notes": "Mono 15s mixture for latency and real-time factor.",
+      "stems": [
+        "siren",
+        "residual"
+      ],
+      "metrics": {
+        "si_sdr_db": 4.391428319136012,
+        "si_sdr_input_db": -5.012098859470679,
+        "si_sdri_db": 9.40352717860669,
+        "sdr_db": 5.726212563749998,
+        "leakage_db": -15.917863771918794,
+        "reconstruction_error": 2.9802322387695312e-08,
+        "has_residual": true,
+        "latency_seconds": 20.626585582998814,
+        "latency_seconds_all": [
+          20.6266
+        ],
+        "real_time_factor": 1.3751057055332543,
+        "repeats": 1
+      },
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-small",
+        "device": "mps",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "peak_memory_bytes": null,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "passes": 1,
+        "elapsed_seconds": 20.625,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    }
+  ],
+  "warnings": [
+    "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+  ]
+}

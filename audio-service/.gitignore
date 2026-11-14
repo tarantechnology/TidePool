@@ -6,3 +6,4 @@ benchmarks/out/
 fixtures/generated/
 output/
 .venv-sam/
+benchmarks/say-cache/

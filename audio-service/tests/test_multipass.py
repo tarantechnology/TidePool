@@ -229,7 +229,9 @@ def _mock_mixture(seconds=1.0):
 def test_mock_second_pass_extracts_more_and_reconstructs():
     signal = _mock_mixture()
     audio = DecodedAudio(signal, 48000, 48000, 1)
-    engine = Engine(Settings(), MockBackend())
+    # The mock's band-pass extracts MORE on its second pass (a mock artefact), which the real-model
+    # hallucination guard would discard; disable the guard here to test the arithmetic alone.
+    engine = Engine(Settings(pass_max_ratio_db=20.0, pass_min_similarity=0.0), MockBackend())
     one = engine.separate(audio, SeparationMetadata.model_validate({"prompts": ["siren"], "options": {"passes": 1}}))
     two = engine.separate(audio, SeparationMetadata.model_validate({"prompts": ["siren"], "options": {"passes": 2}}))
     e1 = float(np.sum(one.stems[0].samples.astype(np.float64) ** 2))
@@ -249,7 +251,7 @@ def test_api_refinement_shape_and_reconstruction(client):
     assert r.status_code == 200, r.text
     body = r.json()
     target, residual = body["stems"]
-    assert set(target["refinement"]) == {"passes_requested", "passes_run", "per_pass_energy_db", "stopped_early"}
+    assert set(target["refinement"]) == {"passes_requested", "passes_run", "per_pass_energy_db", "stopped_early"}  # stop_reason only when stopped early
     assert target["refinement"]["passes_requested"] == 2 and target["refinement"]["passes_run"] == 2
     assert len(target["refinement"]["per_pass_energy_db"]) == 2
     assert "refinement" in residual and residual["refinement"] is None
@@ -284,3 +286,38 @@ def test_capabilities_report_passes(client):
     caps = client.get("/capabilities").json()
     assert caps["defaults"]["passes"] == 1
     assert caps["limits"]["max_passes"] == 3
+
+
+class HallucinatingBackend(FractionBackend):
+    """Pass 1 extracts half of the input; later calls return a loud, unrelated high band."""
+
+    def separate(self, mixture, prompt, options):
+        if len(self.calls) == 0:
+            return super().separate(mixture, prompt, options)
+        self.calls.append({"input": mixture.copy(), "text": prompt.text, "anchors": prompt.anchors, "visual": prompt.visual})
+        t = np.arange(mixture.shape[-1]) / SR
+        other = (0.9 * np.sin(2 * np.pi * (SR / 4) * t)).astype(np.float32)  # one loud tone: not the voice
+        other = np.broadcast_to(other, mixture.shape).astype(np.float32)
+        return BackendResult(target=other, residual=(mixture - other).astype(np.float32))
+
+
+def test_second_pass_that_extracts_a_different_loud_sound_is_discarded():
+    signal = _signal()
+    guarded = Settings(chunk_overlap_seconds=0.25, pass_max_ratio_db=-3.0, pass_min_similarity=0.6)  # the real-backend defaults
+    result = _run(HallucinatingBackend(0.5), signal, settings=guarded, prompts=["voice"], options={"passes": 3})
+    ref = result.stems[0].refinement
+    assert ref["passes_run"] == 1 and ref["stopped_early"] is True and ref["stop_reason"] in ("too_much", "dissimilar")
+    np.testing.assert_allclose(result.stems[0].samples, signal * 0.5, atol=1e-6)
+    _reconstructs(signal, result)
+    assert any("discarded" in w for w in result.warnings)
+
+
+def test_pass_safeguards_are_configurable(monkeypatch):
+    signal = _signal()
+    # A second pass that is -6 dB and spectrally identical passes the default guards (-3 dB, 0.6).
+    guarded = Settings(chunk_overlap_seconds=0.25, pass_max_ratio_db=-3.0, pass_min_similarity=0.6)
+    result = _run(FractionBackend(0.5), signal, settings=guarded, prompts=["voice"], options={"passes": 2})
+    assert result.stems[0].refinement["passes_run"] == 2 and "stop_reason" not in result.stems[0].refinement
+    # Tightening the ratio to -10 dB discards it.
+    result = _run(FractionBackend(0.5), signal, settings=Settings(chunk_overlap_seconds=0.25, pass_max_ratio_db=-10.0), prompts=["voice"], options={"passes": 2})
+    assert result.stems[0].refinement["passes_run"] == 1 and result.stems[0].refinement["stop_reason"] == "too_much"

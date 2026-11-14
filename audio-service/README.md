@@ -82,9 +82,35 @@ what it extracts to the target:
 | --- | --- | --- |
 | `options.passes` | `1` | Pass 1 separates the mixture; pass `k` separates `mixture - (t1 + ... + t(k-1))` and the stem is `t1 + ... + tk`. Each prompt has its own residual chain; the residual stem is still `mixture - all targets`, so stems sum to the mixture exactly. Chunking, `per_channel` stereo, anchors and visual intervals apply unchanged to every pass. A pass extracting less than -30 dB of pass 1's energy is discarded and stops the chain (with a warning), as does a silent residual. Cost is up to `n x` per prompt. |
 
+Two safeguards stop a chain whose later pass is not a leftover of the first: a pass louder than
+`AUDIO_PASS_MAX_RATIO_DB` (default -3 dB) relative to pass 1, or whose long-term spectrum is less
+similar than `AUDIO_PASS_MIN_SIMILARITY` (cosine, default 0.6) to pass 1's, is discarded and the
+chain stops (`stop_reason` = `too_much` | `dissimilar`). Measured 2026-11-13 with `sam-audio-large`:
+without them a second "guitar" pass on a residual with no guitar left pulled the drums in and dropped
+the stem from 19.6 to 0.9 dB SI-SDRi. The mock backend runs with both disabled.
+
 Each target stem reports `refinement = {passes_requested, passes_run, per_pass_energy_db,
-stopped_early}`; `model.passes` is the most passes run for any prompt. Compare quality across
+stopped_early, stop_reason?}`; `model.passes` is the most passes run for any prompt. Compare quality across
 pass counts with `python -m benchmarks.run_benchmark --backend sam --passes 2`.
+
+### Mask refinement and per-window candidates (opt-in, both off by default)
+
+| Request option (env default) | Default | Effect |
+| --- | --- | --- |
+| `options.refine` (`AUDIO_REFINE`) | `off` | `mask` rebuilds each prompt's summed target from the mixture through a soft ratio mask `M = \|T\|^p / (\|T\|^p + \|mix - T\|^p)` computed from the model's target, applied to every channel's STFT (`refine.py`). Keeps the model's decision, drops codec artefacts. Runs after all passes; the residual is still `mixture - targets`, and a visual prompt's target stays exactly zero outside its interval. CPU cost: a few STFTs per prompt, no extra model calls. |
+| `options.refine_p` (`AUDIO_REFINE_P`) | `2.0` | Mask exponent, (0, 8]. 2 = Wiener (power) ratio, 1 = amplitude ratio, higher = sharper (more separation, more artefacts). |
+| `options.refine_n_fft` (`AUDIO_REFINE_NFFT`) | `2048` | 512 / 1024 / 2048 / 4096; hop is `n_fft / 4`. |
+| `options.refine_floor` (`AUDIO_REFINE_FLOOR`) | `0.0` | Minimum mask value, [0, 0.5]: fewer musical-noise holes, more leakage. |
+| `options.refine_blend` (`AUDIO_REFINE_BLEND`) | `1.0` | [0, 1]: `blend * refined + (1 - blend) * model target`. |
+| `options.refine_threshold` (`AUDIO_REFINE_THRESHOLD`) | `0.0` | [0, 1): soft-knee cut, `M' = 0 if M < t else (M - t) / (1 - t)`. 0.3-0.5 removes background bins the model only partially attenuated (the faint, muffled rest of the mix), accepting some artefacts. |
+| `options.refine_residual_threshold` (`AUDIO_REFINE_RESIDUAL_THRESHOLD`) | `0.0` (off) | [0, 1): mirrored soft knee, `M' = 1 if M > 1 - t else M / (1 - t)`, applied after `refine_threshold` and before the gate/floor. Bins where the target dominates go fully to the target, so the residual (what "Mute target" / "Lower target" leaves) no longer carries a faint copy of the removed sound. 0.3-0.5 is a sensible range; with `refine_threshold` also set the mask becomes near-binary (cleaner stems both ways, more artefacts). Measured by the benchmark's `residual_leakage_db`. |
+| `options.refine_gate_db` (`AUDIO_REFINE_GATE_DB`) | `0` (off) | [0, 80]: silence the stem where the sound is not really present. STFT frames whose masked target is more than this many dB below the mixture frame are zeroed in every bin, with a 3-frame hold so words are not clipped. |
+| `options.candidates` (`AUDIO_CANDIDATES`) | `1` | 1-8 independent noise draws per chunk window; the engine keeps one per window (below). Distinct from `reranking_candidates` (ranked inside the model, needs a ranker); both can be combined at `K x R` cost. Costs `K x` compute and activation memory per window; the window batch is divided by `K` so one model call never exceeds `AUDIO_CHUNK_BATCH` rows. Backends that cannot draw several (the mock) add a warning and use one draw. |
+| `options.candidate_select` (`AUDIO_CANDIDATE_SELECT`) | `overlap` | `overlap`: the draw whose head best correlates with what the previous window put into the shared overlap (first window / quiet overlap: medoid for `K >= 3`, else draw 0), so neighbouring windows agree and seams do not flip. `mean`: average of the draws (ensemble). `first`: draw 0. |
+
+`model.refine` reports the effective `{mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}` (absent when
+off); `model.candidates` / `model.candidate_select` report K and the rule (`first` when K = 1).
+`/capabilities` `defaults` lists all of them.
 
 ## GPU deployment and readiness
 

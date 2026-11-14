@@ -424,12 +424,21 @@ class SamAudioBackend(Backend):
     def _separate_batch(
         self, mixtures: list[np.ndarray], prompts: list[BackendPrompt], options: BackendOptions
     ) -> list[BackendResult]:
-        """ONE processor batch and ONE ``model.separate`` call for every window given."""
+        """ONE processor batch and ONE ``model.separate`` call for every window given.
+
+        With ``options.candidates = K > 1`` every window is repeated K times consecutively in
+        the batch (item ``i``'s draws are batch rows ``i*K .. i*K+K-1``), so one call returns
+        K independent noise draws per window; the engine picks one per window. This is
+        orthogonal to ``reranking_candidates`` (R), which the model still applies to EVERY
+        batch row: K x R draws per window are allowed, at K x R the compute. The engine
+        divides its window batch by K so a call never exceeds ``AUDIO_CHUNK_BATCH`` rows.
+        """
         torch, model, processor = self._torch, self._model, self._processor
         lengths = [int(np.asarray(m).shape[-1]) for m in mixtures]
         if all(n == 0 for n in lengths):
             empty = np.zeros(0, dtype=np.float32)
             return [BackendResult(target=empty.copy(), residual=empty.copy(), spans=[]) for _ in mixtures]
+        k_draws = max(1, int(getattr(options, "candidates", 1) or 1))
 
         # Shape (1, T) per item: the processor averages channels to mono, so hand it mono
         # already. ``batch_audio`` pads the batch to the longest item; each output is
@@ -437,10 +446,11 @@ class SamAudioBackend(Backend):
         audios = [
             torch.from_numpy(np.ascontiguousarray(np.asarray(m, dtype=np.float32).reshape(-1))).unsqueeze(0)
             for m in mixtures
+            for _ in range(k_draws)
         ]
-        descriptions = [self._description(p) for p in prompts]
+        descriptions = [self._description(p) for p in prompts for _ in range(k_draws)]
         anchors = (
-            [[(token, float(start), float(end)) for token, start, end in (p.anchors or ())] for p in prompts]
+            [[(token, float(start), float(end)) for token, start, end in (p.anchors or ())] for p in prompts for _ in range(k_draws)]
             if any(p.anchors for p in prompts)
             else None
         )
@@ -463,7 +473,7 @@ class SamAudioBackend(Backend):
                     ffprobe=self.ffprobe,
                     timeout=self.ffmpeg_timeout,
                 )
-                masked_videos = processor.mask_videos([frames], [masks])
+                masked_videos = processor.mask_videos([frames] * k_draws, [masks] * k_draws)
 
             batch = processor(
                 descriptions=descriptions,
@@ -502,10 +512,11 @@ class SamAudioBackend(Backend):
             if _is_oom(exc):
                 raise InsufficientGpuMemory(
                     "GPU ran out of memory during separation; lower AUDIO_CHUNK_BATCH, shorten "
-                    "AUDIO_CHUNK_SECONDS, lower AUDIO_RERANKING_CANDIDATES, or set "
-                    "AUDIO_LOAD_SPAN_PREDICTOR=false",
+                    "AUDIO_CHUNK_SECONDS, lower AUDIO_RERANKING_CANDIDATES or options.candidates "
+                    "(AUDIO_CANDIDATES), or set AUDIO_LOAD_SPAN_PREDICTOR=false",
                     details={
                         "batch": len(mixtures),
+                        "candidates": k_draws,
                         "frames": max(lengths),
                         "seconds": round(max(lengths) / self.sample_rate, 3),
                         "model_id": self.model_id,
@@ -520,16 +531,22 @@ class SamAudioBackend(Backend):
                 "visual_frames": int(frames.shape[0]) if frames is not None else 0,
                 "predict_spans": predict_spans,
                 "reranking_candidates": candidates,
-                "description": descriptions[i],
+                "description": descriptions[i * k_draws],
                 "batch": len(mixtures),
+                "candidates": k_draws,
                 "notes": notes,
             }
+            rows = range(i * k_draws, (i + 1) * k_draws)
+            cands = [self._to_numpy(result.target[j], length) for j in rows]
+            res = [self._to_numpy(result.residual[j], length) for j in rows] if result.residual is not None else [None] * k_draws
             results.append(
                 BackendResult(
-                    target=self._to_numpy(result.target[i], length),
-                    residual=self._to_numpy(result.residual[i], length) if result.residual is not None else None,
-                    spans=self._predicted_spans(batch, i) if predict_spans else None,
+                    target=cands[0],
+                    residual=res[0],
+                    spans=self._predicted_spans(batch, i * k_draws) if predict_spans else None,
                     extra=extra,
+                    candidates=cands if k_draws > 1 else None,
+                    candidate_residuals=res if k_draws > 1 else None,
                 )
             )
         return results

@@ -100,7 +100,7 @@ def _report(out_dir):
 def test_benchmark_smoke_with_mock_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIO_BACKEND", "mock")
     out = tmp_path / "out"
-    assert rb.main(["--backend", "mock", "--seconds", "1", "--latency-seconds", "2", "--repeat", "2",
+    assert rb.main(["--backend", "mock", "--seconds", "1", "--latency-seconds", "2", "--long-seconds", "0", "--repeat", "2",
                     "--speech-mode", "synthetic", "--out", str(out)]) == 0
     report = _report(out)
     assert report["backend"]["name"] == "mock"
@@ -154,7 +154,7 @@ def test_benchmark_http_mode_matches_person4_multipart(tmp_path, monkeypatch, cl
 
     monkeypatch.setattr(httpx, "post", post)
     out = tmp_path / "http"
-    assert rb.main(["--url", "http://example.invalid/separate", "--seconds", "1", "--latency-seconds", "0",
+    assert rb.main(["--url", "http://example.invalid/separate", "--seconds", "1", "--latency-seconds", "0", "--long-seconds", "2",
                     "--speech-mode", "synthetic", "--out", str(out)]) == 0
     assert seen["file_field"] == ["audio"] and seen["data_field"] == ["metadata"]
     report = _report(out)
@@ -190,3 +190,187 @@ def test_benchmark_passes_flag(tmp_path, monkeypatch):
     assert report["settings"]["passes"] == 2
     with pytest.raises(SystemExit):
         rb.main(["--passes", "0", "--out", str(tmp_path)])
+
+
+# ------------------------------------------------------------- long fixture + settings
+def test_metadata_payload_with_options():
+    assert rb._metadata("siren", 1, {"seed": 1}) == {"prompts": ["siren"], "options": {"seed": 1}}
+    assert rb._metadata("siren", 2, {"seed": 1}) == {"prompts": ["siren"], "options": {"passes": 2, "seed": 1}}
+    assert rb._metadata("siren", 1, {}) == {"prompts": ["siren"]}
+
+
+def test_competing_voices_fixture():
+    seconds = 2.0
+    fixture = fx.competing_voices(seconds, speech_mode="synthetic")
+    assert fixture.name == "competing_voices" and fixture.name in fx.LONG_FIXTURES
+    assert fixture.name not in fx.QUALITY_FIXTURES
+    assert fixture.channels == 2
+    assert fixture.duration == pytest.approx(seconds, abs=1e-6)
+    assert fixture.prompt == "man speaking" and fixture.target == "speaker_low"
+    assert fixture.extra == {"kind": "long", "other_prompt": "woman speaking"}
+    summed = sum(fixture.sources.values())
+    assert np.max(np.abs(summed - fixture.mixture)) < 1e-6
+    assert float(np.abs(fixture.mixture).max()) <= fx.PEAK_CEILING + 1e-6
+    schedule = fx.competing_schedule(seconds)
+    for name, turns in schedule.items():
+        source = fixture.sources[name]
+        active = np.zeros(fixture.frames, dtype=bool)
+        for start, end in turns:
+            assert 0.0 <= start < end <= seconds + 1e-9
+            active[int(round(start * fx.SAMPLE_RATE)):int(round(end * fx.SAMPLE_RATE))] = True
+        assert np.abs(source[:, active]).max() > 0.0, f"{name} must speak during its turns"
+        assert np.abs(source[:, ~active]).max() == 0.0, f"{name} must be silent outside its turns"
+
+
+def test_long_fixtures_default_on_and_skippable(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    on, off = tmp_path / "on", tmp_path / "off"
+    common = ["--seconds", "1", "--latency-seconds", "0", "--speech-mode", "synthetic"]
+    assert rb.main([*common, "--long-seconds", "2", "--out", str(on)]) == 0
+    assert [row["fixture"] for row in _report(on)["fixtures"]] == [*fx.QUALITY_FIXTURES, *fx.LONG_FIXTURES]
+    assert _report(on)["settings"]["long_seconds"] == 2.0
+    assert rb.main([*common, "--long-seconds", "0", "--out", str(off)]) == 0
+    assert [row["fixture"] for row in _report(off)["fixtures"]] == list(fx.QUALITY_FIXTURES)
+
+
+def test_ode_step_and_options_recorded_in_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    out = tmp_path / "ode"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "0", "--long-seconds", "0", "--fixtures", "music_mix",
+                    "--speech-mode", "synthetic", "--ode-step", "0.03125", "--refine", "mask", "--refine-threshold", "0.3",
+                    "--out", str(out)]) == 0
+    settings = _report(out)["settings"]
+    assert settings["ode_step"] == 0.03125
+    assert settings["effective_ode_step"] == 0.03125  # mock has no ode_opt: settings.ode_step_size path
+    assert settings["request_options"] == {"refine": "mask", "refine_threshold": 0.3}
+    assert settings["seed"] is None, "mock runs send no seed unless asked"
+    assert settings["peak_rss_bytes"] > 1_000_000
+
+
+def test_request_options_only_sent_when_given():
+    assert rb.request_options(rb.config_from_args(rb.build_parser().parse_args([]))) == {}
+    args = rb.build_parser().parse_args(["--backend", "sam", "--window-candidates", "2", "--select", "overlap", "--refine-gate-db", "30"])
+    assert rb.request_options(rb.config_from_args(args)) == {"seed": rb.DEFAULT_SEED, "candidates": 2, "candidate_select": "overlap",
+                                                              "refine_gate_db": 30.0}
+
+
+def test_named_sweeps_are_valid():
+    from benchmarks.sweeps import SWEEPS
+
+    assert {"ode", "refine", "refine-floor", "candidates", "chunks", "quality-v1", "leakage"} <= set(SWEEPS)
+    for name, configs in SWEEPS.items():
+        names = [config["name"] for config in configs]
+        assert len(names) == len(set(names)), name
+        for config in configs:
+            rb.validate_config(dict(config), url=None, label=name)
+    assert len(SWEEPS["leakage"]) == 7
+    v2 = {config["name"]: config for config in SWEEPS["leakage-v2"]}
+    assert list(v2) == ["mask", "thr0.5", "rthr0.5", "both0.5", "both0.7", "p4-both0.5", "passes2", "passes2-both0.5",
+                        "k3auto-both0.5", "k3auto-passes2-both0.5"]
+    assert all(config["refine"] == "mask" and config["refine_nfft"] == 2048 for config in v2.values())
+    assert v2["rthr0.5"]["refine_residual_threshold"] == 0.5 and "refine_threshold" not in v2["rthr0.5"]
+    assert v2["p4-both0.5"]["refine_p"] == 4 and v2["k3auto-passes2-both0.5"]["passes"] == 2
+    assert v2["k3auto-both0.5"]["window_candidates"] == 3 and v2["k3auto-both0.5"]["select"] == "auto"
+
+
+def test_residual_leakage_metric_on_mock(tmp_path, monkeypatch):
+    """Mock residual = mixture - band-pass target. Where the band-pass actually separates
+    (siren, guitar) the residual is dominated by non-target content; the overlapping-speech
+    fixture is not band-separable, so there it only has to be finite and near 0 dB."""
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    out = tmp_path / "resid"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "0", "--long-seconds", "0", "--speech-mode", "synthetic", "--out", str(out)]) == 0
+    report = _report(out)
+    for row in report["fixtures"]:
+        value = row["metrics"]["residual_leakage_db"]
+        assert value is not None and math.isfinite(value)
+        assert value < 3, f"{row['fixture']}: {value}"
+        if row["fixture"] in ("speech_plus_siren", "music_mix"):
+            assert value < -5, f"{row['fixture']}: residual should be mostly non-target content, got {value}"
+    markdown = (out / "REPORT.md").read_text()
+    assert "Resid leak (dB)" in markdown and "**Resid leak**" in markdown
+
+
+def test_residual_leakage_is_none_without_a_residual():
+    fixture = fx.music_mix(SHORT, speech_mode="synthetic")
+    assert rb.residual_leakage_db(None, fixture) is None
+    outcome = rb.Outcome(target=fixture.target_signal, residual=None, model={}, latencies=[0.1])
+    metrics = rb.measure(fixture, outcome)
+    assert metrics["residual_leakage_db"] is None and metrics["has_residual"] is False
+
+
+def test_refine_residual_threshold_flag_only_sent_when_given():
+    assert "refine_residual_threshold" not in rb.request_options(rb.config_from_args(rb.build_parser().parse_args([])))
+    args = rb.build_parser().parse_args(["--refine", "mask", "--refine-residual-threshold", "0.4"])
+    assert rb.request_options(rb.config_from_args(args)) == {"refine": "mask", "refine_residual_threshold": 0.4}
+
+
+def test_sweep_honours_passes_per_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    seen: list[int] = []
+    real_run_engine = rb.run_engine
+
+    def spy(engine, fixture, *, repeat, passes=1, options=None):  # noqa: ANN001
+        seen.append(passes)
+        return real_run_engine(engine, fixture, repeat=repeat, passes=passes, options=options)
+
+    monkeypatch.setattr(rb, "run_engine", spy)
+    spec = tmp_path / "passes.json"
+    spec.write_text(json.dumps([{"name": "one"}, {"name": "two", "passes": 2, "refine": "mask", "refine_residual_threshold": 0.5},
+                                {"name": "one-again"}]))
+    out = tmp_path / "sweep"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "0", "--long-seconds", "0", "--fixtures", "music_mix",
+                    "--speech-mode", "synthetic", "--sweep", str(spec), "--out", str(out)]) == 0
+    one, two, again = (_report(out / name) for name in ("one", "two", "one-again"))
+    assert one["settings"]["passes"] == 1 and two["settings"]["passes"] == 2 and again["settings"]["passes"] == 1
+    assert seen == [1, 2, 1], "each config's passes must reach the engine and reset for the next config"
+    refinement = lambda report: report["fixtures"][0]["model"]  # noqa: E731
+    assert refinement(two)["refine"]["residual_threshold"] == 0.5
+    assert refinement(again)["refine"] is None, "a config's request options must not leak into the next"
+    sweep = json.loads((out / "sweep.json").read_text())
+    assert [entry["settings"]["passes"] for entry in sweep["configs"]] == [1, 2, 1]
+
+
+def test_sweep_writes_one_table_with_deltas(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_BACKEND", "mock")
+    spec = tmp_path / "mini.json"
+    spec.write_text(json.dumps([{"name": "base"}, {"name": "finer-ode", "ode_step": 0.03125, "chunk_seconds": 0}, {"name": "base-again"}]))
+    out = tmp_path / "sweep"
+    assert rb.main(["--seconds", "1", "--latency-seconds", "1", "--long-seconds", "0", "--fixtures", "music_mix",
+                    "--speech-mode", "synthetic", "--sweep", str(spec), "--out", str(out)]) == 0
+    sweep = json.loads((out / "sweep.json").read_text())
+    assert [entry["name"] for entry in sweep["configs"]] == ["base", "finer-ode", "base-again"]
+    assert sweep["configs"][1]["delta"]["music_mix"]["si_sdri_db"] is not None
+    assert "leakage_db" in sweep["configs"][1]["delta"]["music_mix"]
+    assert "residual_leakage_db" in sweep["configs"][1]["delta"]["music_mix"]
+    assert sweep["configs"][0]["mean_residual_leakage_db"] is not None
+    assert "mean_residual_leakage_db" in sweep["configs"][1]["delta"]
+    assert sweep["configs"][1]["settings"]["ode_step"] == 0.03125
+    assert sweep["configs"][1]["request_options"] == {"chunk_seconds": 0}
+    assert sweep["configs"][0]["rtf"] is not None and sweep["configs"][0]["peak_rss_bytes"] > 0
+    for name in ("base", "finer-ode", "base-again"):
+        assert (out / name / "report.json").exists() and (out / name / "REPORT.md").exists()
+    assert _report(out / "finer-ode")["settings"]["effective_ode_step"] == 0.03125
+    assert _report(out / "base-again")["settings"]["effective_ode_step"] != 0.03125, "a config's engine knobs must not leak into the next"
+    markdown = (out / "SWEEP.md").read_text()
+    assert "Δ" in markdown and "leak" in markdown and "MOCK RUN" in markdown
+    assert "`base`" in markdown and "`finer-ode`" in markdown
+    assert "`music_mix` resid-leak" in markdown and "Mean resid-leak" in markdown
+
+
+def test_say_cache_serves_real_speech_without_the_say_binary(tmp_path, monkeypatch):
+    import shutil
+    import numpy as np
+    from benchmarks import fixtures as fx
+    from sam_audio_service.audio_io import encode_wav_pcm16
+    monkeypatch.setenv("SOUNDCANVAS_SAY_CACHE", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # Linux host: no `say`
+    assert fx.say_available() is False and fx._say_voices(fx.SAY_VOICES_LOW) == []
+    voice = fx.SAY_VOICES_LOW[0]
+    path = fx._say_cache_path("hello there", voice)
+    tone = (0.3 * np.sin(2 * np.pi * 220 * np.arange(48000) / 48000)).astype(np.float32)[None, :]
+    path.write_bytes(encode_wav_pcm16(tone, 48000))  # ffmpeg sniffs the content, not the suffix
+    assert fx.say_available() is True and fx._say_voices(fx.SAY_VOICES_LOW) == [voice]
+    rendered = fx._say_speech("hello there", voice, 0.5, np.random.default_rng(0))
+    assert rendered is not None and rendered.shape == (24000,) and float(np.abs(rendered).max()) > 0.1
+    assert fx._say_speech("another line", voice, 0.5, np.random.default_rng(0)) is None

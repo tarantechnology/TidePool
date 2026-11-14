@@ -209,7 +209,7 @@ the executed integration test. Everything else is additive.
 
 **Status: proposed, awaiting team agreement.** Implemented by `contracts.SeparationResponse`.
 HTTP 200. `null` fields are omitted from the wire response
-(`response_model_exclude_none=True`), except `stems[].refinement`, which residual stems always carry as `null`. `GET /capabilities` reports `defaults.passes` (1) and `limits.max_passes` (`AUDIO_MAX_PASSES`).
+(`response_model_exclude_none=True`), except `stems[].refinement` (residual stems always carry it as `null`) and `stems[].tags` (always emitted; `null` outside music_stems). `GET /capabilities` reports `defaults.passes` (1) and `limits.max_passes` (`AUDIO_MAX_PASSES`).
 
 ```json
 {
@@ -293,6 +293,7 @@ A committed copy with truncated base64 lives at
 | `stems[].spans` | `[[start, end], ...]` \| null | proposed | Seconds on the source timeline where the target is believed active: predicted spans when `predict_spans`, otherwise the `+` anchors. A **UI hint**, not a trim instruction — audio outside a span is in the file and usually near-silent. |
 | `stems[].source_asset_id` | string \| null | proposed | Echo of the request's asset id. |
 | `stems[].refinement` | object \| null | proposed | Multi-pass bookkeeping (`options.passes`). Target stems: `{"passes_requested": n, "passes_run": k, "per_pass_energy_db": [e₁, …, eₖ], "stopped_early": bool}` where eᵢ = 10·log10(energy of tᵢ / energy of the mixture), floored at −120, one entry per pass **kept** (a pass discarded by early stop is not listed). Present on every target stem, also for `passes: 1`. Residual stems: always `null` — the one field emitted even though it is null. |
+| `stems[].tags` | `[{"label": string, "score": number}]` \| null | proposed | **music_stems only.** Up to 3 instrument tags from the router's AudioSet tagger (PANNs/AST): display names such as `"Synth"`, `"Strings"`, `"Electric guitar"`, `"Female singing"`, `"Drum machine"`; `score` = mean probability over the stem's active 10 s windows, each ≥ `AUDIO_STEM_LABEL_MIN_SCORE`, sorted by score. A stem's trivial class is left out (no `"Drums"` on drums, no `"Guitar"` on guitar), and singing classes are left out of instrument stems (they are vocal bleed). `[]` when the stem is near-silent (< −45 dB vs the mix) or nothing clears the minimum. `null` on prompted results, when labeling is off (`AUDIO_STEM_LABELS=off`), when the classifier cannot tag (`off`/`mock`), or when labeling failed (with a warning). Always emitted, like `refinement`. |
 | `model.passes` | int | proposed | Most passes run for any prompt (≥ 1). |
 | `model.*` | object | proposed | What actually ran: `backend` (`mock`\|`sam`), `model_id`, `device`, `dtype`, the effective `predict_spans` / `reranking_candidates` / `stereo_mode`, whether chunking kicked in, wall-clock `elapsed_seconds`, and `is_mock`. |
 | `model.is_mock` | bool | proposed | **`true` means the stems are band-pass filtered copies of the mixture, not separation.** Any UI that can show mock output must surface this. |
@@ -341,7 +342,17 @@ plan: `docs/plans/music-stems.md`). The first matching row wins:
 A **music_stems** response differs from a prompted one only in content: target stems have
 `role: "target"`, `label` = the canonical stem (`vocals`), `name` = the caller's wording
 (prompt form) or the title-cased canonical name (`Vocals`, for a full split or
-`options.stems`), `prompt: null` and no `spans`/`refinement` values. The splitter's stems
+`options.stems`), `prompt: null` and no `spans`/`refinement` values. Every music stem (the
+residual and `instrumental` included) carries `tags`.
+
+**Descriptive name for `other`.** When the service named the canonical `other` stem itself
+(full split, or `options.stems`, i.e. the name would be `"Other"`), `name` becomes what it
+sounds like: the top tag, or `"A & B"` when the second tag scores ≥ 60% of the first
+(`"Guitar"`, `"Organ & Guitar"`, `"Synth & Strings"`). It stays `"Other"` when the stem is
+near-silent, nothing clears the minimum score, or labeling is off/unavailable/failed. `label`
+stays `"other"`, so code should key on `label`, not `name`. A name that came from the caller's
+own prompt wording (`"other instruments"`) is never replaced, and the residual keeps
+`options.residual_name`. Other stems keep `Vocals`/`Drums`/`Bass`/`Guitar`/`Piano`. The splitter's stems
 are made to sum exactly to the mixture (the error is spread over the stems in proportion to
 their energy), so:
 

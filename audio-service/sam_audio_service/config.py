@@ -98,6 +98,13 @@ class Settings:
     stem_model_dir: str | None = field(default_factory=lambda: os.getenv("AUDIO_STEM_MODEL_DIR") or None)  # chain only
     # chain only: audio-separator mdxc_params["overlap"] for the vocal model (more = slower, smoother).
     stem_vocal_overlap: int = field(default_factory=lambda: _int("AUDIO_STEM_VOCAL_OVERLAP", 8))
+    # chain only: how the vocal model runs. "separator" = audio-separator (temp WAV files);
+    # "native" = in-process BS-RoFormer (stems/roformer.py) with batched fp16 windows, built from
+    # AUDIO_STEM_VOCAL_CONFIG (default: the checkpoint path with .yaml, as audio-separator stores it).
+    stem_vocal_backend: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_VOCAL_BACKEND", "separator"))
+    stem_vocal_config: str | None = field(default_factory=lambda: os.getenv("AUDIO_STEM_VOCAL_CONFIG") or None)
+    stem_vocal_fp16: bool = field(default_factory=lambda: _bool("AUDIO_STEM_VOCAL_FP16", True))  # native only, CUDA only
+    stem_vocal_batch: int = field(default_factory=lambda: _int("AUDIO_STEM_VOCAL_BATCH", 4))  # native only: windows per forward
     # roformer only: native multi-stem BS-RoFormer checkpoint + its training YAML.
     stem_roformer_ckpt: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_ROFORMER_CKPT", ""))
     stem_roformer_config: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_ROFORMER_CONFIG", ""))
@@ -109,12 +116,29 @@ class Settings:
     stem_shifts: int = field(default_factory=lambda: _int("AUDIO_STEM_SHIFTS", 1))
     stem_overlap: float = field(default_factory=lambda: _float("AUDIO_STEM_OVERLAP", 0.25))
     stem_segment: float | None = field(default_factory=lambda: _opt_float("AUDIO_STEM_SEGMENT"))
+    # Demucs segments per forward. 1 = Demucs's own apply_model loop; > 1 batches the segments
+    # through stems/overlap.py (single-model bags such as htdemucs, shifts 0; ~2x faster on an A40).
+    stem_demucs_batch: int = field(default_factory=lambda: _int("AUDIO_STEM_DEMUCS_BATCH", 1))
     # options.mode when a request does not set one: auto | prompted | music_stems.
     routing_default: str = field(default_factory=lambda: os.getenv("AUDIO_ROUTING_DEFAULT", "auto"))
-    # Content classifier for auto routing: off | mock | ast. Unset -> "ast" when a real splitter
-    # is configured (demucs/chain), otherwise "off" (see __post_init__).
+    # Content classifier for auto routing: off | mock | panns | ast. Unset -> "panns" when a real
+    # splitter is configured (demucs/chain/roformer), otherwise "off" (see __post_init__).
     router_classifier: str = field(default_factory=lambda: os.getenv("AUDIO_ROUTER_CLASSIFIER", ""))
-    router_music_threshold: float = field(default_factory=lambda: _float("AUDIO_ROUTER_MUSIC_THRESHOLD", 0.5))
+    # Minimum classifier "song" score (median over 10 s windows of AudioSet Music - Speech) for
+    # auto routing to send stem prompts to the splitter. Unset -> per classifier, picked on the
+    # labelled router set: panns 0.4 (songs 0.75-0.83, speech over music <= 0.34), ast 0.2
+    # (songs 0.40-0.57, speech over music <= 0.17); 0.4 for off/mock.
+    router_music_threshold: float | None = field(default_factory=lambda: _opt_float("AUDIO_ROUTER_MUSIC_THRESHOLD"))
+    # PANNs Cnn14 checkpoint; unset -> ~/panns_data/Cnn14_mAP=0.431.pth (downloaded if missing).
+    router_panns_checkpoint: str | None = field(default_factory=lambda: os.getenv("AUDIO_ROUTER_PANNS_CHECKPOINT") or None)
+    # Instrument tags and descriptive names for music stems ("Other" -> "Synth & Strings"),
+    # from the router's AudioSet tagger (labeling.py): auto | off. auto labels whenever the
+    # router classifier can tag (panns, ast); otherwise tags are null and "other" stays "Other".
+    stem_labels: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABELS", "auto"))
+    # Minimum mean probability for a tag. Unset -> per classifier (see __post_init__).
+    stem_label_min_score: float | None = field(default_factory=lambda: _opt_float("AUDIO_STEM_LABEL_MIN_SCORE"))
+    # 10 s windows analysed per stem (active regions only, spread across the song).
+    stem_label_max_windows: int = field(default_factory=lambda: _int("AUDIO_STEM_LABEL_MAX_WINDOWS", 12))
 
     # Limits.
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
@@ -201,7 +225,11 @@ class Settings:
         elif self.pass_min_similarity is None:
             self.pass_min_similarity = 0.6 if self.backend == "sam" else 0.0
         if not self.router_classifier:
-            self.router_classifier = "ast" if self.stem_splitter in {"demucs", "chain", "roformer"} else "off"
+            self.router_classifier = "panns" if self.stem_splitter in {"demucs", "chain", "roformer"} else "off"
+        if self.router_music_threshold is None:
+            self.router_music_threshold = {"panns": 0.4, "ast": 0.2}.get(self.router_classifier, 0.4)
+        if self.stem_label_min_score is None:
+            self.stem_label_min_score = {"panns": 0.1, "ast": 0.1}.get(self.router_classifier, 0.1)
         if not self.refine:
             # Measured 2026-11-13 on sam-audio-small: the mask improved every fixture (+1.8 to
             # +5.9 dB SI-SDRi, 1.7-6.5 dB less leakage) at no GPU cost, so it is on for the real
@@ -263,6 +291,15 @@ class Settings:
             raise ValueError("AUDIO_STEM_SPLITTER=roformer needs AUDIO_STEM_ROFORMER_CKPT and AUDIO_STEM_ROFORMER_CONFIG")
         if not 1 <= self.stem_vocal_overlap <= 16:
             raise ValueError("AUDIO_STEM_VOCAL_OVERLAP must be between 1 and 16")
+        if self.stem_vocal_backend not in {"separator", "native"}:
+            raise ValueError("AUDIO_STEM_VOCAL_BACKEND must be 'separator' or 'native'")
+        if (self.stem_splitter == "chain" and self.stem_vocal_backend == "native" and not self.stem_model_dir
+                and not Path(self.stem_vocal_model).is_absolute()):
+            raise ValueError("AUDIO_STEM_VOCAL_BACKEND=native needs AUDIO_STEM_MODEL_DIR or an absolute AUDIO_STEM_VOCAL_MODEL path")
+        if not 1 <= self.stem_demucs_batch <= 16:
+            raise ValueError("AUDIO_STEM_DEMUCS_BATCH must be between 1 and 16")
+        if not 1 <= self.stem_vocal_batch <= 16:
+            raise ValueError("AUDIO_STEM_VOCAL_BATCH must be between 1 and 16")
         if not 1 <= self.stem_roformer_overlap <= 16:
             raise ValueError("AUDIO_STEM_ROFORMER_OVERLAP must be between 1 and 16")
         if not 1 <= self.stem_roformer_batch <= 16:
@@ -279,8 +316,14 @@ class Settings:
             raise ValueError("AUDIO_ROUTING_DEFAULT must be 'auto', 'prompted' or 'music_stems'")
         if self.routing_default == "music_stems" and self.stem_splitter == "off":
             raise ValueError("AUDIO_ROUTING_DEFAULT=music_stems needs AUDIO_STEM_SPLITTER")
-        if self.router_classifier not in {"off", "mock", "ast"}:
-            raise ValueError("AUDIO_ROUTER_CLASSIFIER must be 'off', 'mock' or 'ast'")
+        if self.stem_labels not in {"auto", "off"}:
+            raise ValueError("AUDIO_STEM_LABELS must be 'auto' or 'off'")
+        if not 0 <= self.stem_label_min_score <= 1:
+            raise ValueError("AUDIO_STEM_LABEL_MIN_SCORE must be in [0, 1]")
+        if not 1 <= self.stem_label_max_windows <= 64:
+            raise ValueError("AUDIO_STEM_LABEL_MAX_WINDOWS must be between 1 and 64")
+        if self.router_classifier not in {"off", "mock", "ast", "panns"}:
+            raise ValueError("AUDIO_ROUTER_CLASSIFIER must be 'off', 'mock', 'panns' or 'ast'")
         if not 0 <= self.router_music_threshold <= 1:
             raise ValueError("AUDIO_ROUTER_MUSIC_THRESHOLD must be in [0, 1]")
 

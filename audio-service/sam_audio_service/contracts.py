@@ -264,6 +264,11 @@ class Refinement(BaseModel):
     stop_reason: str | None = Field(default=None, description="Why the chain stopped early: negligible | too_much | dissimilar | silent_residual | silent_first_pass")
 
 
+class StemTag(BaseModel):
+    label: str = Field(description='Display name, e.g. "Synth", "Strings", "Female singing"')
+    score: float = Field(ge=0, le=1)
+
+
 class StemResult(BaseModel):
     """Contract C (proposed): one stem. ``name`` + ``audio_base64`` are what Person 4 reads today."""
 
@@ -283,6 +288,12 @@ class StemResult(BaseModel):
     spans: list[list[float]] | None = Field(default=None, description="[[start, end], ...] seconds where the target is active, if known")
     source_asset_id: str | None = None
     refinement: Refinement | None = Field(default=None, description="Target stems only; null on the residual")
+    tags: list[StemTag] | None = Field(
+        default=None,
+        description="music_stems results only: up to 3 instrument tags (AudioSet instrument classes, display names), "
+        "score = mean probability over the stem's active windows, sorted by score. [] when nothing clears the minimum "
+        "score or the stem is near-silent; null on prompted results and when labeling is off or failed",
+    )
 
     @model_serializer(mode="wrap")
     def _keep_refinement_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema
@@ -291,6 +302,7 @@ class StemResult(BaseModel):
         data = handler(self)
         if isinstance(data, dict):
             data.setdefault("refinement", None)
+            data.setdefault("tags", None)
         return data
 
 

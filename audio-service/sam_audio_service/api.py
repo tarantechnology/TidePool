@@ -146,7 +146,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             item = StemResult(
                 name=stem.name, stem_id=stem.stem_id, role=stem.role, prompt=stem.prompt, label=stem.label, start_time=0.0, format="wav/" + metadata.options.output_format,
                 duration=round(stem.samples.shape[1] / audio.sample_rate, 6), sample_rate=audio.sample_rate, channels=int(stem.samples.shape[0]),
-                sample_count=int(stem.samples.shape[1]), spans=stem.spans, source_asset_id=metadata.asset_id, refinement=stem.refinement,
+                sample_count=int(stem.samples.shape[1]), spans=stem.spans, source_asset_id=metadata.asset_id, refinement=stem.refinement, tags=stem.tags,
             )
             if metadata.options.return_mode == "file":
                 try:

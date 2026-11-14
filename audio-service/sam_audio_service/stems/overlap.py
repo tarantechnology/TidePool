@@ -34,12 +34,14 @@ def overlap_add(
     batch: int = 1,
     progress: Progress | None = None,
     cancel: threading.Event | None = None,
+    step: int | None = None,
 ) -> np.ndarray:
-    """Run ``model`` over ``x`` ``(channels, n)`` and return ``(stems, channels, n)`` float32."""
-    if chunk <= 0 or overlap < 1 or batch < 1:
-        raise ValueError("chunk must be positive and overlap, batch at least 1")
+    """Run ``model`` over ``x`` ``(channels, n)`` and return ``(stems, channels, n)`` float32.
+    ``step`` (samples) overrides ``chunk // overlap`` when given (e.g. Demucs's 25 % overlap)."""
+    if chunk <= 0 or overlap < 1 or batch < 1 or (step is not None and not 0 < step <= chunk):
+        raise ValueError("chunk must be positive, overlap and batch at least 1, and step in (0, chunk]")
     channels, n = x.shape
-    step = max(1, chunk // overlap)
+    step = step or max(1, chunk // overlap)
     border = chunk - step
     if border:
         x = np.pad(x, ((0, 0), (border, border)), mode="reflect" if n > border else "constant")

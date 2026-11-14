@@ -17,6 +17,13 @@ from sam_audio_service.stems.vocabulary import canonical_stem, components, reque
 SR = 48_000
 
 
+class _Tensor(np.ndarray):
+    """ndarray with the one torch method the splitters call (``.to(device)``)."""
+
+    def to(self, *args, **kwargs):
+        return self
+
+
 def song(seconds: float = 1.0, channels: int = 2) -> np.ndarray:
     """One partial per mock band: 80 Hz bass, 440 Hz voice, 5 kHz other, 10 kHz cymbal."""
     t = np.arange(int(seconds * SR)) / SR
@@ -168,7 +175,7 @@ def fake_demucs(monkeypatch):
         "demucs.apply": types.SimpleNamespace(apply_model=apply_model),
         "demucs.audio": types.SimpleNamespace(convert_audio=convert_audio),
         "torch": types.SimpleNamespace(
-            from_numpy=lambda a: a, inference_mode=contextlib.nullcontext,
+            from_numpy=lambda a: a.view(_Tensor), inference_mode=contextlib.nullcontext,
             cuda=types.SimpleNamespace(is_available=lambda: False),
             backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False)),
         ),
@@ -309,3 +316,135 @@ def test_chain_progress_stages_and_cancel(monkeypatch):
     with pytest.raises(Cancelled):
         chain.split(song(seconds=0.2), cancel=cancel)
     chain.unload()
+
+
+# ---------------------------------------------------------------- chain with a native vocal model
+def interp_resampler(calls):
+    def run(x, src, dst):
+        calls.append((src, dst, x.shape))
+        n_out = int(round(x.shape[-1] * dst / src))
+        old, new = np.linspace(0, 1, x.shape[-1]), np.linspace(0, 1, n_out)
+        flat = x.reshape(-1, x.shape[-1])
+        return np.stack([np.interp(new, old, row) for row in flat]).reshape(*x.shape[:-1], n_out).astype(np.float32)
+    return run
+
+
+class StubVocals(MockStemSplitter):
+    model_rate = 44_100
+
+    def __init__(self):
+        self.loaded_flag = False
+        self.unloaded = False
+
+    @property
+    def loaded(self):
+        return self.loaded_flag
+
+    def load(self):
+        self.loaded_flag = True
+
+    def unload(self):
+        self.unloaded = True
+
+    def info(self):
+        return {"overlap": 2, "dtype": "float16", "batch": 8}
+
+    def separate(self, x, progress=None, cancel=None):
+        self.seen = x
+        if progress:
+            progress(1.0, "chunks")
+        return {"vocals": 0.25 * x, "other": 0.75 * x}
+
+
+class StubDemucs44(StubDemucs):
+    def load(self):
+        self.model = types.SimpleNamespace(samplerate=44_100, sources=["drums", "bass", "other", "vocals"])
+
+    def separate(self, stereo, rate, out_rate=None):
+        assert rate == 44_100 and out_rate is None
+        self.seen = stereo
+        return np.stack([stereo * g for g in (0.5, 0.3, 0.1, 0.1)]).astype(np.float32)
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+def test_native_chain_stays_at_model_rate_and_sums_to_the_mix(channels):
+    calls = []
+    vocals, demucs = StubVocals(), StubDemucs44("htdemucs")
+    chain = ChainSplitter("vocals.ckpt", demucs, vocals=vocals, resampler=interp_resampler(calls))
+    chain.load()
+    assert chain.loaded and chain.separator is None  # audio-separator never imported
+    t = np.arange(SR // 2) / SR
+    mix = np.stack([0.9 * np.sin(2 * np.pi * 110 * t) * (1 - 0.2 * c) for c in range(channels)]).astype(np.float32)  # smooth for the linear resampler
+    seen = []
+    stems = chain.split(mix, progress=lambda f, s: seen.append((round(f, 2), s)))
+    # one resample in (48k -> 44.1k), one batched resample of all four stems out
+    assert [c[:2] for c in calls] == [(48_000, 44_100), (44_100, 48_000)] and calls[1][2][0] == 4
+    assert np.max(np.abs(demucs.seen - 0.75 * vocals.seen)) < 1e-6  # instrumental = x44 - vocals44
+    assert set(stems) == {"vocals", "drums", "bass", "other"}
+    assert all(s.shape == mix.shape and s.dtype == np.float32 for s in stems.values())
+    assert np.max(np.abs(stems["vocals"] - 0.25 * mix)) < 5e-3
+    assert np.max(np.abs(stems["other"] - 0.2 * 0.75 * mix)) < 5e-3  # Demucs vocal leakage folded into other
+    assert np.max(np.abs(sum(stems.values()) - mix)) < 5e-3
+    assert seen[0] == (0.0, "vocals") and (0.7, "instruments") in seen and seen[-1] == (1.0, "done")
+    info = chain.info()
+    assert info["vocal_backend"] == "native" and info["vocal_dtype"] == "float16" and info["vocal_overlap"] == 2
+    chain.unload()
+    assert vocals.unloaded
+
+
+def test_native_chain_settings(tmp_path):
+    from sam_audio_service.stems.roformer import RoformerSplitter
+
+    s = Settings(backend="mock", stem_splitter="chain", stem_vocal_backend="native", stem_model_dir="/m", stem_vocal_overlap=2, stem_vocal_batch=8)
+    s.validate()
+    chain = create_splitter(s)
+    assert isinstance(chain.vocals, RoformerSplitter) and not chain.loaded
+    v = chain.vocals
+    assert (v.checkpoint, v.config_path) == ("/m/model_bs_roformer_ep_317_sdr_12.9755.ckpt", "/m/model_bs_roformer_ep_317_sdr_12.9755.yaml")
+    assert (v.overlap, v.batch, v.fp16) == (2, 8, True)
+    explicit = create_splitter(Settings(backend="mock", stem_splitter="chain", stem_vocal_backend="native", stem_vocal_model="/w/v.ckpt",
+                                        stem_vocal_config="/w/v.yaml", stem_vocal_fp16=False))
+    assert (explicit.vocals.checkpoint, explicit.vocals.config_path, explicit.vocals.fp16) == ("/w/v.ckpt", "/w/v.yaml", False)
+    assert create_splitter(Settings(backend="mock", stem_splitter="chain")).vocals is None  # default: audio-separator
+    for kwargs, match in (({"stem_vocal_backend": "onnx"}, "AUDIO_STEM_VOCAL_BACKEND"), ({"stem_vocal_batch": 0}, "AUDIO_STEM_VOCAL_BATCH"),
+                          ({"stem_vocal_backend": "native"}, "AUDIO_STEM_MODEL_DIR")):
+        with pytest.raises(ValueError, match=match):
+            Settings(backend="mock", stem_splitter="chain", **kwargs).validate()
+
+
+def test_demucs_batched_segments_match_the_model_and_skip_bags(fake_demucs, monkeypatch):
+    calls = []
+
+    class Inner:
+        segment, samplerate = 0.1, 44_100
+
+        def to(self, device):
+            return self
+
+        def __call__(self, x):
+            calls.append(x.shape)
+            return np.stack([x * g for g in (0.1, 0.2, 0.3, 0.4)], axis=1)
+
+    class Bag(FakeDemucsModel):
+        models = [Inner()]
+        weights = [[1.0, 1.0, 1.0, 2.0]]
+
+    splitter = DemucsSplitter("htdemucs", shifts=0, overlap=0.25, batch=3)
+    splitter.load()
+    splitter.model = Bag()
+    mix = tone(0.5, 2)
+    stems = splitter.split(mix)
+    assert "apply" not in fake_demucs  # apply_model not used
+    assert calls and all(c[0] <= 3 and c[1:] == (2, 4410) for c in calls) and max(c[0] for c in calls) == 3
+    assert np.max(np.abs(stems["drums"] - 0.1 * mix)) < 5e-3 and np.max(np.abs(stems["vocals"] - 0.8 * mix)) < 5e-3  # bag weight applied
+    assert splitter.info()["batch"] == 3
+    # the per-source htdemucs_ft bag (or shifts) keeps Demucs's own loop
+    Bag.models, Bag.weights = [Inner(), Inner()], FakeDemucsModel.weights  # the fake apply_model reads weights as gains
+    splitter.split(mix)
+    assert fake_demucs["apply"]["split"] is True
+
+
+def test_demucs_batch_setting():
+    assert create_splitter(Settings(backend="mock", stem_splitter="demucs", stem_demucs_batch=4)).batch == 4
+    with pytest.raises(ValueError, match="AUDIO_STEM_DEMUCS_BATCH"):
+        Settings(backend="mock", stem_splitter="demucs", stem_demucs_batch=0).validate()

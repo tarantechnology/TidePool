@@ -108,12 +108,18 @@ def fake_roformer(monkeypatch, tmp_path):
 
     torch = types.SimpleNamespace(
         load=lambda path, map_location=None, weights_only=None: state["state"], from_numpy=from_numpy,
-        inference_mode=contextlib.nullcontext, float16="f16", float32="f32",
+        inference_mode=contextlib.nullcontext, float16="f16", float32="f32", autocast=lambda *a, **k: contextlib.nullcontext(),
         cuda=types.SimpleNamespace(is_available=lambda: False),
         backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False)),
     )
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "bs_roformer", types.SimpleNamespace(BSRoformer=FakeBSRoformer))
+    single = tmp_path / "vocals.yaml"
+    single.write_text(
+        "audio:\n  chunk_size: 4000\n  sample_rate: 44100\n"
+        "model:\n  dim: 8\n  depth: 1\n  stereo: true\n  num_stems: 1\n  freqs_per_bands: !!python/tuple\n  - 2\n  - 2\n"
+        "training:\n  instruments: [Vocals, Instrumental]\n  target_instrument: Vocals\n"
+    )
     config = tmp_path / "config.yaml"
     config.write_text(
         "audio:\n  chunk_size: 4000\n  sample_rate: 44100\n"
@@ -128,7 +134,7 @@ def fake_roformer(monkeypatch, tmp_path):
         old, new = np.linspace(0, 1, x.shape[-1]), np.linspace(0, 1, n_out)
         return np.stack([np.interp(new, old, row) for row in x]).astype(np.float32)
 
-    return types.SimpleNamespace(config=str(config), state=state, resample_calls=calls, resampler=resampler)
+    return types.SimpleNamespace(config=str(config), single=str(single), state=state, resample_calls=calls, resampler=resampler)
 
 
 def tone(seconds, channels):
@@ -141,7 +147,7 @@ def test_roformer_splitter_end_to_end(fake_roformer, channels):
     splitter = RoformerSplitter("/w/bs_roformer_4stem.ckpt", fake_roformer.config, overlap=2, fp16=True, batch=2, resampler=fake_roformer.resampler)
     splitter.load()
     model = FakeBSRoformer.created[-1]
-    assert model.kwargs["freqs_per_bands"] == (2, 2) and model.halved and splitter.device == "cpu"
+    assert model.kwargs["freqs_per_bands"] == (2, 2) and splitter.device == "cpu" and not hasattr(model, "halved")  # fp16 = autocast, weights stay fp32
     assert splitter.stems == ("drums", "bass", "other", "vocals") and splitter.chunk == 4000
     mix = tone(0.5, channels)
     progress = []
@@ -168,7 +174,50 @@ def test_roformer_settings(monkeypatch):
     splitter = create_splitter(s)
     assert isinstance(splitter, RoformerSplitter) and (splitter.overlap, splitter.batch, splitter.fp16) == (4, 2, False) and not splitter.loaded
     monkeypatch.delenv("AUDIO_ROUTER_CLASSIFIER", raising=False)
-    assert Settings(stem_splitter="roformer").router_classifier == "ast"
+    assert Settings(stem_splitter="roformer").router_classifier == "panns"
     for field, value in (("stem_roformer_overlap", 0), ("stem_roformer_batch", 17), ("stem_vocal_overlap", 17)):
         with pytest.raises(ValueError):
             Settings(stem_splitter="mock", **{field: value}).validate()
+
+
+def test_single_target_model_returns_target_and_complement(fake_roformer):
+    splitter = RoformerSplitter("/w/vocals.ckpt", fake_roformer.single, overlap=2, batch=3, resampler=fake_roformer.resampler)
+    splitter.load()
+    assert splitter.instruments == ["Vocals"] and splitter.stems == ("vocals", "other")
+    assert FakeBSRoformer.created[-1].kwargs["freqs_per_bands"] == (2, 2)  # audio-separator YAMLs tag tuples
+    x = tone(0.3, 2)
+    est = splitter.separate(x)  # model rate in, model rate out
+    assert set(est) == {"vocals", "other"} and np.max(np.abs(est["vocals"] - 0.1 * x)) < 1e-5
+    assert np.max(np.abs(est["vocals"] + est["other"] - x)) < 1e-6
+    stems = splitter.split(tone(0.3, 1))
+    assert set(stems) == {"vocals", "other"} and all(s.shape[0] == 1 for s in stems.values())
+
+
+def test_enable_flash_turns_on_the_flash_kernel_for_every_attend():
+    from collections import namedtuple
+
+    from sam_audio_service.stems.roformer import enable_flash
+
+    Config = namedtuple("Config", ["enable_flash", "enable_math", "enable_mem_efficient"])
+    attends = [types.SimpleNamespace(cuda_config=Config(False, True, False)) for _ in range(3)]
+    model = types.SimpleNamespace(modules=lambda: [object(), *attends, types.SimpleNamespace(cuda_config=None)])
+    assert enable_flash(model) == 3
+    assert all(a.cuda_config == Config(True, True, True) for a in attends)
+
+
+def test_fast_rotary_patches_each_shared_embedding_once_and_skips_unsupported():
+    from sam_audio_service.stems.roformer import FastRotary, fast_rotary
+
+    def rotary(**kw):
+        return types.SimpleNamespace(freqs=np.ones(32), rotate_queries_or_keys=lambda t, **k: ("original", t), **kw)
+
+    shared, xpos = rotary(), rotary(use_xpos=True)
+    layers = [types.SimpleNamespace(rotary_embed=shared), types.SimpleNamespace(rotary_embed=shared),
+              types.SimpleNamespace(rotary_embed=xpos), types.SimpleNamespace(rotary_embed=None)]
+    model = types.SimpleNamespace(modules=lambda: layers)
+    assert fast_rotary(model) == 1 and fast_rotary(model) == 0  # idempotent
+    assert shared._fast_rotary and not hasattr(xpos, "_fast_rotary")
+    assert not FastRotary.supports(rotary(learned_freq=True)) and not FastRotary.supports(rotary(interpolate_factor=2.0))
+    # anything but the plain call bs_roformer makes goes to the library's own implementation
+    t = types.SimpleNamespace(shape=(1, 8, 10, 64))
+    assert shared.rotate_queries_or_keys(t, offset=3) == ("original", t)

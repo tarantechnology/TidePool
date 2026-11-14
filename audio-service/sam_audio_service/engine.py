@@ -39,6 +39,7 @@ from .classifier import ContentClassifier, create_classifier
 from .config import Settings
 from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
 from .refine import mask_refine
+from .labeling import FALLBACK_NAME, label_stems
 from .errors import (
     AudioServiceError,
     InferenceFailure,
@@ -51,7 +52,7 @@ from .errors import (
 from .routing import RouteDecision, route
 from .stems import StemSplitter, create_splitter, mixture_consistency
 from .stems.base import fit_length
-from .stems.vocabulary import components
+from .stems.vocabulary import components, display_name
 from .visual_prompts import translate_visual_prompt
 
 log = logging.getLogger("sam_audio_service")
@@ -94,6 +95,7 @@ class StemArrays:
     spans: list[list[float]] | None
     stem_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     refinement: dict[str, Any] | None = None  # multi-pass bookkeeping for target stems
+    tags: list[dict[str, Any]] | None = None  # music stems: instrument tags (labeling.py)
 
 
 @dataclass
@@ -131,7 +133,11 @@ class Engine:
         # Both optional and loaded on first use; the splitter is None when AUDIO_STEM_SPLITTER=off.
         self.splitter = splitter or create_splitter(settings)
         self.classifier = classifier or create_classifier(settings)
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # serialises separation (prompted model and splitter)
+        # The content classifier is a separate small model with its own lock, so /v1/route (and
+        # the routing step of /separate) never waits behind a long split. Never held together
+        # with _lock: routing finishes (and releases this) before separation takes _lock.
+        self._classifier_lock = threading.Lock()
         self._load_error: str | None = None
         self._splitter_error: str | None = None
         self._classifier_error: str | None = None
@@ -199,7 +205,7 @@ class Engine:
         if self._classifier_error or audio.frames == 0 or audio.duration > self.settings.max_duration_seconds:
             return None
         try:
-            with self._lock:
+            with self._classifier_lock:
                 return self.classifier.score(audio.samples, audio.sample_rate)
         except Exception as exc:  # noqa: BLE001 - routing falls back to the prompt rules
             log.warning("content classifier failed: %s: %s", type(exc).__name__, exc)
@@ -353,6 +359,7 @@ class Engine:
         stems = [StemArrays(r.name, "target", total(components(r.canonical, splitter.stems)), None, r.canonical, None) for r in decision.requests]
         if decision.residual and options.residual != "none":
             stems.append(StemArrays(options.residual_name, "residual", total(decision.residual), None, "everything else", None))
+        self._label_stems(stems, mixture, audio.sample_rate, decision, warnings)
         elapsed = time.perf_counter() - started
         info = splitter.info()
         model = {
@@ -369,6 +376,42 @@ class Engine:
             "is_mock": splitter.is_mock,
         }
         return EngineResult(stems, model, warnings, elapsed)
+
+    def _label_stems(self, stems: list[StemArrays], mixture: np.ndarray, sample_rate: int, decision: RouteDecision, warnings: list[str]) -> None:
+        """Tag every stem and give the ``other`` stem a descriptive name (``labeling.py``).
+
+        Runs the router's tagger under its lock (never together with ``_lock``). The name of
+        ``other`` is replaced only when the service chose it (full split / ``options.stems``:
+        the title-cased canonical "Other"); a caller's own wording is kept. Any failure leaves
+        tags null and names unchanged, with a warning: labeling never fails a split.
+        """
+        if self.settings.stem_labels == "off" or not self.classifier.can_tag or not stems:
+            return
+        if self._classifier_error:
+            warnings.append(f"stem labeling unavailable: the content classifier failed earlier ({self._classifier_error})")
+            return
+        started = time.perf_counter()
+        try:
+            with self._classifier_lock:
+                labels = label_stems(
+                    self.classifier,
+                    [(s.label if s.role == "target" else "residual", s.samples) for s in stems],
+                    mixture,
+                    sample_rate,
+                    min_score=float(self.settings.stem_label_min_score),
+                    max_windows=self.settings.stem_label_max_windows,
+                )
+        except AudioServiceError:  # Cancelled
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("stem labeling failed: %s: %s", type(exc).__name__, exc)
+            warnings.append(f"stem labeling failed ({type(exc).__name__}); tracks keep their default names")
+            return
+        for stem, label in zip(stems, labels):
+            stem.tags = label.tags
+            if stem.role == "target" and stem.label == "other" and stem.name == display_name("other"):
+                stem.name = label.name or FALLBACK_NAME
+        log.info("labelled %d stems in %.2fs: %s", len(stems), time.perf_counter() - started, [(s.name, [t["label"] for t in s.tags or []]) for s in stems])
 
     def _separate_prompted(self, audio: DecodedAudio, metadata: SeparationMetadata, prompts: list[PromptSpec], workdir: Path | None) -> EngineResult:
         warnings: list[str] = []

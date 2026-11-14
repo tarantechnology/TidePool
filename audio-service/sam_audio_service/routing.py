@@ -15,13 +15,13 @@ request                                     route
                                             for names that are not stems)
 auto, no splitter configured                prompted
 auto, no prompts and no ``options.stems``   music_stems, every stem (warns when the
-                                            classifier says it is not music)
+                                            classifier says it is not a song)
 auto, a prompt has span/visual guidance     prompted (only the prompted model uses it)
 auto, no prompt names a stem                prompted
 auto, some prompts name stems, some not     prompted ("mixed prompts")
 auto, requested stems overlap               prompted (e.g. ``instrumental`` + ``drums``)
-auto, all stems, classifier says music      music_stems
-auto, all stems, classifier says not music  prompted
+auto, all stems, classifier says song       music_stems
+auto, all stems, classifier says not song   prompted
 auto, all stems, classifier unavailable     music_stems if ``hints.source_kind = audio``,
                                             otherwise prompted
 ==========================================  ===========================================
@@ -30,6 +30,8 @@ The last row is deliberate: a "singing" prompt on a video soundtrack must not si
 become a Demucs split, so without a classifier only an audio-only upload (the caller's
 hint, the one tie-breaker) is trusted to be a song. ``options.stems``, when given, stands in
 for the prompts in every row. The classifier runs at most once and only when a row needs it.
+"Says song" means ``classifier.decision_score(scores) >= AUDIO_ROUTER_MUSIC_THRESHOLD``: music
+with nobody talking over it, so speech over a music bed (vlogs, soundtracks) stays prompted.
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .classifier import decision_score
 from .contracts import InferenceOptions, PromptSpec, RoutingHints
 from .errors import InvalidRequest, UnsupportedOperation
 from .stems.vocabulary import canonical_stem, components, display_name, ordered, requestable
@@ -162,8 +165,8 @@ def route(
     if not items:
         scores = classify()
         decision = music("auto: no prompts, so the song is split into every stem", [], scores)
-        if scores is not None and scores["music"] < threshold:
-            decision.warnings.append(f"this does not sound like music (music score {scores['music']:.2f} < {threshold:g}); split anyway because no prompts were given")
+        if scores is not None and decision_score(scores) < threshold:
+            decision.warnings.append(f"this does not sound like music ({_describe(scores)} < {threshold:g}); split anyway because no prompts were given")
         return decision
     if options.stems is None and any(p.anchors or p.visual_prompt for p in prompts):
         return prompted("auto: span or visual guidance needs the prompted model")
@@ -181,6 +184,11 @@ def route(
         if hints.source_kind == "audio":
             return music("auto: the prompts are stem names and the upload is audio-only (content classifier unavailable)", matched)
         return prompted("auto: the prompts are stem names but the content classifier is unavailable and the upload is not known to be audio-only")
-    if scores["music"] >= threshold:
-        return music(f"auto: the prompts are stem names and the content is music (music score {scores['music']:.2f} >= {threshold:g})", matched, scores)
-    return prompted(f"auto: the prompts are stem names but the content is not music (music score {scores['music']:.2f} < {threshold:g})", scores)
+    if decision_score(scores) >= threshold:
+        return music(f"auto: the prompts are stem names and the content is music ({_describe(scores)} >= {threshold:g})", matched, scores)
+    return prompted(f"auto: the prompts are stem names but the content is not a song ({_describe(scores)} < {threshold:g})", scores)
+
+
+def _describe(scores: dict[str, float]) -> str:
+    """``song score 0.52 [music 0.60, speech 0.08]`` for reasons and warnings."""
+    return f"song score {decision_score(scores):.2f} [music {scores['music']:.2f}, speech {scores.get('speech', 0.0):.2f}]"

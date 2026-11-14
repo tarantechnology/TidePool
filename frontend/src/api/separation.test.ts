@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SavedStem } from './backend'
-import { buildVisualPrompt, canRemove, findRemoveTargets, missingResidualMessage, musicStemName, normalizeStemName, NO_VISUAL_PROMPT } from './separation'
+import { buildVisualPrompt, canRemove, findRemoveTargets, missingResidualMessage, musicStemName, normalizeStemName, NO_VISUAL_PROMPT, parseExplodeList, explodeTier, orderForExplode } from './separation'
 
 const stem = (over: Partial<SavedStem> & { id: string; name: string }): SavedStem => ({
   duration: 4,
@@ -101,6 +101,47 @@ describe('findRemoveTargets', () => {
   it('will not pick a target when two stems share the name', () => {
     const stems = [stem({ id: 'a', name: 'siren' }), stem({ id: 'b', name: 'siren' }), stem({ id: 'r', name: 'residual' })]
     expect(findRemoveTargets(stems, 'siren').target).toBeNull()
+  })
+})
+
+describe('parseExplodeList', () => {
+  it('trims, dedupes and drops empties and the residual name', () => {
+    expect(parseExplodeList(' people  talking, music,, Music , residual, thunder ')).toEqual(['people talking', 'music', 'thunder'])
+  })
+  it('caps the list', () => {
+    expect(parseExplodeList(Array.from({ length: 12 }, (_, i) => `s${i}`).join(','))).toHaveLength(8)
+  })
+})
+
+describe('orderForExplode', () => {
+  it('puts beds, then hits, then unknown, then music, then voices', () => {
+    expect(orderForExplode(['people talking', 'orchestral music', 'thunder', 'heavy rain', 'cape flapping']))
+      .toEqual(['heavy rain', 'thunder', 'cape flapping', 'orchestral music', 'people talking'])
+  })
+  it('keeps the typed order within a tier', () => {
+    expect(orderForExplode(['wind', 'rain', 'punches', 'thunder'])).toEqual(['wind', 'rain', 'punches', 'thunder'])
+  })
+  it('treats a described voice as a voice even with a sound word in it', () => {
+    expect(explodeTier('man shouting over the rain')).toBe('voices')
+    expect(explodeTier('deep male voice')).toBe('voices')
+    expect(explodeTier('dog barking')).toBe('hits')
+    expect(explodeTier('soundtrack')).toBe('music')
+  })
+})
+
+describe('toSoundSuggestions', () => {
+  it('keeps well-formed sounds and drops the rest', async () => {
+    const { toSoundSuggestions } = await import('./backend')
+    const out = toSoundSuggestions({ sounds: [{ prompt: ' thunder rumbling ', group: 'thunder', tier: 'hits', score: 0.9, windows: [1, 'x', 3] }, { prompt: '' }, null], is_mock: false })
+    expect(out).toEqual({ sounds: [{ prompt: 'thunder rumbling', group: 'thunder', tier: 'hits', score: 0.9, windows: [1, 3] }], is_mock: false })
+    expect(toSoundSuggestions(null).sounds).toEqual([])
+  })
+})
+
+describe('orderForExplode recipe', () => {
+  it('runs voices, backgrounds, music, then hits and others', () => {
+    expect(orderForExplode(['high-pitched screech', 'orchestral music', 'thunder rumbling', 'heavy rain', 'people talking', 'cape flapping'], true))
+      .toEqual(['people talking', 'thunder rumbling', 'heavy rain', 'orchestral music', 'high-pitched screech', 'cape flapping'])
   })
 })
 

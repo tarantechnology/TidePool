@@ -13,7 +13,7 @@ def parse(text):
     match=re.fullmatch(r'(?:lower|set) (?:the )?(.+?) volume to (\d+(?:\.\d+)?)%',text,re.I)
     if match:
         name,value=match.groups(); value=float(value)/100
-        return {'action':'set_volume','stem_name':name,'volume':value} if value<=2 else None
+        return {'action':'set_volume','stem_name':name,'volume':value} if value<=5 else None
     match=re.fullmatch(r'make (?:the )?(.+?) louder',text,re.I)
     if match: return {'action':'louder','stem_name':match.group(1)}
     return None

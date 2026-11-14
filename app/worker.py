@@ -220,7 +220,7 @@ def work_once():
             if not stems: raise ValueError('No stems available')
             path=project_dir(pid)/'exports'/(job['id']+'.'+payload['format'])
             path.parent.mkdir(parents=True,exist_ok=True)
-            export(stems,p['original'],path,payload['format'],payload['include_video'])
+            export(stems,p['original'],path,payload['format'],payload['include_video'],payload.get('rotation',0))
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'path':str(path)}),job['id']))
         if job['kind']=='process':
             try: provider.send(pid, 'Your SoundCanvas video is ready to edit.')

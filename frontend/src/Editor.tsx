@@ -14,6 +14,12 @@ import { resolveActions } from './audio/resolve'
 import { isDurationMismatch } from './audio/videoSync'
 import { EditLog } from './components/EditLog'
 import { ProjectPanel } from './components/ProjectPanel'
+import { Mixer } from './components/Mixer'
+import { MoonIcon, MoonPullPanel, MotifStrip } from './components/MoonPull'
+import type { WithLayers } from './components/MoonPull'
+import { FEATURES } from './features'
+import { loadRules, saveRules } from './moonpull/rules'
+import type { Rule } from './moonpull/rules'
 import type { ProjectPanelHandle } from './components/ProjectPanel'
 import { Logo } from './components/Logo'
 import { Splitter } from './components/Splitter'
@@ -25,12 +31,18 @@ import { VideoPanel } from './components/VideoPanel'
 import { applyAction, initialTracks } from './edits'
 import { downloadText } from './export/download'
 import { serializeEditList } from './export/editList'
+import { displayAspect, readRotation, writeRotation } from './rotation'
+import type { Rotation } from './rotation'
 import { useStemSync } from './hooks/useStemSync'
 import { canRedo, canUndo, commit, createHistory, redo, undo } from './state/history'
+import { dropRedo, nextRedo, nextUndo, pushStep, stepRedone, stepUndone } from './state/steps'
+import type { ServerStep, StepStack } from './state/steps'
+import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { captureThumb, getProject as getSavedProject, loadSteps, saveProject, saveSteps, takePendingUpload } from './projects/registry'
 import type { History } from './state/history'
 import { createEditorState, mergeKinds, setKindOverride } from './state/kinds'
 import type { EditorState } from './state/kinds'
-import type { EditAction, Stem, StemKind, TrackState } from './types'
+import type { EditAction, Keyframe, Stem, StemKind, TrackState } from './types'
 
 type Status = 'loading' | 'ready' | 'error'
 
@@ -46,7 +58,7 @@ function isTextEntry(el: HTMLElement): boolean {
   return el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'range'
 }
 
-export default function Editor() {
+export default function Editor({ projectId: openProjectId = null }: { projectId?: string | null } = {}) {
   const [engine, setEngine] = useState<AudioEngine | null>(null)
   const [baseStems, setBaseStems] = useState<Stem[]>([])
   const [history, setHistory] = useState<History<EditorState>>(() => createHistory(createEditorState([])))
@@ -68,10 +80,36 @@ export default function Editor() {
   const seekVideo = useCallback((time: number) => setSeekTo((prev) => ({ time, n: (prev?.n ?? 0) + 1 })), [])
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
   const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
+  // Undo and redo over changes made on the server, once the editor's own history runs out. Kept per project.
+  const [steps, setStepsState] = useState<{ projectId: string | null; stack: StepStack }>(() => ({ projectId: openProjectId, stack: loadSteps(openProjectId) }))
+  const stepScope = projectStems.projectId ?? openProjectId
+  if (steps.projectId !== stepScope) setStepsState({ projectId: stepScope, stack: loadSteps(stepScope) })
+  const setSteps = useCallback((update: (s: StepStack) => StepStack) => setStepsState((prev) => {
+    const stack = update(prev.stack)
+    if (stack !== prev.stack) saveSteps(prev.projectId, stack)
+    return stack === prev.stack ? prev : { ...prev, stack }
+  }), [])
+  // A turned clip is laid out by the shape it is shown at, so a sideways landscape clip stands as portrait.
+  const [rotation, setRotation] = useState<Rotation>(0)
+  const rotationProject = useRef<string | null>(null)
+  useEffect(() => {
+    // A project brings back the turn saved for it; a fresh upload keeps the turn chosen while it uploaded.
+    const pid = projectStems.projectId ?? null
+    if (pid === rotationProject.current) return
+    rotationProject.current = pid
+    if (!pid) return
+    const saved = readRotation(pid)
+    if (saved !== null) setRotation(saved)
+    else writeRotation(pid, rotation)
+  }, [projectStems.projectId, rotation])
+  const rotate = useCallback((r: Rotation) => { setRotation(r); writeRotation(rotationProject.current, r) }, [])
+  const [laneView, setLaneView] = useState<'chart' | 'mixer'>('chart')
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [working, setWorking] = useState<string | null>(null)
   const videoUploadInProgress = useRef(false)
-  const [videoAspect, setVideoAspect] = useState<number | null>(null)
+  const [clipAspect, setClipAspect] = useState<number | null>(null)
+  // A turned clip is laid out by the shape it is shown at.
+  const videoAspect = clipAspect === null ? null : displayAspect(clipAspect, rotation)
   const portrait = videoSrc !== null && videoAspect !== null && videoAspect < 0.9
   const [layout, setLayout] = useState(readLayout)
   const mainRef = useRef<HTMLElement>(null)
@@ -99,9 +137,20 @@ export default function Editor() {
   const loadRequest = useRef(0)
   const { tracks, kinds } = history.present
   const stems = useMemo(() => mergeKinds(baseStems, kinds), [baseStems, kinds])
-  const { syncError, flush } = useStemSync(syncTarget, tracks, setLoadError)
+  const { syncError, flush, exclusive } = useStemSync(syncTarget, tracks, setLoadError)
   const chipErrors = [syncError, loadError, syncIssue].filter(Boolean)
   const tracksRef = useRef<TrackState[]>([])
+  // Moon pull rules belong to a project (or to the layers in this tab when there is none).
+  const ruleScope = projectStems.projectId ?? 'local'
+  const [rules, setRulesState] = useState<{ scope: string; list: Rule[] }>(() => ({ scope: ruleScope, list: loadRules(ruleScope) }))
+  if (rules.scope !== ruleScope) setRulesState({ scope: ruleScope, list: loadRules(ruleScope) })
+  const setRules = useCallback((update: (rules: Rule[]) => Rule[]) => setRulesState((prev) => {
+    const list = update(prev.list); saveRules(prev.scope, list); return { ...prev, list }
+  }), [])
+  const [moonOpen, setMoonOpen] = useState(false)
+  const [moonRule, setMoonRule] = useState<string | null>(null)
+  const openRule = useCallback((id: string) => { setMoonRule(id); setMoonOpen(true) }, [])
+  const getTracks = useCallback(() => tracksRef.current, [])
 
   useEffect(() => {
     tracksRef.current = tracks
@@ -230,12 +279,37 @@ export default function Editor() {
     const panel = projectPanel.current
     if (working || videoUploadInProgress.current || !panel) return
     videoUploadInProgress.current = true
-    setCompareOriginal(false)
+    setCompareOriginal(false); setRotation(0)
     // A song has no picture: the panel shows the audio placeholder once the project knows.
-    if (isAudioFile(file) && !isVideoFile(file)) { originalVideo.current = file; setHasLocalVideo(true); setVisual(null); setVisualSelection(null); setVideoSrc(null); setVideoAspect(null); setVideoDuration(null) }
+    if (isAudioFile(file) && !isVideoFile(file)) { originalVideo.current = file; setHasLocalVideo(true); setVisual(null); setVisualSelection(null); setVideoSrc(null); setClipAspect(null); setVideoDuration(null) }
     else loadVideo(file, false)
     void panel.uploadMedia(file).finally(() => { videoUploadInProgress.current = false })
   }, [loadVideo, working])
+
+  // A clip chosen on the projects page starts uploading as soon as the editor is ready.
+  const pendingTaken = useRef(false)
+  useEffect(() => {
+    if (openProjectId || pendingTaken.current || !engine || status !== 'ready' || !projectPanel.current) return
+    pendingTaken.current = true
+    const file = takePendingUpload()
+    if (!file) return
+    if (isVideoFile(file)) onPickVideo(file)
+    else void projectPanel.current.uploadMedia(file)
+  }, [openProjectId, engine, status, onPickVideo])
+
+  // Keep the project's card in the project list current: its layer count and a frame of the clip.
+  const listedProject = projectStems.projectId
+  useEffect(() => {
+    if (!listedProject || status !== 'ready') return
+    if (stemsLabel === 'Project stems') saveProject({ id: listedProject, layers: baseStems.length })
+    else if (stemsLabel === VIDEO_AUDIO_LABEL) saveProject({ id: listedProject, layers: 0 })
+  }, [listedProject, stemsLabel, baseStems.length, status])
+  useEffect(() => {
+    if (!listedProject || !videoSrc || getSavedProject(listedProject)?.thumb) return
+    let live = true
+    void captureThumb(videoSrc).then((thumb) => { if (live && thumb) saveProject({ id: listedProject, thumb }) })
+    return () => { live = false }
+  }, [listedProject, videoSrc])
 
   const onPick = (e: ChangeEvent<HTMLInputElement>) => {
     loadFiles(Array.from(e.target.files ?? []))
@@ -256,11 +330,31 @@ export default function Editor() {
   const dispatch = useCallback((action: EditAction, coalesceKey?: string) => {
     const now = Date.now()
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
-  }, [])
+    setSteps(dropRedo)
+  }, [setSteps])
 
   const setKind = useCallback((stemId: string, kind: StemKind) => {
     setHistory((h) => commit(h, { ...h.present, kinds: setKindOverride(h.present.kinds, stemId, kind) }))
+    setSteps(dropRedo)
+  }, [setSteps])
+
+  // Renaming shows the new name at once; the save runs behind it, and a failed one puts the old name back.
+  const renameLayer = useCallback(async (stemId: string, name: string) => {
+    if (!projectPanel.current) throw new Error('Project controls are not ready.')
+    const next = name.trim()
+    const previous = stemsRef.current.find((s) => s.id === stemId)?.label
+    if (!next || previous === undefined || next === previous) return
+    const relabel = (from: string, to: string) => setBaseStems((list) => list.map((s) => (s.id === stemId && s.label === from ? { ...s, label: to } : s)))
+    relabel(previous, next)
+    try { await projectPanel.current.renameLayer(stemId, next, exclusive) }
+    catch (err) { relabel(next, previous); throw err }
+  }, [exclusive])
+
+  const deleteLayer = useCallback(async (stemId: string, fold: boolean) => {
+    if (!projectPanel.current) throw new Error('Project controls are not ready.')
+    await projectPanel.current.deleteLayer(stemId, fold)
   }, [])
+  const residual = baseStems.find((s) => s.kind === 'residual') ?? null
 
   const runPrompt = useCallback(
     async (text: string) => {
@@ -281,11 +375,12 @@ export default function Editor() {
       const { actions, warnings } = resolveActions(res.actions, engine, engine.duration)
       if (actions.length > 0) {
         setHistory((h) => commit(h, { ...h.present, tracks: actions.reduce(applyAction, h.present.tracks) }))
+        setSteps(dropRedo)
         setLog((l) => [...l, ...actions])
       }
       return { message: [res.message, ...warnings].join(' '), ok: actions.length > 0 }
     },
-    [engine, stems],
+    [engine, stems, setSteps],
   )
 
   useEffect(() => {
@@ -301,22 +396,65 @@ export default function Editor() {
     return () => window.removeEventListener('keydown', onKey)
   }, [engine])
 
+  // One undo for everything: the editor's own edits first, then changes made on the server
+  // (applying a preview, Explode, a Current command, Moon pull), newest first. Redo walks back.
+  const historyRef = useRef(history)
+  const stepsRef = useRef(steps.stack)
+  useEffect(() => { historyRef.current = history; stepsRef.current = steps.stack }, [history, steps.stack])
+  const stepping = useRef(false)
+  const restoreStep = useCallback((how: 'undo' | 'redo') => {
+    const step = how === 'undo' ? nextUndo(stepsRef.current) : nextRedo(stepsRef.current)
+    const panel = projectPanel.current
+    if (!step || !panel || stepping.current) return
+    stepping.current = true
+    void panel.restoreTo(how === 'undo' ? step.before : step.after, step.label, how)
+      .then(() => setSteps(how === 'undo' ? stepUndone : stepRedone))
+      .catch(() => { /* the panel shows why */ })
+      .finally(() => { stepping.current = false })
+  }, [setSteps])
+  const undoAny = useCallback(() => {
+    if (canUndo(historyRef.current)) setHistory((h) => undo(h))
+    else restoreStep('undo')
+  }, [restoreStep])
+  const redoAny = useCallback(() => {
+    if (canRedo(historyRef.current)) setHistory((h) => redo(h))
+    else restoreStep('redo')
+  }, [restoreStep])
+  const onStep = useCallback((step: ServerStep) => setSteps((s) => pushStep(s, step)), [setSteps])
+  const undoStep: ServerStep | null = canUndo(history) ? null : nextUndo(steps.stack)
+  const redoStep: ServerStep | null = canRedo(history) ? null : nextRedo(steps.stack)
+  const canUndoAny = canUndo(history) || undoStep !== null
+  const canRedoAny = canRedo(history) || redoStep !== null
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
       if (isTextEntry(e.target as HTMLElement)) return
       e.preventDefault()
-      setHistory((h) => {
-        if (e.shiftKey) return canRedo(h) ? redo(h) : h
-        return canUndo(h) ? undo(h) : h
-      })
+      if (e.shiftKey) redoAny()
+      else undoAny()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [undoAny, redoAny])
 
   const duration = engine?.duration ?? 0
   const hasLayers = stems.length > 0
+  const viewToggle = (
+    <div className="flex rounded-full border border-line bg-surface p-0.5 text-[10px] shadow-sm" role="group" aria-label="Layer view">
+      {(['chart', 'mixer'] as const).map((v) => (
+        <button key={v} aria-pressed={laneView === v} onClick={() => setLaneView(v)}
+          className={`rounded-full px-2 py-px font-medium whitespace-nowrap transition-colors ${laneView === v ? 'bg-accent text-white' : 'text-muted hover:text-fg'}`}>
+          {v === 'chart' ? 'Tide chart' : 'Mixer'}
+        </button>
+      ))}
+    </div>
+  )
+  const canRename = Boolean(projectStems.projectId) && stemsLabel === 'Project stems'
+  const withLayers: WithLayers | null = canRename
+    ? (label, work, reload) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); return projectPanel.current.withLayers(label, work, reload) }
+    : null
+  const setRuleAutomation = (stemId: string, keyframes: Keyframe[]) => dispatch({ type: 'set_automation', stemId, keyframes })
   const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel)
 
   return (
@@ -343,6 +481,7 @@ export default function Editor() {
         <a href="#/" className="shrink-0 text-fg transition-opacity hover:opacity-80">
           <Logo />
         </a>
+        <ProjectSwitcher projectId={projectStems.projectId ?? openProjectId} fallback={openProjectId ? 'Opening project…' : 'New project'} disabled={Boolean(working)} beforeLeave={flush} />
         <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
           <Transport engine={engine} playing={playing} duration={duration} />
           {originalSrc && stemsLabel === 'Project stems' && (
@@ -363,10 +502,16 @@ export default function Editor() {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <input ref={picker} type="file" accept="audio/*" multiple hidden onChange={onPick} />
-          <IconButton label="Undo (⌘Z)" disabled={!canUndo(history)} onClick={() => setHistory((h) => undo(h))}>
+          <button type="button" aria-pressed={moonOpen} disabled={status !== 'ready' || !hasLayers} onClick={() => setMoonOpen((o) => !o)}
+            title="Give a sound a meaning that holds for the whole clip"
+            className={`mr-1 inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors disabled:opacity-40 ${moonOpen ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-fg-2 hover:border-line-strong hover:text-fg'}`}>
+            <MoonIcon />{FEATURES.symbolism}
+            {rules.list.length > 0 && <span className={`rounded-full px-1.5 text-[10px] ${moonOpen ? 'bg-white/25' : 'bg-accent-soft text-accent'}`}>{rules.list.length}</span>}
+          </button>
+          <IconButton label={undoStep ? `Undo ${undoStep.label} (⌘Z)` : 'Undo (⌘Z)'} disabled={!canUndoAny || (Boolean(working) && !canUndo(history))} onClick={undoAny}>
             <path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" />
           </IconButton>
-          <IconButton label="Redo (⇧⌘Z)" disabled={!canRedo(history)} onClick={() => setHistory((h) => redo(h))}>
+          <IconButton label={redoStep ? `Redo ${redoStep.label} (⇧⌘Z)` : 'Redo (⇧⌘Z)'} disabled={!canRedoAny || (Boolean(working) && !canRedo(history))} onClick={redoAny}>
             <path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />
           </IconButton>
           <span
@@ -406,7 +551,9 @@ export default function Editor() {
               src={videoSrc}
               onPick={onPickVideo}
               onDuration={setVideoDuration}
-              onAspect={setVideoAspect}
+              onAspect={setClipAspect}
+              rotation={rotation}
+              onRotate={videoSrc ? rotate : undefined}
               onError={setLoadError}
               visual={visual}
               onSelection={setVisualSelection}
@@ -422,15 +569,33 @@ export default function Editor() {
               )}
           <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
-              <Timeline
-                engine={engine}
-                stems={stems}
-                tracks={tracks}
-                duration={duration}
-                onAction={dispatch}
-                onKindChange={setKind}
-                syncing={syncTarget !== null}
-              />
+              <>
+                {laneView === 'mixer' ? (
+                  <>
+                  <div className="absolute top-1.5 left-3 z-30">{viewToggle}</div>
+                  <Mixer stems={stems} tracks={tracks} onAction={dispatch} onRename={canRename ? renameLayer : undefined}
+                    onDelete={canRename && stems.length > 1 ? deleteLayer : undefined} residualId={residual?.id ?? null} residualLabel={residual?.label ?? null} />
+                  </>
+                ) : (
+                  <>
+                  <MotifStrip rules={rules.list} stems={stems} engine={engine} duration={duration} onOpen={openRule} />
+                  <Timeline
+                    engine={engine}
+                    stems={stems}
+                    tracks={tracks}
+                    duration={duration}
+                    onAction={dispatch}
+                    onKindChange={setKind}
+                    syncing={syncTarget !== null}
+                    onRename={canRename ? renameLayer : undefined}
+                    onDelete={canRename && stems.length > 1 ? deleteLayer : undefined}
+                    residualId={residual?.id ?? null}
+                    residualLabel={residual?.label ?? null}
+                    header={viewToggle}
+                  />
+                  </>
+                )}
+              </>
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
                 {status === 'ready' ? (
@@ -455,8 +620,14 @@ export default function Editor() {
           <Splitter direction="column" label="Resize the steps panel"
             onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
-          <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={setWorking} />
+          <div className="relative flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={setWorking} projectId={openProjectId} onStep={onStep} onUndo={undoAny} />
+            {moonOpen && engine && hasLayers && (
+              <div className="absolute inset-0 z-20 flex flex-col bg-canvas pb-3">
+                <MoonPullPanel rules={rules.list} setRules={setRules} selectedId={moonRule} onSelect={setMoonRule} stems={stems} getTracks={getTracks}
+                  engine={engine} duration={duration} withLayers={withLayers} onAutomation={setRuleAutomation} onClose={() => setMoonOpen(false)} />
+              </div>
+            )}
           </div>
         </main>
       )}

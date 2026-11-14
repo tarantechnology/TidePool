@@ -24,7 +24,7 @@ def test_workflow(client,tmp_path):
     assert client.get('/api/projects/'+pid).status_code==401
     assert client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('x.txt',b'x')}).status_code==415
     video=tmp_path/'input.mp4'
-    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=c=blue:s=64x64:r=10:d=1','-f','lavfi','-i','sine=frequency=440:duration=1','-c:v','mpeg4','-c:a','aac','-shortest',str(video)],check=True)
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=c=blue:s=64x48:r=10:d=1','-f','lavfi','-i','sine=frequency=440:duration=1','-c:v','mpeg4','-c:a','aac','-shortest',str(video)],check=True)
     with video.open('rb') as f: r=client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('input.mp4',f,'video/mp4')})
     assert r.status_code==200, r.text
     assert r.json()['metadata']['has_video']
@@ -43,6 +43,13 @@ def test_workflow(client,tmp_path):
     path=tmp_path/'out.mp4'; path.write_bytes(output.content)
     import app.core as core
     assert core.probe(path)['has_video']
+    # A turned export swaps the frame's width and height.
+    assert client.post(f'/api/projects/{pid}/export',headers=headers,json={'format':'wav','include_video':False,'rotation':90}).status_code==422
+    r=client.post(f'/api/projects/{pid}/export',headers=headers,json={'format':'mp4','include_video':True,'rotation':90}); assert r.status_code==202
+    result=wait(client,'/api/exports/'+r.json()['export_id'],headers); assert result['status']=='completed',result
+    turned=tmp_path/'turned.mp4'; turned.write_bytes(client.get(result['download_url'],headers=headers).content)
+    size=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0',str(turned)],capture_output=True,text=True,check=True).stdout.strip()
+    assert size=='48,64',size
     assert client.patch(f'/api/projects/{pid}/stems/bad',headers=headers,json={'muted':True}).status_code==404
     assert client.get('/api/projects/bad',headers=headers).status_code==404
 
@@ -461,3 +468,103 @@ def test_existing_database_gains_stem_and_job_metadata_columns(tmp_path, monkeyp
         assert row['sample_rate'] is None and row['channels'] is None
         job=db.execute("SELECT * FROM jobs WHERE id='j'").fetchone()
         assert job['error_code'] is None and job['retryable'] is None
+
+def test_rename_layer_label(client,tmp_path):
+    p=client.post('/api/projects').json(); pid=p['project_id']; headers={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'a.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('a.wav',f,'audio/wav')}).status_code==200
+    r=client.post(f'/api/projects/{pid}/process',headers=headers,json={'prompts':['people talking','music']})
+    job=wait(client,'/api/jobs/'+r.json()['job_id'],headers); assert job['status']=='completed',job
+    sid=job['stems'][0]['id']
+    r=client.patch(f'/api/projects/{pid}/stems/{sid}',headers=headers,json={'name':'Batman','label':'Batman'})
+    assert r.status_code==200 and r.json()['label']=='Batman' and r.json()['name']=='Batman'
+    assert client.patch(f'/api/projects/{pid}/stems/{sid}',headers=headers,json={'name':'Residual'}).status_code==422
+    r=client.patch(f'/api/projects/{pid}/stems/{sid}',headers=headers,json={'rename':' Superman ','expected_revision':r.json()['revision']})
+    assert r.status_code==200 and r.json()['label']=='Superman' and r.json()['name']=='Superman'
+
+def test_suggest_sounds_fake_adapter(client,tmp_path):
+    p=client.post('/api/projects').json(); pid=p['project_id']; headers={'Authorization':'Bearer '+p['access_token']}
+    assert client.post(f'/api/projects/{pid}/suggest-sounds',headers=headers).status_code==409
+    audio=tmp_path/'a.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('a.wav',f,'audio/wav')})
+    r=client.post(f'/api/projects/{pid}/suggest-sounds',headers=headers)
+    assert r.status_code==200 and r.json()['sounds']==[] and r.json()['reason']
+
+def test_explode_routes_to_explode_endpoint(client,tmp_path,monkeypatch):
+    import app.media as media
+    seen={}
+    class Resp:
+        is_error=False
+        def __init__(self,stems): self._stems=stems
+        def json(self): return {'stems':self._stems}
+    def fake_post(url,files=None,data=None,timeout=None):
+        import base64,json as j
+        seen['url']=url; seen['meta']=j.loads(data['metadata'])
+        wav=(tmp_path/'s.wav')
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1',str(wav)],check=True)
+        b=base64.b64encode(wav.read_bytes()).decode()
+        return Resp([{'name':'heavy rain','role':'target','audio_base64':b},{'name':'residual','role':'residual','audio_base64':b}])
+    monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://svc:1/separate')
+    monkeypatch.setattr(media.httpx,'post',fake_post)
+    p=client.post('/api/projects').json(); pid=p['project_id']; headers={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'a.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('a.wav',f,'audio/wav')})
+    assert client.post(f'/api/projects/{pid}/process',headers=headers,json={'prompts':['heavy rain'],'explode':True,'append':True}).status_code==422
+    r=client.post(f'/api/projects/{pid}/process',headers=headers,json={'prompts':['heavy rain'],'explode':True})
+    job=wait(client,'/api/jobs/'+r.json()['job_id'],headers); assert job['status']=='completed',job
+    assert seen['url']=='http://svc:1/explode' and 'explode' not in seen['meta'] and seen['meta']['prompts']==['heavy rain']
+    assert sorted(s['name'] for s in job['stems'])==['heavy rain','residual']
+
+def test_export_reaches_500_percent_and_limits(tmp_path):
+    import json as j, numpy as np
+    from app.media import export, read_wav
+    def source(level):
+        path=tmp_path/f'src{level}.wav'
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1:sample_rate=48000','-af',f'volume={level}','-ac','2','-c:a','pcm_f32le',str(path)],check=True)
+        return path
+    def peak(src, volume):
+        stem={'path':str(src),'muted':False,'solo':False,'volume':volume,'automation':j.dumps([]),'mute_ranges':j.dumps([]),'start_offset':0}
+        out=tmp_path/f'out-{src.stem}-{volume}.wav'; export([stem],src,out,'wav',False)
+        samples,_=read_wav(out)
+        return float(np.max(np.abs(samples[4800:])))
+    quiet=source(1)
+    base=float(np.max(np.abs(read_wav(quiet)[0])))
+    assert abs(peak(quiet,1)-base)<0.002*1      # unity is untouched by the limiter
+    assert abs(peak(quiet,4)-4*base)<0.01       # 400% really is four times louder
+    assert abs(peak(quiet,5)-5*base)<0.01       # and 500% five times
+    loud=source(6)                              # about 0.53 peak, so 500% would be 2.6x full scale
+    assert peak(loud,5)<=0.98                   # limited, not clipped
+    stem={'path':str(quiet),'muted':False,'solo':False,'volume':1,'automation':j.dumps([]),'mute_ranges':j.dumps([]),'start_offset':0}
+    out=tmp_path/'sync.wav'; export([stem],quiet,out,'wav',False)
+    np.testing.assert_allclose(read_wav(out)[0], read_wav(quiet)[0], atol=1e-4)   # no look-ahead delay
+
+def test_delete_layer_folds_into_residual_and_undoes(client,tmp_path):
+    import numpy as np
+    from app.core import connect
+    from app.media import read_wav
+    p=client.post('/api/projects').json(); pid=p['project_id']; headers={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'a.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('a.wav',f,'audio/wav')})
+    job=wait(client,'/api/jobs/'+client.post(f'/api/projects/{pid}/process',headers=headers,json={'prompts':['people talking','music','residual']}).json()['job_id'],headers)
+    stems={s['name']:s for s in job['stems']}
+    residual,talk,music=stems['residual'],stems['people talking'],stems['music']
+    paths={r['id']:r['path'] for r in connect().execute('SELECT id,path FROM stems WHERE project_id=?',(pid,))}
+    def samples(sid): return read_wav(connect().execute('SELECT path FROM stems WHERE id=?',(sid,)).fetchone()['path'])[0]
+    expected=read_wav(paths[residual['id']])[0]+read_wav(paths[talk['id']])[0]
+    url=f'/api/projects/{pid}/stems/'
+    assert client.delete(url+residual['id'],headers=headers).status_code==422
+    assert client.delete(url+talk['id']+'?expected_revision=999',headers=headers).status_code==409
+    before=client.post(f'/api/projects/{pid}/checkpoints',headers=headers,json={'label':'Before'}).json()['id']
+    r=client.delete(url+talk['id'],headers=headers); assert r.status_code==200 and r.json()['folded']
+    np.testing.assert_allclose(samples(residual['id']),expected,atol=1e-6)    # the sound stays in the mix
+    loaded=client.get('/api/jobs/'+r.json()['job_id'],headers=headers).json()
+    assert {s['name'] for s in loaded['stems']}=={'residual','music'}
+    r=client.delete(url+music['id']+'?fold=false',headers=headers); assert r.status_code==200 and not r.json()['folded']
+    np.testing.assert_allclose(samples(residual['id']),expected,atol=1e-6)    # removed, not folded
+    restored=client.post(f'/api/projects/{pid}/checkpoints/{before}/restore',headers=headers)
+    assert restored.status_code==200 and restored.json()['stems']==3          # undo brings both back
+    np.testing.assert_allclose(samples(residual['id']),read_wav(paths[residual['id']])[0])

@@ -27,7 +27,7 @@ def test_audiosep_config_and_capabilities(monkeypatch):
         caps = client.get('/capabilities').json()
         assert caps['backend'] == 'audiosep' and caps['is_mock'] is False
         assert caps['independent_candidates'] is False
-        assert caps['prompting_modes'] == {'text':True,'span_anchors':False,'span_prediction':False,'visual':False}
+        assert caps['prompting_modes'] == {'text':True,'span_anchors':False,'span_prediction':False,'visual':False,'tagging':True,'explode':True}
 
 
 def test_unavailable_audiosep_checkout_has_actionable_error():

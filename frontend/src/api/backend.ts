@@ -1,5 +1,6 @@
 import { MAX_GAIN } from '../edits'
 import type { Keyframe, MuteRange, Refinement, Stem, TrackState } from '../types'
+import { readRotation } from '../rotation'
 
 // Client for the upstream FastAPI backend. Paths and shapes come from
 // INTEGRATION.md and app/main.py at AkhilNam/SoundCanvas commit 9fc2216. They
@@ -111,7 +112,7 @@ function toUrl(path: string, baseUrl: string): URL {
   return new URL(path, new URL(baseUrl, globalThis.location?.href))
 }
 
-async function request(
+export async function request(
   config: BackendConfig,
   path: string,
   init: RequestInit = {},
@@ -179,7 +180,7 @@ export async function getSavedStems(config: BackendConfig, projectId: string): P
   return rows
 }
 
-/** The editable state saved for a stem. Volume 0..2 is the same range as gain. */
+/** The editable state saved for a stem. Volume 0..MAX_GAIN is the same range as gain. */
 export function toTrackState(stem: SavedStem): TrackState {
   return {
     stemId: stem.id,
@@ -354,10 +355,10 @@ export function passesField(passes = 1): { passes?: number } {
 }
 
 /** How a /process request routes. Left out entirely, the service's default (auto) applies. */
-export interface ProcessRouting { mode?: SeparationMode; stems?: string[] | null; edit_scope?: EditScope }
+export interface ProcessRouting { mode?: SeparationMode; stems?: string[] | null; edit_scope?: EditScope; /** Explode: the server runs the tuned multi-layer recipe in one job. */ explode?: boolean; /** Explode only: split music layers into instruments. */ splitMusic?: boolean }
 export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false, passes = 1, routing: ProcessRouting = {}): Promise<string> {
-  const {mode, stems, edit_scope} = routing
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), ...passesField(passes), visual_prompt: visualPrompt ?? {}, ...(mode ? {mode} : {}), ...(stems?.length ? {stems} : {}), ...(edit_scope ? {edit_scope} : {})})})
+  const {mode, stems, edit_scope, explode, splitMusic} = routing
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), ...(explode ? {explode:true} : {}), ...(explode && splitMusic ? {split_music:true} : {}), ...passesField(passes), visual_prompt: visualPrompt ?? {}, ...(mode ? {mode} : {}), ...(stems?.length ? {stems} : {}), ...(edit_scope ? {edit_scope} : {})})})
   return ((await res.json()) as {job_id:string}).job_id
 }
 /** Split a song into one track per instrument: all of them, or `stems` plus one residual. */
@@ -370,7 +371,9 @@ export async function getRoute(config: BackendConfig, projectId: string, signal?
   return toRouting(await res.json())
 }
 export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4'})})
+  // An MP4 is turned to match the editor's picture; audio-only exports have no picture to turn.
+  const rotation = format==='mp4' ? readRotation(projectId) ?? 0 : 0
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(rotation ? {rotation} : {})})})
   return ((await res.json()) as {export_id:string}).export_id
 }
 export async function getExport(config: BackendConfig, exportId: string, signal?: AbortSignal): Promise<ExportInfo> {
@@ -430,6 +433,41 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
+/**
+ * Rename a layer. The server sets the label, and the name too unless it is the residual (which it
+ * finds by name). Returns the layer's new revision, so later fader saves carry the right one.
+ */
+export async function renameStem(config: BackendConfig, projectId: string, stemId: string, label: string, expectedRevision?: number): Promise<number | undefined> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}`, {
+    method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({rename:label,...(expectedRevision === undefined ? {} : {expected_revision:expectedRevision})}),
+  })
+  const revision = ((await res.json()) as { revision?: unknown }).revision
+  return Number.isInteger(revision) ? revision as number : undefined
+}
+
+/**
+ * Remove a layer. fold=true adds its sound to the residual, so the mix still has it; fold=false
+ * takes the sound out too. Returns the job to load the remaining layers from.
+ */
+export async function deleteStem(config: BackendConfig, projectId: string, stemId: string, fold: boolean): Promise<{ job_id: string; folded: boolean }> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}?fold=${fold}`, { method:'DELETE' })
+  return (await res.json()) as { job_id: string; folded: boolean }
+}
+
+/** A sound the model heard in the clip: a separation-ready prompt, and the 10-second windows it was heard in. */
+export interface HeardSound { prompt:string; group:string; tier:string; score:number; windows:number[] }
+export interface SoundSuggestions { sounds:HeardSound[]; is_mock:boolean; window_seconds?:number; reason?:string }
+export function toSoundSuggestions(raw:unknown):SoundSuggestions {
+  const r=(raw && typeof raw==='object' ? raw : {}) as Record<string,unknown>
+  const sounds=Array.isArray(r.sounds) ? r.sounds.filter((s):s is HeardSound=>Boolean(s) && typeof (s as HeardSound).prompt==='string' && Boolean((s as HeardSound).prompt.trim())).map(s=>({prompt:s.prompt.trim(),group:String(s.group??''),tier:String(s.tier??''),score:Number(s.score)||0,windows:Array.isArray(s.windows)?s.windows.filter(Number.isInteger):[]})) : []
+  return {sounds,is_mock:r.is_mock===true,...(typeof r.window_seconds==='number'?{window_seconds:r.window_seconds}:{}),...(typeof r.reason==='string'&&r.reason?{reason:r.reason}:{})}
+}
+/** Ask the model which sounds are in the project's audio. */
+export async function suggestSounds(config:BackendConfig, projectId:string):Promise<SoundSuggestions> {
+  const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/suggest-sounds`,{method:'POST'},undefined,300_000)
+  return toSoundSuggestions(await res.json())
+}
+
 export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
@@ -454,7 +492,7 @@ export interface VisionCapability {available:boolean;reason:string|null;model:st
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
  */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;musicStems?:{available:boolean;stems:string[]}}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;musicStems?:{available:boolean;stems:string[]};suggest?:boolean;explode?:boolean}
 const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
 export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
@@ -471,6 +509,8 @@ export function toCapabilities(raw:unknown):Capabilities {
     ...(vision?{vision}:{}),
     ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
     ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),
+    ...(typeof c.suggest==='boolean'?{suggest:c.suggest}:{}),
+    ...(typeof c.explode==='boolean'?{explode:c.explode}:{}),
     ...(c.music_stems && typeof c.music_stems==='object' ? {musicStems:toMusicStems(c.music_stems as Record<string,unknown>)} : {}),
   }
 }

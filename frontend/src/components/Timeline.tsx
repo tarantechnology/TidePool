@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent, PointerEvent } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
-import { isAudible, MAX_GAIN, MAX_KEYFRAMES, stemStart } from '../edits'
+import { gainToPos, isAudible, MAX_KEYFRAMES, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
@@ -27,6 +27,14 @@ interface Props {
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
+  /** Rename a layer; absent when layers are not project stems. */
+  onRename?: (stemId: string, name: string) => Promise<void>
+  onDelete?: (stemId: string, fold: boolean) => Promise<void>
+  residualLabel?: string | null
+  /** The residual itself can't be deleted. */
+  residualId?: string | null
+  /** Shown in place of the Tide chart label, e.g. the Tide chart / Mixer switch. */
+  header?: ReactNode
 }
 
 function tickStep(duration: number): number {
@@ -73,7 +81,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
       className="absolute z-20 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none items-center justify-center active:cursor-grabbing"
       style={{
         left: `${(keyframe.t / duration) * 100}%`,
-        top: `${(1 - keyframe.value / MAX_GAIN) * 100}%`,
+        top: `${(1 - gainToPos(keyframe.value)) * 100}%`,
       }}
       onPointerDown={(e) => {
         e.stopPropagation()
@@ -104,7 +112,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, onRename, onDelete, residualLabel = null, residualId = null, header }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
   // every lane at once, and dragging a lane's bottom edge sizes just that lane.
@@ -180,7 +188,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
         {/* Ruler */}
         <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
           <div className="flex items-center gap-2 border-r border-line px-4">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>
+            {header ?? <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>}
             <label className="ml-auto flex items-center gap-1.5" title="Layer height">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-subtle" aria-hidden="true"><path d="M2 5h12M2 11h12" /></svg>
               <input type="range" aria-label="Layer height" min={LANE_MIN} max={LANE_MAX} step={2}
@@ -231,6 +239,10 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                 audible={audible}
                 onAction={onAction}
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
+                onRename={onRename ? (name) => onRename(stem.id, name) : undefined}
+                onDelete={onDelete ? (fold) => onDelete(stem.id, fold) : undefined}
+                residualLabel={residualLabel}
+                residualId={residualId}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
               />
@@ -267,7 +279,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                   <>
                     <div
                       className="absolute right-0 left-0 border-t border-dashed border-tint/20"
-                      style={{ top: `${(1 - 1 / MAX_GAIN) * 100}%` }}
+                      style={{ top: `${(1 - gainToPos(1)) * 100}%` }}
                     />
                     <svg
                       className="pointer-events-none absolute inset-0 h-full w-full"
@@ -280,7 +292,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
                         strokeWidth={1.5}
                         vectorEffect="non-scaling-stroke"
                         points={track.automation
-                          .map((k) => `${(k.t / duration) * 100},${(1 - k.value / MAX_GAIN) * 100}`)
+                          .map((k) => `${(k.t / duration) * 100},${(1 - gainToPos(k.value)) * 100}`)
                           .join(' ')}
                       />
                     </svg>

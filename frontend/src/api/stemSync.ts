@@ -84,6 +84,24 @@ export class StemSync {
     if (failure) throw new Error(`Unsaved edits: ${failure}. Copy your edits, then refresh to resolve the conflict.`)
   }
 
+  /**
+   * Run a server change to one stem (a rename, say) between this sync's writes: it starts once the
+   * writes already sent have landed, and writes made meanwhile wait for it. work gets the stem's
+   * expected revision and returns the revision the server now holds, so later writes stay valid.
+   */
+  exclusive(id: string, work: (revision: number | undefined) => Promise<number | undefined>): Promise<void> {
+    const before = this.after
+    const pending = [...this.inflight]
+    const run = (async () => {
+      await before.catch(() => {})
+      await Promise.all(pending)
+      const revision = await work(this.revisions?.[id])
+      if (revision !== undefined && this.revisions) this.revisions[id] = revision
+    })()
+    this.after = run.catch(() => {})
+    return run
+  }
+
   /** Resolves when no write of this sync is in flight. */
   async drained(): Promise<void> {
     while (this.inflight.size > 0) await Promise.all(this.inflight)
@@ -202,6 +220,11 @@ export class StemSyncRunner {
   /** Everything edited so far has reached the backend, or failed trying. */
   flush(): Promise<void> {
     return this.sync?.flush() ?? Promise.resolve()
+  }
+
+  /** See StemSync.exclusive. With no sync (mock or local stems) the work just runs. */
+  exclusive(id: string, work: (revision: number | undefined) => Promise<number | undefined>): Promise<void> {
+    return this.sync ? this.sync.exclusive(id, work) : work(undefined).then(() => {})
   }
 
   close(): void {

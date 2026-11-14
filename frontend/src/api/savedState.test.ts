@@ -202,9 +202,9 @@ describe('when saved state cannot be trusted', () => {
 
   const malformed: Array<[string, unknown]> = [
     ['a missing field', [{ ...saved, muted: undefined }]],
-    ['volume out of range', [{ ...saved, volume: 3 }]],
+    ['volume out of range', [{ ...saved, volume: 6 }]],
     ['volume that is not a number', [{ ...saved, volume: '1' }]],
-    ['automation out of range', [{ ...saved, automation: [{ time: 1, value: 5 }] }]],
+    ['automation out of range', [{ ...saved, automation: [{ time: 1, value: 6 }] }]],
     ['automation out of order', [{ ...saved, automation: [{ time: 2, value: 1 }, { time: 2, value: 0 }] }]],
     ['something that is not a list', { stems: [] }],
     ['a missing offset', [{ ...saved, start_offset: undefined }]],

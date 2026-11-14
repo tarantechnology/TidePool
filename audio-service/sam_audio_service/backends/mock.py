@@ -81,6 +81,19 @@ class MockBackend(Backend):
     supports_visual = True  # accepts and ignores visual input so the contract path can be tested
     supports_spans = True
     supports_span_prediction = True
+    supports_tagging = True
+
+    def tag(self, windows: list[np.ndarray], labels: list[str]) -> tuple[np.ndarray, float]:
+        """MOCK tagging: the share of each window's energy inside each label's keyword band."""
+        out = np.zeros((len(windows), len(labels)), dtype=np.float64)
+        for w, window in enumerate(windows):
+            spectrum = np.abs(np.fft.rfft(window.astype(np.float64))) ** 2
+            freqs = np.fft.rfftfreq(len(window), 1.0 / self.sample_rate)
+            total = spectrum.sum() or 1.0
+            for j, label in enumerate(labels):
+                low, high = band_for_prompt(label)
+                out[w, j] = spectrum[(freqs >= low) & (freqs <= high)].sum() / total
+        return out, 10.0
 
     def __init__(self, n_fft: int = 2048, hop: int = 512):
         self.n_fft, self.hop = n_fft, hop

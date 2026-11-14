@@ -1,4 +1,6 @@
 import type { FxChip, FxPlan } from './api/backend'
+import { replacementFollowup } from './agent/replacementFollowup'
+import { requestsSoundReplacement } from './agent/replacementIntent'
 
 /**
  * Rule-based reading of common effect asks, so layer effects work without the AI planner:
@@ -56,6 +58,44 @@ const PRESETS: Array<[RegExp, string]> = [
   [/\btremolo\b/, 'tremolo'],
   [/\bauto-?pan\w*|\bpan(?:ning)? (?:it )?(?:left and right|back and forth|around)\b/, 'autopan'],
 ]
+
+/** Presets whose words almost always mean the effect. The rest ("phone", "radio", "monster", "chorus",
+ * "hall", "warm"…) also name sounds or song sections, so they count only in an effect-shaped phrase. */
+const UNAMBIGUOUS = new Set(['slowed_reverb', 'nightcore', 'sped_up', 'slowed', 'deep_fried', 'underwater', 'lofi', 'eight_bit', 'chipmunk',
+  'deep_voice', 'reverb', 'bass_boost', 'less_harsh', 'less_muddy', 'overdrive', 'flanger', 'phaser', 'tremolo', 'autopan', 'vinyl'])
+/** "phone ringing", "monster roar", "radio chatter": the preset word names a sound, not an effect. */
+const SOUND_NOUN = /^\s*(?:roar\w*|ring(?:s|ing)?|ringtones?|barks?|barking|growl\w*|scream\w*|chatter\w*|static|buzz\w*|notifications?|alarms?|noises?|beeps?|beeping|sirens?|footsteps?|crash\w*|explosions?|sfx|sound effects?|clips?|sample)\b/
+const LAYER_WORD = /^\s*(?:vocals?|vox|voice|voices|singing|singer|dialogue|dialog|speech|narration|drums?|percussion|bass|guitars?|piano|keys|synths?|strings|music|mix|track|song)\b/
+const EFFECT_WORD = /^\s*(?:effects?|filters?|fx|presets?|style|vibe|version|treatment|reverb\w*|echo|delay|voice)\b/
+
+/** Whether a preset word at this spot is asked for as an effect: "sound like a phone", "into a robot",
+ * "make the mix wider", "in a hall", "add chorus to…", "chorus on the guitar", "robot voice". */
+function effectShaped(before: string, after: string): boolean {
+  if (/\bsound(?:s|ing)? like\b/.test(before)) return true
+  if (/\binto\s+(?:(?:an?|the|some)\s+)?(?:\w+\s+)?$/.test(before)) return true
+  if (/^(?:please\s+)?(?:make|get)\s+(?:it|this|them|him|her|(?:his|her|their|the|my)\s+[\w ]+?)\s+(?:sound\s+)?(?:(?:a (?:bit|little|lot)|much|way|more|even)\s+)*$/.test(before)) return true
+  if (/\b(?:in|inside)\s+(?:an?|the)\s+(?:\w+\s+)?$/.test(before)) return true
+  if (/\b(?:add|put|apply|use|give)\b(?:.*\s)?$/.test(before) && /^\s*(?:(?:effects?|filters?|fx)\s+)?(?:to|on|onto|over)\b/.test(after)) return true
+  if (/^\s*on\s+(?:the|it|this|his|her|my|their|all)\b/.test(after)) return true
+  if (EFFECT_WORD.test(after) || LAYER_WORD.test(after)) return true
+  return before.trim() === '' && /^\s*(?:$|it\b|this\b|that\b|the\b|my\b|everything\b)/.test(after)
+}
+
+/** The preset an ask names. With `anywhere`, any mention counts (for "remove the church reverb", "less echo"). */
+function findPreset(text: string, anywhere: boolean): string | null {
+  for (const [pattern, name] of PRESETS) {
+    for (const m of text.matchAll(new RegExp(pattern.source, 'g'))) {
+      const before = text.slice(0, m.index), after = text.slice(m.index! + m[0].length)
+      if (SOUND_NOUN.test(after)) continue
+      if (anywhere || UNAMBIGUOUS.has(name) || effectShaped(before, after)) return name
+    }
+  }
+  return null
+}
+
+/** Asks that belong to sound replacement or separation, never to the effect parser. */
+const REPLACEMENT_ASK = /\b(?:replace|replacing|swap|substitute)\b|\badd\s+.+?\s+at\s+\d/
+const SEPARATION_ASK = /\b(?:isolate|separate|extract|split|solo)\b|\bpull out\b|\bkeep only\b/
 
 const MUSIC_WORDS = /\b(?:music|instrumental|backing track|bgm|beat)\b/
 /** Words for a layer, and what a matching stem's label or tags contain. */
@@ -133,7 +173,7 @@ const NOT_EFFECTS = /\b(?:add|insert|play|put)\b.*\b(?:vine boom|laugh track|sou
 
 export function fxCommand(raw: string, stems: FxStem[] = []): FxCommand | null {
   const text = raw.trim().toLowerCase().replace(/[.!?]+$/, '')
-  if (!text || NOT_EFFECTS.test(text)) return null
+  if (!text || NOT_EFFECTS.test(text) || REPLACEMENT_ASK.test(text) || SEPARATION_ASK.test(text)) return null
   const voiceStem = () => stems.find(s => /speech|dialog|narrat|speak|talk|voice/.test(haystack(s))) ?? stems.find(s => VOICE.test(haystack(s)))
 
   // Auto-ducking.
@@ -156,28 +196,31 @@ export function fxCommand(raw: string, stems: FxStem[] = []): FxCommand | null {
     return { kind: 'loudness', fx: plan({ targets: chosen, loudness_lufs: lufs }), message: `Normalize to ${lufs} LUFS.` }
   }
 
-  const preset = PRESETS.find(([pattern]) => pattern.test(text))?.[1] ?? null
-  const presetWords = preset ? PRESETS.find(([, name]) => name === preset)![0] : null
+  const named = findPreset(text, true)
+  const namedWords = named ? PRESETS.find(([, name]) => name === named)![0] : null
 
   // Removing an applied effect, only when a chip is there to remove ("remove the reverb" may otherwise be a separation).
   if (/\b(?:remove|take (?:off|out)|get rid of|strip|turn off|disable|no more|without)\b|\btake\b.+\b(?:off|out)\b/.test(text) && /\b(?:effects?|fx|filters?)\b|\bthe\b/.test(text)) {
-    const chosen = targets(text, stems, presetWords)
+    const chosen = targets(text, stems, namedWords)
     const ids = chosen && 'ids' in chosen ? chosen.ids : ['mix']
     const pool = stems.filter(s => ids[0] === 'mix' || ids.includes(s.id))
     const chips = pool.flatMap(s => s.fx ?? [])
-    const match = chips.filter(c => (preset ? c.preset === preset : /\b(?:effects?|fx|filters?)\b/.test(text)))
+    const match = chips.filter(c => (named ? c.preset === named : /\b(?:effects?|fx|filters?)\b/.test(text)))
     if (!match.length) return null
-    return { kind: 'fx', fx: plan({ targets: ids, adjust: 'remove', preset }), message: `Remove ${preset ? match[match.length - 1].label : 'the last effect'}.` }
+    return { kind: 'fx', fx: plan({ targets: ids, adjust: 'remove', preset: named }), message: `Remove ${named ? match[match.length - 1].label : 'the last effect'}.` }
   }
 
   // "More" / "less" of the last effect.
   const more = /^(?:(?:make it|a (?:bit|little|lot)|slightly|way|much|even|bit)\s+)*(?:more|wetter|stronger|heavier|louder effect|crank it|turn it up)\b/.test(text) || /\bmore (?:of (?:that|it)|effect)\b|\bdouble it\b/.test(text)
   const less = /^(?:(?:make it|a (?:bit|little|lot)|slightly|way|much|even|bit)\s+)*(?:less|drier|weaker|subtler|lighter|softer|gentler|tone it down|turn it down)\b/.test(text) || /\btoo much\b|\btoo (?:strong|wet|heavy|loud)\b|\btone (?:it|that) down\b/.test(text)
-  if ((more || less) && !(preset && /^(?:add|put|apply|give|make)\b/.test(text))) {
-    const chosen = pickTargets(text, stems, presetWords)
+  if ((more || less) && !(named && /^(?:add|put|apply|give|make)\b/.test(text))) {
+    const chosen = pickTargets(text, stems, namedWords)
     if (!Array.isArray(chosen)) return chosen
-    return { kind: 'fx', fx: plan({ targets: chosen, adjust: more ? 'more' : 'less', preset }), message: `${more ? 'More' : 'Less'} of ${preset ?? 'the last effect'}.` }
+    return { kind: 'fx', fx: plan({ targets: chosen, adjust: more ? 'more' : 'less', preset: named }), message: `${more ? 'More' : 'Less'} of ${named ?? 'the last effect'}.` }
   }
+
+  const preset = findPreset(text, false)
+  const presetWords = preset ? PRESETS.find(([, name]) => name === preset)![0] : null
 
   const semitones = /\bpitch(?:ed)?\s+(?:(?:it|the \w+|them)\s+)?(up|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*(?:semitones?|steps?|half[- ]steps?)/.exec(text)
   const echoTime = /\b(\d+(?:\.\d+)?)\s*(ms|milliseconds?)\b/.exec(text) ?? /\b(\d+(?:\.\d+)?)\s*(s|seconds?)\s+(?:echo|delay)\b/.exec(text)
@@ -197,4 +240,22 @@ export function fxCommand(raw: string, stems: FxStem[] = []): FxCommand | null {
     fx: plan({ targets: chosen, preset: usePreset === 'echo' && echoTime ? null : usePreset, chain: chain.length ? chain : null, interval: tempo ? null : interval(text) }),
     message: 'Effect preview.',
   }
+}
+
+export type CommandRoute =
+  | { kind: 'replacement'; text: string }
+  | { kind: 'fx'; command: FxCommand }
+  | null
+
+/**
+ * How the command bar routes an ask before the planner: an answer to a pending replacement question
+ * ("at 12") stays a replacement; effect-shaped asks ("make the drums sound like a phone") are layer
+ * effects; replace/swap/"add X at N"/"turn X into Y" asks are sound replacements; anything else is null.
+ */
+export function routeCommand(text: string, pendingReplacement: string, stems: FxStem[] = []): CommandRoute {
+  const followup = replacementFollowup(pendingReplacement, text)
+  if (followup) return { kind: 'replacement', text: followup }
+  const fx = fxCommand(text, stems)
+  if (fx) return { kind: 'fx', command: fx }
+  return requestsSoundReplacement(text) ? { kind: 'replacement', text } : null
 }

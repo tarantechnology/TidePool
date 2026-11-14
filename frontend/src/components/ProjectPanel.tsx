@@ -6,13 +6,11 @@ import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, Project
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { musicCommand, separationCommand } from '../separationCommand'
-import { fxCommand } from '../fxCommand'
+import { routeCommand } from '../fxCommand'
 import { separationSettings } from '../agent/separationSettings'
 import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
-import { replacementFollowup } from '../agent/replacementFollowup'
-import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
@@ -456,11 +454,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       const cfg={baseUrl,token:currentToken}
       const hasStems=Boolean(currentJob)
       // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
-      const replacementText=replacementFollowup(pendingReplacement.current,text) || text
-      // "Make the drums sound like a phone" is a layer effect, not a sound replacement.
-      const fxLocal=fxCommand(text,hasStems ? stems : [])
-      const replacement=!fxLocal && requestsSoundReplacement(replacementText)
-      if (replacement) {
+      // A pending replacement's follow-up and replace/swap/"add X at N" asks stay replacements;
+      // "make the drums sound like a phone" is a layer effect, not a sound replacement.
+      const route=routeCommand(text,pendingReplacement.current,hasStems ? stems : [])
+      const fxLocal=route?.kind==='fx' ? route.command : null
+      if (route?.kind==='replacement') {
+        const replacementText=route.text
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
         const id=await createAutomaticReplacement(cfg,current.project_id,replacementText)

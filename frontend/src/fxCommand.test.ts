@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fxCommand } from './fxCommand'
+import { fxCommand, routeCommand } from './fxCommand'
 import type { FxStem } from './fxCommand'
 import { fxRequest, toFxChips, toStem } from './api/backend'
 import { requestsSoundReplacement } from './agent/replacementIntent'
@@ -109,9 +109,58 @@ describe('rule-based effect commands', () => {
     }
   })
   it('takes effect asks away from sound replacement', () => {
-    // The panel checks fxCommand first; replacement still owns "make X sound like Y" without an effect word.
-    expect(requestsSoundReplacement('make the drums sound like a phone') && fxCommand('make the drums sound like a phone', SONG) !== null).toBe(true)
+    // The panel routes effect-shaped asks to effects; replacement still owns "make X sound like Y" without an effect word.
+    expect(requestsSoundReplacement('make the drums sound like a phone')).toBe(true)
+    expect(routeCommand('make the drums sound like a phone', '', SONG)?.kind).toBe('fx')
     expect(fxCommand('make the dog bark sound like a cat', SONG)).toBeNull()
+    expect(routeCommand('make the dog bark sound like a cat', '', SONG)?.kind).toBe('replacement')
+  })
+})
+
+describe('replacement and separation asks are never effects', () => {
+  const REPLACEMENTS = [
+    'replace the phone ringing with a doorbell', 'replace the dog bark with a monster roar', 'add a monster roar at 12',
+    'turn the chorus into a verse', 'swap the radio chatter for birdsong', 'substitute the robot beeps with a cat meow',
+    'replace the echo with silence', 'add a phone ringing at 3 seconds', 'turn the phone ringing into a doorbell',
+    'make the phone ringing sound like a doorbell', 'change the giant roar into a whisper', 'replace the hall ambience with rain',
+  ]
+  for (const text of REPLACEMENTS) {
+    it(text, () => {
+      expect(fxCommand(text, SONG), text).toBeNull()
+      expect(fxCommand(text, []), text).toBeNull()
+      expect(routeCommand(text, '', SONG)).toEqual({ kind: 'replacement', text })
+    })
+  }
+  it('keeps a pending replacement follow-up a replacement', () => {
+    for (const pending of ['replace the phone ringing with a doorbell', 'replace the dog bark with a monster roar']) {
+      for (const answer of ['12', 'at 12', 'around 4.5 seconds', '7s']) {
+        const route = routeCommand(answer, pending, SONG)
+        expect(route?.kind, `${pending} / ${answer}`).toBe('replacement')
+        expect(route && route.kind === 'replacement' && route.text).toMatch(new RegExp(`^${pending} at \\d`))
+      }
+    }
+    // Without a pending question a bare number is nothing.
+    expect(routeCommand('12', '', SONG)).toBeNull()
+  })
+  it('leaves isolate / separate / extract asks to separation', () => {
+    for (const text of ['isolate the radio chatter', 'isolate the radio', 'separate the phone call audio', 'extract the robot voice',
+      'remove the radio chatter', 'mute the phone ringing', 'remove the monster roar', 'isolate the chorus', 'solo the phone',
+      'keep only the radio host', 'mute the radio']) {
+      expect(fxCommand(text, VIDEO), text).toBeNull()
+      expect(routeCommand(text, '', VIDEO), text).toBeNull()
+    }
+    // "remove the radio chatter" never removes a Radio chip either.
+    const chipped: FxStem[] = VIDEO.map(s => ({ ...s, fx: [{ id: 'r1', label: 'Radio', preset: 'radio', scope: 'layer', speed: null }] }))
+    expect(fxCommand('remove the radio chatter', chipped)).toBeNull()
+  })
+  it('still routes effect-shaped asks to effects', () => {
+    for (const [text, preset] of [['make the drums sound like a phone', 'telephone'], ['turn the vocals into a robot', 'robot'],
+      ['make it sound like a monster', 'giant'], ['add chorus to the guitar', 'chorus'], ['radio effect on the voice', 'radio'],
+      ['put the vocals in a concert hall', 'hall'], ['make the mix wide', 'wide'], ['echo the vocals', 'echo'], ['robot voice', 'robot']] as const) {
+      const route = routeCommand(text, '', SONG)
+      expect(route?.kind, text).toBe('fx')
+      expect(route?.kind === 'fx' && route.command.kind === 'fx' && route.command.fx.preset, text).toBe(preset)
+    }
   })
 })
 

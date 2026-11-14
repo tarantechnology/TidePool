@@ -236,6 +236,23 @@ def test_effect_asks_are_not_routed_to_replacement():
     assert not S.mentions_effect('make the dog bark sound like a cat')
 
 
+REPLACEMENT_ASKS = ['turn the chorus into a verse', 'make the phone ringing sound like a doorbell', 'turn the monster roar into a whisper',
+                    'make the radio chatter sound like birdsong', 'turn the hall into a kitchen', 'make the room tone sound like rain',
+                    'turn the wall clock into a metronome', 'change the dog bark into a monster roar', 'make the robot sound like a cat']
+
+
+@pytest.mark.parametrize('text', REPLACEMENT_ASKS)
+def test_replacement_asks_do_not_mention_an_effect(text):
+    # Only the "sound like" / "into" target counts, and a preset word naming a sound ("monster roar") is not an effect.
+    assert not S.mentions_effect(text)
+
+
+@pytest.mark.parametrize('text', ['make the drums sound like a phone', 'turn the vocals into a robot', 'make it sound like an old radio',
+                                  'make the voice sound like a giant', 'make the vocals sound like they are in a cathedral'])
+def test_effect_asks_mention_an_effect(text):
+    assert S.mentions_effect(text)
+
+
 # ---------------------------------------------------------------- API end to end (fake adapter)
 
 @pytest.fixture
@@ -396,6 +413,17 @@ def test_agent_route_keeps_effect_asks_away_from_replacement(client, tmp_path, m
     assert r.status_code == 200 and r.json()['kind'] == 'fx', r.text
     payload = json.loads(sent['input'])
     assert {s['label'] for s in payload['stems']} == {'music', 'speech'} and all('fx' in s for s in payload['stems'])
+
+
+@pytest.mark.parametrize('prompt', ['replace the phone ringing with a doorbell', 'replace the dog bark with a monster roar',
+                                    'turn the chorus into a verse', 'make the phone ringing sound like a doorbell'])
+def test_agent_route_sends_replacement_asks_to_replacement(client, tmp_path, monkeypatch, prompt):
+    pid, h = upload(client, tmp_path)
+    split(client, pid, h)
+    _, sent = fake_planner(monkeypatch, base_plan('fx', {'targets': ['mix'], 'preset': 'telephone'}))
+    r = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': prompt, 'stems': [], 'tracks': [], 'duration': 2})
+    assert r.status_code == 200 and r.json()['kind'] == 'clarify' and 'replacement' in r.json()['message'], r.text
+    assert not sent  # The effect planner never saw it.
 
 
 def test_legacy_database_gains_fx_column(tmp_path, monkeypatch):

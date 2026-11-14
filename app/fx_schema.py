@@ -324,15 +324,24 @@ def validate_plan(kind, plan, stems, duration, prompt):
     return out
 
 
-PRESET_WORDS = re.compile(r'\b(?:reverb|echo|delay|church|cathedral|stadium|arena|hall|bathroom|shower|room|plate|phone|telephone|radio|walkie|wall|'
-                          r'underwater|megaphone|bullhorn|lo-?fi|vinyl|8-?bit|chiptune|bitcrush\w*|old (?:movie|film)|chipmunk|robot\w*|announcer|giant|'
-                          r'monster|dreamy|wider|mono|warm(?:er)?|bright(?:er)?|harsh|muddy|distort\w*|overdrive|chorus|flanger|phaser|tremolo|'
-                          r'auto-?pan|deep[- ]fried|earrape|slowed|nightcore|sped up|deep voice|deeper)\b', re.I)
+# Effect words, minus ones that mostly name sounds or song sections ("room", "wall", "hall", "chorus", "monster").
+PRESET_WORDS = re.compile(r'\b(?:reverb\w*|echo(?:es|ey|y)?|church|cathedral|stadium|arena|concert hall|bathroom|shower|small room|next room|'
+                          r'phone|telephone|radio|walkie[- ]?talkie|through (?:a |the )?walls?|underwater|megaphone|bullhorn|lo-?fi|vinyl|8-?bit|'
+                          r'chiptune|bitcrush\w*|old (?:movie|film|radio)|chipmunks?|robot\w*|announcer|giant|dreamy|wider|mono|warm(?:er)?|'
+                          r'bright(?:er)?|less harsh|less muddy|distort\w*|overdrive|flanger|phaser|tremolo|auto-?pan|deep[- ]fried|earrape|'
+                          r'slowed|nightcore|sped up|deep(?:er)? voice)\b', re.I)
+SOUND_NOUN = re.compile(r'\s*(?:roar\w*|ring(?:s|ing)?|ringtones?|barks?|barking|growl\w*|scream\w*|chatter\w*|static|buzz\w*|'
+                        r'notifications?|alarms?|noises?|beeps?|beeping|sirens?|footsteps?|crash\w*|explosions?|sfx|sound effects?)\b', re.I)
 
 
 def mentions_effect(text):
-    """True when an ask names an effect or preset; such "make X sound like Y" asks are effects, not replacements."""
-    return bool(PRESET_WORDS.search(text or ''))
+    """True when a "make X sound like Y" / "turn X into Y" ask names an effect preset as Y ("sound like a phone",
+    "into a robot"), so it is a layer effect, not a replacement. The X part never counts: "turn the chorus into
+    a verse" and "make the phone ringing sound like a doorbell" stay replacements."""
+    m = re.search(r'\b(?:sound(?:s|ing)?\s+like|into)\b', text or '', re.I)
+    if not m: return False
+    tail = text[m.end():]
+    return any(not SOUND_NOUN.match(tail, w.end()) for w in PRESET_WORDS.finditer(tail))
 
 
 def find_chip(rows, targets, item_id=None, preset=None, removing=False):

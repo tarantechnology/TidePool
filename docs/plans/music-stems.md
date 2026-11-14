@@ -144,3 +144,36 @@ Config: `AUDIO_STEM_SPLITTER` (`off|mock|demucs|chain`), `AUDIO_STEM_MODEL`,
   prompted test passes unchanged.
 - Sum of the returned stems equals the decoded mix (max abs error < 1e-4).
 - Mock path is fully covered by CPU tests. No model weights are downloaded on CI or on dev Macs.
+
+## Phase 4: "Separate the rest" (nested split of the residual instrument stem)
+
+The main split stays as is (vocals, drums, bass, guitar…, plus a named "other"). The user can
+ask to split *that one track* further. A nested model separates the instruments inside it.
+
+**Contract (audio-service).**
+
+Request: `POST /separate` with the parent stem's audio and
+`options.mode = "music_substems"`, plus:
+- `options.parent_label` (`"other"`), used for logging and naming.
+- `options.stems`: a list of instrument names, or null. Null means detect them with the
+  instrument tagger and take the present ones, up to `AUDIO_SUBSTEM_MAX` (default 4).
+
+Response:
+- One target stem per instrument found: `label` = canonical sub-instrument (`piano`,
+  `keys`, `synth`, `strings`, `brass`, `woodwinds`, `organ`, `guitar`, …), a human `name`, and `tags`.
+- Exactly one `residual`, named `Rest`. With the targets it sums to the input (mixture consistency).
+- Instruments that come back near-silent are folded into `Rest`, with a warning.
+
+`routing`: `{mode: "music_substems", engine: <nested model>, …}`.
+
+Config: `AUDIO_SUBSTEM_MODEL` (chosen by the Phase 4 benchmark), `AUDIO_SUBSTEM_MAX`.
+
+**Contract (app).**
+
+Endpoint: `POST /api/projects/{pid}/stems/{sid}/split` (202, `{job_id}`), body `{stems?: string[]}`.
+- Allowed on any music target stem; the editor offers it on the `other` stem.
+- On success, the parent row is replaced by its children. Each child has `source_stem_id` = the parent's
+  id and inherits the parent's start_offset, mute and solo, so the mix is unchanged.
+
+Editor: a "Separate the rest" action on the track; the children render grouped under the
+parent's name; undo works as for other replacements.

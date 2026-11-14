@@ -10,6 +10,10 @@ chooses, window by window, in timeline order:
 * ``"mean"``: the average of the K draws (an ensemble; smoother, may sound "averaged");
 * ``"auto"``: ``"overlap"`` when chunked; for a single window the medoid when all draws agree
   (min pairwise NCC >= 0.8, K >= 3) and ``"mean"`` when they disagree;
+Before any rule, draws more than 30 dB quieter than the loudest draw are dropped when at least
+one draw is loud (the presence vote): the model heard the sound in some draws and not others,
+and the user would otherwise hear the sound drop out for a whole window.
+
 * ``"overlap"``: the draw whose head best matches what the previous window put into the
   shared overlap (normalised cross-correlation). With no usable previous window (first
   window, or an overlap quieter than -60 dBFS) it takes the medoid draw (highest mean
@@ -24,6 +28,7 @@ import numpy as np
 
 SILENCE_DBFS = -60.0
 AGREEMENT_NCC = 0.8  # single-window draws with min pairwise NCC above this are "the same sound"
+PRESENCE_DB = 30.0   # a draw this far below the loudest draw "did not hear" the sound (presence vote)
 _EPS = 1e-12
 MODES = ("first", "overlap", "mean", "auto")
 
@@ -62,6 +67,21 @@ def choose(candidates: list[np.ndarray], previous: np.ndarray | None, overlap: i
         raise ValueError("choose() needs at least one candidate")
     if mode not in MODES:
         raise ValueError(f"unknown candidate selection mode {mode!r}; expected one of {MODES}")
+    if mode == "first" or len(candidates) == 1:
+        return 0, candidates[0]
+    # Presence vote: when some draws return (near) silence and others return the sound, the
+    # model disagreed about whether the described sound is present in this window. Measured
+    # 2026-11-13 on a 48 s cooking clip with sam-audio-large: "narrator speaking" came back
+    # silent for whole 10 s windows in some draws and present in others, which the user hears
+    # as the voice dropping out for ten seconds at a time. Keep only the draws that heard it;
+    # when every draw is silent the sound really is absent and nothing changes.
+    levels = [_rms_dbfs(c) for c in candidates]
+    loudest = max(levels)
+    keep = [i for i, level in enumerate(levels) if level > loudest - PRESENCE_DB]
+    if 0 < len(keep) < len(candidates):
+        pool = [candidates[i] for i in keep]
+    else:
+        keep, pool = list(range(len(candidates))), candidates
     if mode == "auto":
         # Chunked: pick the draw that agrees with the previous window (seams do not flip).
         # Single window: when the draws agree (same sound, small differences) take the medoid so
@@ -70,22 +90,24 @@ def choose(candidates: list[np.ndarray], previous: np.ndarray | None, overlap: i
         # 2026-11-13 with sam-audio-large this turned a -57 dB wrong-speaker stem into ~0 dB.
         if overlap > 0:
             mode = "overlap"
-        elif len(candidates) >= 3 and _agreement(candidates) >= AGREEMENT_NCC:
-            return _medoid(candidates), candidates[_medoid(candidates)]
+        elif len(pool) >= 3 and _agreement(pool) >= AGREEMENT_NCC:
+            return keep[_medoid(pool)], pool[_medoid(pool)]
+        elif len(pool) == 2 and _agreement(pool) >= AGREEMENT_NCC:
+            return keep[0], pool[0]
         else:
             mode = "mean"
-    if mode == "first" or len(candidates) == 1:
-        return 0, candidates[0]
     if mode == "mean":
-        return None, np.mean(np.stack(candidates).astype(np.float64), axis=0).astype(np.float32)
+        return None, np.mean(np.stack(pool).astype(np.float64), axis=0).astype(np.float32)
+    if len(pool) == 1:
+        return keep[0], pool[0]
     if previous is not None and overlap > 0 and _rms_dbfs(previous[:overlap]) > SILENCE_DBFS:
         n = min(overlap, len(previous))
-        idx = int(np.argmax([_ncc(c[:n], previous[:n]) for c in candidates]))
-    elif len(candidates) >= 3:
-        idx = _medoid(candidates)
+        local = int(np.argmax([_ncc(c[:n], previous[:n]) for c in pool]))
+    elif len(pool) >= 3:
+        local = _medoid(pool)
     else:
-        idx = 0
-    return idx, candidates[idx]
+        local = 0
+    return keep[local], pool[local]
 
 
 def choose_residual(candidate_residuals: list[np.ndarray | None] | None, idx: int | None) -> np.ndarray | None:

@@ -272,3 +272,21 @@ def test_auto_single_window_keeps_the_consensus_draw_when_draws_agree():
     disagree = [base, other, base + 0.05 * rng.standard_normal(4000).astype(np.float32)]
     idx, picked = choose(disagree, None, 0, "auto")
     assert idx is None and np.allclose(picked, np.mean(np.stack(disagree), axis=0), atol=1e-6)  # hedge
+
+
+def test_presence_vote_drops_silent_draws_when_others_heard_the_sound():
+    import numpy as np
+    from sam_audio_service.candidates import choose
+    rng = np.random.default_rng(5)
+    voice = rng.standard_normal(4000).astype(np.float32) * 0.1
+    silent = np.zeros(4000, dtype=np.float32)
+    idx, picked = choose([silent, voice, voice + 0.001 * rng.standard_normal(4000).astype(np.float32)], None, 0, "auto")
+    assert idx in (1, 2) and float(np.abs(picked).max()) > 0.05            # not the silent draw
+    idx, picked = choose([silent, voice], None, 0, "overlap")                 # K=2: the one that heard it
+    assert idx == 1
+    _, picked = choose([silent, voice], None, 0, "mean")                     # mean over present draws only
+    assert np.allclose(picked, voice)
+    idx, _ = choose([silent, voice], voice, 2000, "overlap")                 # chunked: same, regardless of previous
+    assert idx == 1
+    idx, picked = choose([silent, silent.copy()], None, 0, "auto")            # all silent: the sound is absent
+    assert np.allclose(picked, 0)

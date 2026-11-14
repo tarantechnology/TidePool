@@ -160,7 +160,23 @@ def normalise_description(value: str) -> str:
         if text.startswith(prefix) and len(text) > len(prefix):
             text = text[len(prefix):]
             break
-    return text
+    return MODEL_ALIASES.get(text, text)
+
+
+# Wordings people type that the model does not reliably recognise, mapped to the caption
+# vocabulary it was trained on. Measured 2026-11-13 on a 48 s cooking video with
+# sam-audio-large: "narrator speaking" came back silent for whole 10 s windows (the voice
+# dropped out for ten seconds at a time) while "speech" was continuous. Gendered wordings
+# ("man speaking", "woman speaking") are meaningful to the model and are left alone. The stem
+# keeps the caller's own wording as its name (see PromptSpec).
+MODEL_ALIASES = {
+    **{w: "speech" for w in (
+        "narrator", "narrator speaking", "narrator talking", "narration", "narrating", "voiceover", "voice over", "voice-over",
+        "talking", "someone talking", "someone speaking", "people talking", "people speaking",
+        "person talking", "person speaking", "a person speaking", "a person talking", "speaker", "speaking", "dialogue", "dialog",
+        "conversation", "spoken words", "human voice", "human speech", "talk")},
+    **{w: "singing" for w in ("singer", "vocalist", "someone singing", "person singing", "a person singing")},
+}
 
 
 class SourceRef(BaseModel):

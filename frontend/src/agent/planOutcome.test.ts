@@ -80,6 +80,7 @@ describe('muteExistingStem', () => {
   it('leaves isolating, timed removals and unknown sounds to a separation', () => {
     expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: false }), split)).toBeNull()
     expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: true, edit_scope: { action: 'mute', interval: { start: 1, end: 2 } } }), split)).toBeNull()
+    expect(muteExistingStem(plan({ kind: 'separate', description: 'vocals', remove: true, processing_time: 4 }), split)).toBeNull()
     expect(muteExistingStem(plan({ kind: 'separate', description: 'siren', remove: true }), split)).toBeNull()
   })
 

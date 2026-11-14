@@ -31,3 +31,21 @@ describe('music commands', () => {
     }
   })
 })
+
+describe('timestamped separation commands', () => {
+  it('recognizes a local timestamp without implying full-clip processing', () => {
+    expect(separationCommand('remove the knife sounds at 4s')).toEqual({description:'knife sounds',remove:true,processingTime:4})
+    expect(separationCommand('lower the dog barking around 4.3 seconds')).toEqual({description:'dog barking',remove:false,processingTime:4.3,editScope:{action:'lower'}})
+  })
+  it('does not discard extra conditions', () => {
+    expect(separationCommand('remove dog and music at 4s')).toBeNull()
+    expect(separationCommand('remove dog at 4s but keep it later')).toBeNull()
+  })
+})
+
+describe('music and timestamped commands together', () => {
+  it('never reads a timestamped request as a whole-song split', () => {
+    expect(musicCommand('split this song at 30s')).toBeNull()
+    expect(separationCommand('isolate the drums at 30s')).toEqual({description:'drums',remove:false,processingTime:30})
+  })
+})

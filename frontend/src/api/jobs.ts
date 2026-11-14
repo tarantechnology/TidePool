@@ -40,7 +40,7 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-const STAGE_LABELS: Record<string, string> = { splitting: 'Splitting into tracks', separating: 'Separating the sound' }
+const STAGE_LABELS: Record<string, string> = { splitting: 'Splitting into tracks', separating: 'Separating the sound', rendering: 'Rendering the preview' }
 
 /**
  * The working line for a separation job, with a running clock so a long call

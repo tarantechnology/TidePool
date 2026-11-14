@@ -50,11 +50,11 @@ export function plannerFailure(err: unknown): PromptOutcome | null {
 /**
  * "Remove X" when the project already has an X track (a split song's Vocals,
  * or an earlier separation) is a mute, not another separation. Returns the
- * edit plan, or null when the project has no such track to mute. A timed
- * removal stays a separation, which handles the interval.
+ * edit plan, or null when the project has no such track to mute. A timed or
+ * timestamped removal stays a separation, which handles the interval.
  */
 export function muteExistingStem(plan: AgentPlan, saved: readonly SavedStem[]): AgentPlan | null {
-  if (plan.kind !== 'separate' || !plan.remove || plan.edit_scope?.interval) return null
+  if (plan.kind !== 'separate' || !plan.remove || plan.edit_scope?.interval || plan.processing_time != null) return null
   const wanted = plan.stems?.length === 1 ? plan.stems[0] : plan.description
   if (!wanted?.trim()) return null
   const found = findRemoveTargets(saved, wanted)

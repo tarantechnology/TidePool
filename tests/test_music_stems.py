@@ -189,6 +189,22 @@ def test_planner_rejects_invalid_separation_modes(monkeypatch, plan):
     with pytest.raises(AgentError): planned(monkeypatch,plan)
 
 
+def test_planner_schema_lists_both_features_strictly():
+    from app.agent import SCHEMA
+    assert set(SCHEMA['required'])==set(SCHEMA['properties'])
+    assert {'separation_mode','stems','processing_time'} <= set(SCHEMA['required'])
+    assert SCHEMA['properties']['kind']['enum']==['edit','separate','cinematic','director','clarify']
+
+
+def test_planner_never_pairs_a_song_split_with_a_timestamp(monkeypatch):
+    from app.agent import MUSIC_TIMESTAMP
+    plan,_=planned(monkeypatch,{'separation_mode':'music_stems','stems':['drums'],'description':'drums','processing_time':4},'isolate the drums at 4s')
+    assert (plan['kind'],plan['separation_mode'],plan['stems'],plan['processing_time'],plan['message'])==('clarify',None,None,None,MUSIC_TIMESTAMP)
+    # A timestamped prompted separation is still allowed.
+    plan,_=planned(monkeypatch,{'separation_mode':'prompted','description':'dog barking','processing_time':4},'remove the dog barking at 4s')
+    assert (plan['kind'],plan['processing_time'],plan['separation_mode'])==('separate',4,'prompted')
+
+
 def test_mp3_song_upload_route_split_gives_four_tracks(client, tmp_path):
     pid,h=project(client,tmp_path,'song.mp3')
     route=client.get(f'/api/projects/{pid}/route',headers=h).json()
@@ -297,3 +313,14 @@ def test_existing_database_gains_tags_column(tmp_path, monkeypatch):
     monkeypatch.setattr(core,'DB',path)
     core.init(); core.init()
     with core.connect() as db: assert db.execute("SELECT tags FROM stems WHERE id='old'").fetchone()['tags'] is None
+
+
+def test_candidate_status_reports_its_stage_only_while_processing(client, tmp_path):
+    import app.core as core
+    pid,h=project(client,tmp_path)
+    cid=client.post(f'/api/projects/{pid}/cinematic-preview',headers=h,json={}).json()['candidate_id']
+    assert wait(client,'/api/candidates/'+cid,h)['status'] in ('completed','failed')  # the worker is done with it
+    with core.connect() as db: db.execute("UPDATE jobs SET status='processing',stage='rendering' WHERE id=?",(cid,))
+    assert client.get(f'/api/candidates/{cid}',headers=h).json()['stage']=='rendering'
+    with core.connect() as db: db.execute("UPDATE jobs SET status='failed',stage='rendering' WHERE id=?",(cid,))
+    assert client.get(f'/api/candidates/{cid}',headers=h).json()['stage'] is None

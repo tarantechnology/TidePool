@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+benchmarks/out/
+fixtures/generated/
+output/
+.venv-sam/
+benchmarks/say-cache/

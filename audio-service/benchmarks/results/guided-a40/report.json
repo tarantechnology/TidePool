@@ -1,0 +1,2638 @@
+{
+  "manifest": {
+    "version": 1,
+    "note": "Small smoke corpus, one held-out example per category. Short sources are repeated with deterministic offsets. Competing voices include same-speaker overlaps in tuning. No manual labels or training. Not sufficient for profile promotion.",
+    "examples": [
+      {
+        "id": "tuning-speech_music",
+        "split": "tuning",
+        "category": "speech_music",
+        "seed": 1729,
+        "seconds": 12,
+        "target": {
+          "file": "1272-128104-0002.wav",
+          "url": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy",
+          "license": "CC BY 4.0",
+          "attribution": "LibriSpeech: Panayotov, Chen, Povey, Khudanpur; source 1272-128104-0002",
+          "sha256": "5cfd6e1c1da37b1c37f560a0f856d8131c615aa6ab43600f59d0d0020323214c",
+          "source_recording": "1272-128104-0002"
+        },
+        "background": {
+          "file": "brahms.ogg",
+          "url": "https://librosa.org/data/audio/Hungarian_Dance_number_5_-_Allegro_in_F_sharp_minor_(string_orchestra).ogg",
+          "license": "See included brahms-license.txt",
+          "attribution": "Hungarian Dance number 5 by Johannes Brahms / US Army Strings is in the Public Domain. \nFrom Musopen: https://musopen.org/music/43805-hungarian-dance-no-5-in-f-sharp-minor-woo-1-string-orchestra-arr/\nPublic Domain https://creativecommons.org/publicdomain/mark/1.0/\n",
+          "sha256": "919b48aa4cc66a0357d2cd5728664c5ab8f15c4b3469460df4b59470d35d3e49"
+        },
+        "prompt": "person speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "tuning-speech_noise",
+        "split": "tuning",
+        "category": "speech_noise",
+        "seed": 1730,
+        "seconds": 12,
+        "target": {
+          "file": "1272-128104-0002.wav",
+          "url": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy",
+          "license": "CC BY 4.0",
+          "attribution": "LibriSpeech: Panayotov, Chen, Povey, Khudanpur; source 1272-128104-0002",
+          "sha256": "5cfd6e1c1da37b1c37f560a0f856d8131c615aa6ab43600f59d0d0020323214c",
+          "source_recording": "1272-128104-0002"
+        },
+        "background": {
+          "file": "1-17367-A-10.wav",
+          "url": "https://raw.githubusercontent.com/karolpiczak/ESC-50/master/audio/1-17367-A-10.wav",
+          "license": "ESC-10 CC BY 3.0; individual license in attribution",
+          "attribution": "- [1-17367-A.ogg]: clip derived from unlocki door to mod rain.wav (http://www.freesound.org/people/cognito%20perceptu/sounds/17367/) by cognito perceptu [CC0]",
+          "sha256": "d732acd2e0c7c40405968010f49f250740c86998fc416eff2ed5330fc8c89dea",
+          "source_recording": "17367"
+        },
+        "prompt": "person speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "tuning-intermittent",
+        "split": "tuning",
+        "category": "intermittent",
+        "seed": 1731,
+        "seconds": 12,
+        "target": {
+          "file": "1-100032-A-0.wav",
+          "url": "https://raw.githubusercontent.com/karolpiczak/ESC-50/master/audio/1-100032-A-0.wav",
+          "license": "ESC-10 CC BY 3.0; individual license in attribution",
+          "attribution": "- [1-100032-A.ogg]: clip derived from rose_bark.wav (http://www.freesound.org/people/nfrae/sounds/100032/) by nfrae [CC0]",
+          "sha256": "f40a849a2375c8c63312a73dd2dd6c74007301fcc21b4be2ece29a642831e3d8",
+          "source_recording": "100032"
+        },
+        "background": {
+          "file": "brahms.ogg",
+          "url": "https://librosa.org/data/audio/Hungarian_Dance_number_5_-_Allegro_in_F_sharp_minor_(string_orchestra).ogg",
+          "license": "See included brahms-license.txt",
+          "attribution": "Hungarian Dance number 5 by Johannes Brahms / US Army Strings is in the Public Domain. \nFrom Musopen: https://musopen.org/music/43805-hungarian-dance-no-5-in-f-sharp-minor-woo-1-string-orchestra-arr/\nPublic Domain https://creativecommons.org/publicdomain/mark/1.0/\n",
+          "sha256": "919b48aa4cc66a0357d2cd5728664c5ab8f15c4b3469460df4b59470d35d3e49"
+        },
+        "prompt": "dog barking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ],
+        "placements": [
+          [
+            1,
+            3
+          ],
+          [
+            6,
+            8
+          ],
+          [
+            10,
+            11
+          ]
+        ]
+      },
+      {
+        "id": "tuning-competing_voices",
+        "split": "tuning",
+        "category": "competing_voices",
+        "seed": 1732,
+        "seconds": 12,
+        "target": {
+          "file": "1272-128104-0002.wav",
+          "url": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy",
+          "license": "CC BY 4.0",
+          "attribution": "LibriSpeech: Panayotov, Chen, Povey, Khudanpur; source 1272-128104-0002",
+          "sha256": "5cfd6e1c1da37b1c37f560a0f856d8131c615aa6ab43600f59d0d0020323214c",
+          "source_recording": "1272-128104-0002"
+        },
+        "background": {
+          "file": "1272-128104-0003.wav",
+          "url": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy",
+          "license": "CC BY 4.0",
+          "attribution": "LibriSpeech: Panayotov, Chen, Povey, Khudanpur; source 1272-128104-0003",
+          "sha256": "4add42c83b9d64451d8ed87c38445400c67b67573b55c70dac3faef17f2336dd",
+          "source_recording": "1272-128104-0003"
+        },
+        "prompt": "man speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "tuning-stereo",
+        "split": "tuning",
+        "category": "stereo",
+        "seed": 1733,
+        "seconds": 12,
+        "target": {
+          "file": "1272-128104-0002.wav",
+          "url": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy",
+          "license": "CC BY 4.0",
+          "attribution": "LibriSpeech: Panayotov, Chen, Povey, Khudanpur; source 1272-128104-0002",
+          "sha256": "5cfd6e1c1da37b1c37f560a0f856d8131c615aa6ab43600f59d0d0020323214c",
+          "source_recording": "1272-128104-0002"
+        },
+        "background": {
+          "file": "brahms.ogg",
+          "url": "https://librosa.org/data/audio/Hungarian_Dance_number_5_-_Allegro_in_F_sharp_minor_(string_orchestra).ogg",
+          "license": "See included brahms-license.txt",
+          "attribution": "Hungarian Dance number 5 by Johannes Brahms / US Army Strings is in the Public Domain. \nFrom Musopen: https://musopen.org/music/43805-hungarian-dance-no-5-in-f-sharp-minor-woo-1-string-orchestra-arr/\nPublic Domain https://creativecommons.org/publicdomain/mark/1.0/\n",
+          "sha256": "919b48aa4cc66a0357d2cd5728664c5ab8f15c4b3469460df4b59470d35d3e49"
+        },
+        "prompt": "person speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "heldout-speech_music",
+        "split": "heldout",
+        "category": "speech_music",
+        "seed": 1729,
+        "seconds": 12,
+        "target": {
+          "file": "libri1.ogg",
+          "url": "https://librosa.org/data/audio/5703-47212-0000.ogg",
+          "license": "See included libri1-license.txt",
+          "attribution": "Ashiel Mystery - A Detective Story, chapter 2, narrated by Garth Comira\nFrom the LibriSpeech SLR12 collection: https://www.openslr.org/12/\nCC-BY 4.0 https://creativecommons.org/licenses/by/4.0/\n",
+          "sha256": "a284612b46af0535f7e1873758c4387bb8369f6dbbe192ffdec1f171108f98dd"
+        },
+        "background": {
+          "file": "nutcracker.ogg",
+          "url": "https://librosa.org/data/audio/Kevin_MacLeod_-_P_I_Tchaikovsky_Dance_of_the_Sugar_Plum_Fairy.ogg",
+          "license": "See included nutcracker-license.txt",
+          "attribution": "P. I. Tchaikovsky: Dance of the Sugar Plum Fairy by Kevin MacLeod is licensed under a Creative Commons Attribution License. \nFrom the Free Music Archive: https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Dance_of_the_Sugar_Plum_Fairy\nCC-BY https://creativecommons.org/licenses/by/3.0/\n",
+          "sha256": "b5c1a3e26310e6618d3c124f458654cd235650fcb9db7d711302644566600484"
+        },
+        "prompt": "person speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "heldout-speech_noise",
+        "split": "heldout",
+        "category": "speech_noise",
+        "seed": 1730,
+        "seconds": 12,
+        "target": {
+          "file": "libri1.ogg",
+          "url": "https://librosa.org/data/audio/5703-47212-0000.ogg",
+          "license": "See included libri1-license.txt",
+          "attribution": "Ashiel Mystery - A Detective Story, chapter 2, narrated by Garth Comira\nFrom the LibriSpeech SLR12 collection: https://www.openslr.org/12/\nCC-BY 4.0 https://creativecommons.org/licenses/by/4.0/\n",
+          "sha256": "a284612b46af0535f7e1873758c4387bb8369f6dbbe192ffdec1f171108f98dd"
+        },
+        "background": {
+          "file": "2-101676-A-10.wav",
+          "url": "https://raw.githubusercontent.com/karolpiczak/ESC-50/master/audio/2-101676-A-10.wav",
+          "license": "ESC-10 CC BY 3.0; individual license in attribution",
+          "attribution": "- [2-101676-A.ogg]: clip derived from rain, sm57.wav (http://www.freesound.org/people/nialldoran/sounds/101676/) by nialldoran [CC0]",
+          "sha256": "ef456a67e12d2e2c84513e9eb8bea769e343cd5e0bfe65a34dc96c526f260838",
+          "source_recording": "101676"
+        },
+        "prompt": "person speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "heldout-intermittent",
+        "split": "heldout",
+        "category": "intermittent",
+        "seed": 1731,
+        "seconds": 12,
+        "target": {
+          "file": "2-114280-A-0.wav",
+          "url": "https://raw.githubusercontent.com/karolpiczak/ESC-50/master/audio/2-114280-A-0.wav",
+          "license": "ESC-10 CC BY 3.0; individual license in attribution",
+          "attribution": "- [2-114280-A.ogg]: clip derived from dogbarks.wav (http://www.freesound.org/people/plingativator/sounds/114280/) by plingativator [CC-BY]",
+          "sha256": "23cd06e6c8b2e054d13ad6392d34d91588cd8572041d6f4c1c337048fd5deb69",
+          "source_recording": "114280"
+        },
+        "background": {
+          "file": "nutcracker.ogg",
+          "url": "https://librosa.org/data/audio/Kevin_MacLeod_-_P_I_Tchaikovsky_Dance_of_the_Sugar_Plum_Fairy.ogg",
+          "license": "See included nutcracker-license.txt",
+          "attribution": "P. I. Tchaikovsky: Dance of the Sugar Plum Fairy by Kevin MacLeod is licensed under a Creative Commons Attribution License. \nFrom the Free Music Archive: https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Dance_of_the_Sugar_Plum_Fairy\nCC-BY https://creativecommons.org/licenses/by/3.0/\n",
+          "sha256": "b5c1a3e26310e6618d3c124f458654cd235650fcb9db7d711302644566600484"
+        },
+        "prompt": "dog barking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ],
+        "placements": [
+          [
+            1,
+            3
+          ],
+          [
+            6,
+            8
+          ],
+          [
+            10,
+            11
+          ]
+        ]
+      },
+      {
+        "id": "heldout-competing_voices",
+        "split": "heldout",
+        "category": "competing_voices",
+        "seed": 1732,
+        "seconds": 12,
+        "target": {
+          "file": "libri1.ogg",
+          "url": "https://librosa.org/data/audio/5703-47212-0000.ogg",
+          "license": "See included libri1-license.txt",
+          "attribution": "Ashiel Mystery - A Detective Story, chapter 2, narrated by Garth Comira\nFrom the LibriSpeech SLR12 collection: https://www.openslr.org/12/\nCC-BY 4.0 https://creativecommons.org/licenses/by/4.0/\n",
+          "sha256": "a284612b46af0535f7e1873758c4387bb8369f6dbbe192ffdec1f171108f98dd"
+        },
+        "background": {
+          "file": "libri2.ogg",
+          "url": "https://librosa.org/data/audio/3436-172162-0000.ogg",
+          "license": "See included libri2-license.txt",
+          "attribution": "The Age of Chivalry / Chapter 18: Perceval / Read by Anders Lankford\nFrom the LibriSpeech SLR12 collection: https://www.openslr.org/12/\nCC-BY 4.0 https://creativecommons.org/licenses/by/4.0/\n",
+          "sha256": "780e482b52f2c8a500356babf60178ce005449cc171a8537eb3ef2961eb3e855"
+        },
+        "prompt": "man speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      },
+      {
+        "id": "heldout-stereo",
+        "split": "heldout",
+        "category": "stereo",
+        "seed": 1733,
+        "seconds": 12,
+        "target": {
+          "file": "libri1.ogg",
+          "url": "https://librosa.org/data/audio/5703-47212-0000.ogg",
+          "license": "See included libri1-license.txt",
+          "attribution": "Ashiel Mystery - A Detective Story, chapter 2, narrated by Garth Comira\nFrom the LibriSpeech SLR12 collection: https://www.openslr.org/12/\nCC-BY 4.0 https://creativecommons.org/licenses/by/4.0/\n",
+          "sha256": "a284612b46af0535f7e1873758c4387bb8369f6dbbe192ffdec1f171108f98dd"
+        },
+        "background": {
+          "file": "nutcracker.ogg",
+          "url": "https://librosa.org/data/audio/Kevin_MacLeod_-_P_I_Tchaikovsky_Dance_of_the_Sugar_Plum_Fairy.ogg",
+          "license": "See included nutcracker-license.txt",
+          "attribution": "P. I. Tchaikovsky: Dance of the Sugar Plum Fairy by Kevin MacLeod is licensed under a Creative Commons Attribution License. \nFrom the Free Music Archive: https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Dance_of_the_Sugar_Plum_Fairy\nCC-BY https://creativecommons.org/licenses/by/3.0/\n",
+          "sha256": "b5c1a3e26310e6618d3c124f458654cd235650fcb9db7d711302644566600484"
+        },
+        "prompt": "person speaking",
+        "anchors": [
+          {
+            "token": "+",
+            "start": 1,
+            "end": 3
+          }
+        ]
+      }
+    ]
+  },
+  "results": [
+    {
+      "id": "tuning-speech_music",
+      "category": "speech_music",
+      "split": "tuning",
+      "seed": 1729,
+      "profile": "text",
+      "target_si_sdri_db": 6.2275945385597975,
+      "background_si_sdri_db": 6.8719229120759815,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.03678049927259282,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 8.303,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26162571264,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26162571264,
+      "seconds": 9.29,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_music",
+      "category": "speech_music",
+      "split": "tuning",
+      "seed": 1729,
+      "profile": "anchor",
+      "target_si_sdri_db": 6.261069996698416,
+      "background_si_sdri_db": 6.9497305398731815,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.036894773999943765,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.259,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24681754624,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24681754624,
+      "seconds": 7.18,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_music",
+      "category": "speech_music",
+      "split": "tuning",
+      "seed": 1729,
+      "profile": "judge",
+      "target_si_sdri_db": 6.241629680454118,
+      "background_si_sdri_db": 6.91894019070895,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.036498698149095614,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 18.527,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29118720512,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29118720512,
+      "seconds": 19.294,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_music",
+      "category": "speech_music",
+      "split": "tuning",
+      "seed": 1729,
+      "profile": "long",
+      "target_si_sdri_db": 6.1238250493191035,
+      "background_si_sdri_db": 6.826156200173787,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.853,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27119348224,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27119348224,
+      "seconds": 10.689,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_music",
+      "category": "speech_music",
+      "split": "tuning",
+      "seed": 1729,
+      "profile": "stereo",
+      "target_si_sdri_db": 6.227593042239011,
+      "background_si_sdri_db": 6.871921813581479,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.03678050385431582,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.601,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26275107840,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26275107840,
+      "seconds": 8.604,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_noise",
+      "category": "speech_noise",
+      "split": "tuning",
+      "seed": 1730,
+      "profile": "text",
+      "target_si_sdri_db": 6.873171660297643,
+      "background_si_sdri_db": 7.4634440800416195,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.0183673965520123,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.302,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26273567744,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26273567744,
+      "seconds": 8.438,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_noise",
+      "category": "speech_noise",
+      "split": "tuning",
+      "seed": 1730,
+      "profile": "anchor",
+      "target_si_sdri_db": 6.8808650371229545,
+      "background_si_sdri_db": 7.504242400349223,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.018332402715770874,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.198,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24793552896,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24793552896,
+      "seconds": 6.897,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_noise",
+      "category": "speech_noise",
+      "split": "tuning",
+      "seed": 1730,
+      "profile": "judge",
+      "target_si_sdri_db": 6.742973836897105,
+      "background_si_sdri_db": 7.326542012936573,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.020458689029735883,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.658,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29229871616,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29229871616,
+      "seconds": 15.792,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_noise",
+      "category": "speech_noise",
+      "split": "tuning",
+      "seed": 1730,
+      "profile": "long",
+      "target_si_sdri_db": 6.987326610745007,
+      "background_si_sdri_db": 7.578899977514096,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 16.635,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27118604288,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27118604288,
+      "seconds": 17.799,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-speech_noise",
+      "category": "speech_noise",
+      "split": "tuning",
+      "seed": 1730,
+      "profile": "stereo",
+      "target_si_sdri_db": 6.873171660297643,
+      "background_si_sdri_db": 7.4634440800416195,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.0183673965520123,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 8.361,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26274560512,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26274560512,
+      "seconds": 9.096,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-intermittent",
+      "category": "intermittent",
+      "split": "tuning",
+      "seed": 1731,
+      "profile": "text",
+      "target_si_sdri_db": 1.488409131951489,
+      "background_si_sdri_db": 2.9741409215410153,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 9.785682714623483e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 8.897,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26275697152,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26275697152,
+      "seconds": 9.674,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-intermittent",
+      "category": "intermittent",
+      "split": "tuning",
+      "seed": 1731,
+      "profile": "anchor",
+      "target_si_sdri_db": 1.0036661239796725,
+      "background_si_sdri_db": 3.2988161498115716,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.00011343765029023871,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.129,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24791828992,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24791828992,
+      "seconds": 7.089,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-intermittent",
+      "category": "intermittent",
+      "split": "tuning",
+      "seed": 1731,
+      "profile": "judge",
+      "target_si_sdri_db": 1.4663796093184265,
+      "background_si_sdri_db": 2.9206210635736696,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 9.799942168394366e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.787,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29232472064,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29232472064,
+      "seconds": 15.378,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-intermittent",
+      "category": "intermittent",
+      "split": "tuning",
+      "seed": 1731,
+      "profile": "long",
+      "target_si_sdri_db": 0.6123565815756221,
+      "background_si_sdri_db": 2.807884964109112,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.439,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27120407552,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27120407552,
+      "seconds": 10.104,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-intermittent",
+      "category": "intermittent",
+      "split": "tuning",
+      "seed": 1731,
+      "profile": "stereo",
+      "target_si_sdri_db": 1.488409131951489,
+      "background_si_sdri_db": 2.9741409215410153,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 9.785682714623483e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.329,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26274343424,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26274343424,
+      "seconds": 7.993,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-competing_voices",
+      "category": "competing_voices",
+      "split": "tuning",
+      "seed": 1732,
+      "profile": "text",
+      "target_si_sdri_db": -13.049967415485169,
+      "background_si_sdri_db": -6.900327733131705,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.1275221492882408,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.539,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26273059328,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26273059328,
+      "seconds": 8.406,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-competing_voices",
+      "category": "competing_voices",
+      "split": "tuning",
+      "seed": 1732,
+      "profile": "anchor",
+      "target_si_sdri_db": -9.674989423356624,
+      "background_si_sdri_db": -4.3511914130770855,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.1269181910453683,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.291,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24791666176,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24791666176,
+      "seconds": 6.989,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-competing_voices",
+      "category": "competing_voices",
+      "split": "tuning",
+      "seed": 1732,
+      "profile": "judge",
+      "target_si_sdri_db": -2.527666343094048,
+      "background_si_sdri_db": -1.4010194252623729,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.072991220828862,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.404,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29230333952,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29230333952,
+      "seconds": 15.099,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-competing_voices",
+      "category": "competing_voices",
+      "split": "tuning",
+      "seed": 1732,
+      "profile": "long",
+      "target_si_sdri_db": -11.115769513957218,
+      "background_si_sdri_db": -5.640795572929193,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.324,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27118432256,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27118432256,
+      "seconds": 9.987,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-competing_voices",
+      "category": "competing_voices",
+      "split": "tuning",
+      "seed": 1732,
+      "profile": "stereo",
+      "target_si_sdri_db": -13.049967415485169,
+      "background_si_sdri_db": -6.900327733131705,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.1275221492882408,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.324,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26275156480,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26275156480,
+      "seconds": 8.093,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-stereo",
+      "category": "stereo",
+      "split": "tuning",
+      "seed": 1733,
+      "profile": "text",
+      "target_si_sdri_db": 5.1388017633574465,
+      "background_si_sdri_db": 0.2948942724928463,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.06325415930271722,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.321,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26276887040,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26276887040,
+      "seconds": 9.306,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-stereo",
+      "category": "stereo",
+      "split": "tuning",
+      "seed": 1733,
+      "profile": "anchor",
+      "target_si_sdri_db": 5.104980572897831,
+      "background_si_sdri_db": 0.3513006767593341,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.06325241339910628,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.343,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24792974848,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24792974848,
+      "seconds": 7.494,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-stereo",
+      "category": "stereo",
+      "split": "tuning",
+      "seed": 1733,
+      "profile": "judge",
+      "target_si_sdri_db": 5.114606341265476,
+      "background_si_sdri_db": 0.30595429677983477,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.06325419419782091,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.378,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29231036416,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29231036416,
+      "seconds": 16.093,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-stereo",
+      "category": "stereo",
+      "split": "tuning",
+      "seed": 1733,
+      "profile": "long",
+      "target_si_sdri_db": 4.969549690186392,
+      "background_si_sdri_db": 0.40815485209748914,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.303,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27120082944,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27120082944,
+      "seconds": 10.605,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "tuning-stereo",
+      "category": "stereo",
+      "split": "tuning",
+      "seed": 1733,
+      "profile": "stereo",
+      "target_si_sdri_db": 4.589394378471671,
+      "background_si_sdri_db": 6.040792009182597,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.016473888727826135,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 15.094,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26274003456,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26274003456,
+      "seconds": 16.78,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_music",
+      "category": "speech_music",
+      "split": "heldout",
+      "seed": 1729,
+      "profile": "text",
+      "target_si_sdri_db": 11.42419751425731,
+      "background_si_sdri_db": 11.550039601167864,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.0027915842055483697,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.302,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26272791040,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26272791040,
+      "seconds": 8.35,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_music",
+      "category": "speech_music",
+      "split": "heldout",
+      "seed": 1729,
+      "profile": "anchor",
+      "target_si_sdri_db": 12.114358572086923,
+      "background_si_sdri_db": 11.97107356737532,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.00284141499987156,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.315,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24792661504,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24792661504,
+      "seconds": 7.29,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_music",
+      "category": "speech_music",
+      "split": "heldout",
+      "seed": 1729,
+      "profile": "judge",
+      "target_si_sdri_db": 11.525256958008125,
+      "background_si_sdri_db": 11.63032575384607,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.002790772066140127,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.386,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29229109248,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29229109248,
+      "seconds": 14.98,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_music",
+      "category": "speech_music",
+      "split": "heldout",
+      "seed": 1729,
+      "profile": "long",
+      "target_si_sdri_db": 11.884567989737919,
+      "background_si_sdri_db": 11.695943425881426,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.529,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27117965312,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27117965312,
+      "seconds": 10.979,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_music",
+      "category": "speech_music",
+      "split": "heldout",
+      "seed": 1729,
+      "profile": "stereo",
+      "target_si_sdri_db": 11.42419751425731,
+      "background_si_sdri_db": 11.550039601167864,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.0027915842055483697,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.364,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26273939968,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26273939968,
+      "seconds": 8.907,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1729,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_noise",
+      "category": "speech_noise",
+      "split": "heldout",
+      "seed": 1730,
+      "profile": "text",
+      "target_si_sdri_db": 9.281925596518356,
+      "background_si_sdri_db": 9.396501002886689,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.008553853966959938,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.322,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26275219968,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26275219968,
+      "seconds": 8.436,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_noise",
+      "category": "speech_noise",
+      "split": "heldout",
+      "seed": 1730,
+      "profile": "anchor",
+      "target_si_sdri_db": 10.40629439780901,
+      "background_si_sdri_db": 10.651905064097178,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.00851328635303046,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.174,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24791502336,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24791502336,
+      "seconds": 7.199,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_noise",
+      "category": "speech_noise",
+      "split": "heldout",
+      "seed": 1730,
+      "profile": "judge",
+      "target_si_sdri_db": 9.764254564371788,
+      "background_si_sdri_db": 9.994105055435751,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.008551576589404305,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.396,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29229514752,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29229514752,
+      "seconds": 15.083,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_noise",
+      "category": "speech_noise",
+      "split": "heldout",
+      "seed": 1730,
+      "profile": "long",
+      "target_si_sdri_db": 10.652735710681451,
+      "background_si_sdri_db": 10.892709358762477,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.452,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27119099904,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27119099904,
+      "seconds": 10.088,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-speech_noise",
+      "category": "speech_noise",
+      "split": "heldout",
+      "seed": 1730,
+      "profile": "stereo",
+      "target_si_sdri_db": 9.281925596518356,
+      "background_si_sdri_db": 9.396501002886689,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.008553853966959938,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.324,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26275387904,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26275387904,
+      "seconds": 8.084,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1730,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-intermittent",
+      "category": "intermittent",
+      "split": "heldout",
+      "seed": 1731,
+      "profile": "text",
+      "target_si_sdri_db": 12.064754078592076,
+      "background_si_sdri_db": 12.104615670714065,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.04420759771421895,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.313,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26274050560,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26274050560,
+      "seconds": 8.015,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-intermittent",
+      "category": "intermittent",
+      "split": "heldout",
+      "seed": 1731,
+      "profile": "anchor",
+      "target_si_sdri_db": 13.477229225454439,
+      "background_si_sdri_db": 13.581090917516507,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.045646238198103734,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.198,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24791722496,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24791722496,
+      "seconds": 7.085,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-intermittent",
+      "category": "intermittent",
+      "split": "heldout",
+      "seed": 1731,
+      "profile": "judge",
+      "target_si_sdri_db": 12.405769911999665,
+      "background_si_sdri_db": 12.382874397881814,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.04662992539768832,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.388,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29229891584,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29229891584,
+      "seconds": 15.389,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-intermittent",
+      "category": "intermittent",
+      "split": "heldout",
+      "seed": 1731,
+      "profile": "long",
+      "target_si_sdri_db": 13.03753685133173,
+      "background_si_sdri_db": 12.956127875537302,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.319,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27119811584,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27119811584,
+      "seconds": 9.893,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-intermittent",
+      "category": "intermittent",
+      "split": "heldout",
+      "seed": 1731,
+      "profile": "stereo",
+      "target_si_sdri_db": 12.064754078592076,
+      "background_si_sdri_db": 12.104615670714065,
+      "reconstruction_max_error": 2.9802322387695312e-08,
+      "boundary_error_rms": 0.04420759771421895,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.481,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26274619904,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26274619904,
+      "seconds": 8.891,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1731,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-competing_voices",
+      "category": "competing_voices",
+      "split": "heldout",
+      "seed": 1732,
+      "profile": "text",
+      "target_si_sdri_db": -13.974067748567396,
+      "background_si_sdri_db": -15.81384935217766,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.08902689262952256,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.396,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26273221120,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26273221120,
+      "seconds": 8.471,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-competing_voices",
+      "category": "competing_voices",
+      "split": "heldout",
+      "seed": 1732,
+      "profile": "anchor",
+      "target_si_sdri_db": -14.283317978161488,
+      "background_si_sdri_db": -15.899482494786307,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.08904958827690176,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.146,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24792002048,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24792002048,
+      "seconds": 8.592,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-competing_voices",
+      "category": "competing_voices",
+      "split": "heldout",
+      "seed": 1732,
+      "profile": "judge",
+      "target_si_sdri_db": 12.264689775293348,
+      "background_si_sdri_db": 12.372062385250581,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.07638546529592642,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 16.158,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29230882816,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29230882816,
+      "seconds": 16.982,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-competing_voices",
+      "category": "competing_voices",
+      "split": "heldout",
+      "seed": 1732,
+      "profile": "long",
+      "target_si_sdri_db": -40.854213312613446,
+      "background_si_sdri_db": -26.19735361772597,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.328,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27117918208,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27117918208,
+      "seconds": 9.99,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-competing_voices",
+      "category": "competing_voices",
+      "split": "heldout",
+      "seed": 1732,
+      "profile": "stereo",
+      "target_si_sdri_db": -13.974067748567396,
+      "background_si_sdri_db": -15.81384935217766,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.08902689262952256,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 7.396,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26274884096,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26274884096,
+      "seconds": 8.485,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1732,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-stereo",
+      "category": "stereo",
+      "split": "heldout",
+      "seed": 1733,
+      "profile": "text",
+      "target_si_sdri_db": 10.122608432977966,
+      "background_si_sdri_db": 1.4404046479796886,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.07017537927478902,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 7.303,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26275277312,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26275277312,
+      "seconds": 8.422,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-stereo",
+      "category": "stereo",
+      "split": "heldout",
+      "seed": 1733,
+      "profile": "anchor",
+      "target_si_sdri_db": 10.446557925781534,
+      "background_si_sdri_db": 1.5599631736967043,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.07017028120637847,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 6.166,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 24794170880,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 24794170880,
+      "seconds": 7.106,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-stereo",
+      "category": "stereo",
+      "split": "heldout",
+      "seed": 1733,
+      "profile": "judge",
+      "target_si_sdri_db": 10.18881533200009,
+      "background_si_sdri_db": 1.4465587941541456,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.0703671165578104,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": true,
+        "elapsed_seconds": 14.514,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 29231544320,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 29231544320,
+      "seconds": 15.472,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 2,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-stereo",
+      "category": "stereo",
+      "split": "heldout",
+      "seed": 1733,
+      "profile": "long",
+      "target_si_sdri_db": 10.100850537022755,
+      "background_si_sdri_db": 1.5214914500357546,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": null,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 9.304,
+        "chunk_seconds": 20.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 1,
+        "effective_chunk_batch": 1,
+        "peak_memory_bytes": 27117625344,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 27117625344,
+      "seconds": 10.305,
+      "requested_options": {
+        "chunk_seconds": 20,
+        "chunk_batch": 1,
+        "reranking_candidates": 2,
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    },
+    {
+      "id": "heldout-stereo",
+      "category": "stereo",
+      "split": "heldout",
+      "seed": 1733,
+      "profile": "stereo",
+      "target_si_sdri_db": 8.625181673686438,
+      "background_si_sdri_db": 9.640203802536249,
+      "reconstruction_max_error": 5.960464477539063e-08,
+      "boundary_error_rms": 0.018965500562248303,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "chunked": true,
+        "elapsed_seconds": 14.717,
+        "chunk_seconds": 10.0,
+        "chunk_overlap_seconds": 2.0,
+        "requested_chunk_batch": 2,
+        "effective_chunk_batch": 2,
+        "peak_memory_bytes": 26276139520,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ],
+      "peak_memory_bytes": 26276139520,
+      "seconds": 15.689,
+      "requested_options": {
+        "chunk_seconds": 10,
+        "chunk_batch": 2,
+        "reranking_candidates": 1,
+        "stereo_mode": "per_channel",
+        "seed": 1733,
+        "predict_spans": false,
+        "output_format": "pcm_f32le",
+        "residual": "mixture_minus_targets"
+      }
+    }
+  ],
+  "promotion_gate": {
+    "anchor": {
+      "numerical_gate_passes": true,
+      "categories": {
+        "competing_voices": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": -0.30925022959409176,
+            "background_si_sdri_db": -0.0856331426086463
+          },
+          "passes": true
+        },
+        "intermittent": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 1.4124751468623629,
+            "background_si_sdri_db": 1.4764752468024422
+          },
+          "passes": true
+        },
+        "speech_music": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.6901610578296129,
+            "background_si_sdri_db": 0.4210339662074567
+          },
+          "passes": true
+        },
+        "speech_noise": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 1.1243688012906539,
+            "background_si_sdri_db": 1.2554040612104895
+          },
+          "passes": true
+        },
+        "stereo": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.32394949280356755,
+            "background_si_sdri_db": 0.11955852571701575
+          },
+          "passes": true
+        }
+      },
+      "promoted": false,
+      "pending": "Listening review, memory/runtime checks and adequate held-out coverage are required."
+    },
+    "judge": {
+      "numerical_gate_passes": true,
+      "categories": {
+        "competing_voices": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 26.238757523860745,
+            "background_si_sdri_db": 28.185911737428242
+          },
+          "passes": true
+        },
+        "intermittent": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.3410158334075888,
+            "background_si_sdri_db": 0.27825872716774924
+          },
+          "passes": true
+        },
+        "speech_music": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.10105944375081499,
+            "background_si_sdri_db": 0.08028615267820527
+          },
+          "passes": true
+        },
+        "speech_noise": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.48232896785343193,
+            "background_si_sdri_db": 0.5976040525490625
+          },
+          "passes": true
+        },
+        "stereo": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.06620689902212362,
+            "background_si_sdri_db": 0.006154146174456976
+          },
+          "passes": true
+        }
+      },
+      "promoted": false,
+      "pending": "Listening review, memory/runtime checks and adequate held-out coverage are required."
+    },
+    "long": {
+      "numerical_gate_passes": false,
+      "categories": {
+        "competing_voices": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": -26.88014556404605,
+            "background_si_sdri_db": -10.383504265548309
+          },
+          "passes": false
+        },
+        "intermittent": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.9727827727396541,
+            "background_si_sdri_db": 0.8515122048232371
+          },
+          "passes": true
+        },
+        "speech_music": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.46037047548060883,
+            "background_si_sdri_db": 0.145903824713562
+          },
+          "passes": true
+        },
+        "speech_noise": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 1.3708101141630955,
+            "background_si_sdri_db": 1.4962083558757886
+          },
+          "passes": true
+        },
+        "stereo": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": -0.02175789595521138,
+            "background_si_sdri_db": 0.081086802056066
+          },
+          "passes": true
+        }
+      },
+      "promoted": false,
+      "pending": "Listening review, memory/runtime checks and adequate held-out coverage are required."
+    },
+    "stereo": {
+      "numerical_gate_passes": false,
+      "categories": {
+        "competing_voices": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.0,
+            "background_si_sdri_db": 0.0
+          },
+          "passes": true
+        },
+        "intermittent": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.0,
+            "background_si_sdri_db": 0.0
+          },
+          "passes": true
+        },
+        "speech_music": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.0,
+            "background_si_sdri_db": 0.0
+          },
+          "passes": true
+        },
+        "speech_noise": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": 0.0,
+            "background_si_sdri_db": 0.0
+          },
+          "passes": true
+        },
+        "stereo": {
+          "paired_examples": 1,
+          "median_delta_db": {
+            "target_si_sdri_db": -1.4974267592915282,
+            "background_si_sdri_db": 8.19979915455656
+          },
+          "passes": false
+        }
+      },
+      "promoted": false,
+      "pending": "Listening review, memory/runtime checks and adequate held-out coverage are required."
+    }
+  },
+  "listening_review_completed": false
+}

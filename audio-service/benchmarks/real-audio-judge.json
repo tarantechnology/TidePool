@@ -1,0 +1,160 @@
+{
+  "method": "real clean speech + real music mixed at equal RMS",
+  "speech_dataset": "hf-internal-testing/librispeech_asr_dummy validation",
+  "music_source": "Hungarian_Dance_number_5_-_Allegro_in_F_sharp_minor_(string_orchestra).ogg",
+  "duration_seconds": 6,
+  "clips": 3,
+  "results": [
+    {
+      "clip": "1272-128104-0002",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 1,
+      "candidates": 2,
+      "si_sdri_db": 4.920829509438486,
+      "latency_seconds": 8.4,
+      "reconstruction_error": 3.0516646802425385e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 8.309,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0002",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 1,
+      "candidates": 2,
+      "si_sdri_db": 4.906306540403507,
+      "latency_seconds": 5.16,
+      "reconstruction_error": 3.0516646802425385e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 5.101,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 1,
+      "candidates": 2,
+      "si_sdri_db": 7.994591940831732,
+      "latency_seconds": 4.931,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 4.884,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0003",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 1,
+      "candidates": 2,
+      "si_sdri_db": 7.926095575143645,
+      "latency_seconds": 4.965,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 4.834,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "sam",
+      "prompt": "person speaking",
+      "seed": 1,
+      "candidates": 2,
+      "si_sdri_db": 7.793733934580122,
+      "latency_seconds": 4.865,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 4.824,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    },
+    {
+      "clip": "1272-128104-0004",
+      "method": "sam",
+      "prompt": "spoken narration",
+      "seed": 1,
+      "candidates": 2,
+      "si_sdri_db": 7.773971827559654,
+      "latency_seconds": 5.087,
+      "reconstruction_error": 3.0517578125e-05,
+      "model": {
+        "backend": "sam",
+        "model_id": "facebook/sam-audio-large",
+        "device": "cuda",
+        "dtype": "float32",
+        "predict_spans": false,
+        "reranking_candidates": 2,
+        "stereo_mode": "duplicate",
+        "chunked": false,
+        "elapsed_seconds": 4.957,
+        "is_mock": false
+      },
+      "warnings": [
+        "seeded inference is reproducible for AUDIO_CHUNK_BATCH=2; a different chunk batch size draws different noise"
+      ]
+    }
+  ],
+  "caveat": "Small constructed mixtures, one LibriSpeech subset and one music recording; not a substitute for diverse real-video listening tests."
+}

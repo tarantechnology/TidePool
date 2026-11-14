@@ -1,0 +1,14 @@
+{
+ "tag": "audiosep",
+ "prompts": [
+  "vocals",
+  "singing",
+  "drums",
+  "bass guitar",
+  "bass"
+ ],
+ "load_s": 34.0910652569728,
+ "mean_prompt_s": 0.12884209944771222,
+ "peak_alloc_mb": 1853,
+ "peak_reserved_mb": 2502
+}

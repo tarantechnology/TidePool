@@ -1,0 +1,31 @@
+{
+ "tag": "stemforge_default",
+ "model": "demucs:htdemucs",
+ "shifts": 1,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 3.545568017056212,
+ "first_clip_s": 1.2044915629085153,
+ "mean_clip_s_excl_first": 0.9170117909397588,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.13478653856080233,
+ "peak_alloc_mb": 568,
+ "peak_reserved_mb": 854,
+ "stems_native": [
+  "bass",
+  "drums",
+  "other",
+  "vocals"
+ ],
+ "config": {
+  "tag": "stemforge_default",
+  "model": "demucs:htdemucs",
+  "shifts": 1,
+  "overlap": 0.25,
+  "demucs_normalize": false,
+  "clip": true
+ },
+ "load_report": [
+  null
+ ]
+}

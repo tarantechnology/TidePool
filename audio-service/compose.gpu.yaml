@@ -1,0 +1,15 @@
+# Use together with compose.yaml and compose.audio.yaml on an NVIDIA Docker host.
+services:
+  audio-service:
+    build:
+      target: sam
+    environment:
+      AUDIO_BACKEND: sam
+      AUDIO_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

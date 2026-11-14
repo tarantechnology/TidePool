@@ -1,0 +1,2582 @@
+[
+{
+"file": "musdb/dec/00/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.48505347967147827,
+"speech": 0.052193667739629745,
+"top": "Music",
+"latency_s": 0.5480897109955549
+},
+{
+"file": "musdb/dec/01/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5750425457954407,
+"speech": 0.1647232323884964,
+"top": "Music",
+"latency_s": 0.1340734880650416
+},
+{
+"file": "musdb/dec/02/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5784258246421814,
+"speech": 0.046181805431842804,
+"top": "Music",
+"latency_s": 0.13909473805688322
+},
+{
+"file": "musdb/dec/03/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.796943187713623,
+"speech": 0.010095478966832161,
+"top": "Music",
+"latency_s": 0.1207529470557347
+},
+{
+"file": "musdb/dec/04/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6060770153999329,
+"speech": 0.0859750285744667,
+"top": "Music",
+"latency_s": 0.12021335598547012
+},
+{
+"file": "musdb/dec/05/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5914052128791809,
+"speech": 0.09597789496183395,
+"top": "Music",
+"latency_s": 0.16830647794995457
+},
+{
+"file": "musdb/dec/06/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5635190010070801,
+"speech": 0.10759194195270538,
+"top": "Music",
+"latency_s": 0.12622097902931273
+},
+{
+"file": "musdb/dec/07/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5396762490272522,
+"speech": 0.03329457715153694,
+"top": "Music",
+"latency_s": 0.11635620601009578
+},
+{
+"file": "musdb/dec/08/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6544986367225647,
+"speech": 0.044239889830350876,
+"top": "Music",
+"latency_s": 0.15685995598323643
+},
+{
+"file": "musdb/dec/09/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5191799998283386,
+"speech": 0.07083733379840851,
+"top": "Music",
+"latency_s": 0.12095483706798404
+},
+{
+"file": "musdb/dec/10/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5648300051689148,
+"speech": 0.0849062129855156,
+"top": "Music",
+"latency_s": 0.17879193695262074
+},
+{
+"file": "musdb/dec/11/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5879334211349487,
+"speech": 0.11059116572141647,
+"top": "Music",
+"latency_s": 0.20441144495271146
+},
+{
+"file": "musdb/dec/12/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.8256819248199463,
+"speech": 0.019529158249497414,
+"top": "Music",
+"latency_s": 0.1951026760507375
+},
+{
+"file": "musdb/dec/13/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6743935942649841,
+"speech": 0.027556298300623894,
+"top": "Music",
+"latency_s": 0.1249884549761191
+},
+{
+"file": "musdb/dec/14/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.7487430572509766,
+"speech": 0.0557573176920414,
+"top": "Music",
+"latency_s": 0.1849481709068641
+},
+{
+"file": "musdb/dec/15/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5536784529685974,
+"speech": 0.051795609295368195,
+"top": "Music",
+"latency_s": 0.19505085505079478
+},
+{
+"file": "musdb/dec/16/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.650361180305481,
+"speech": 0.07480237632989883,
+"top": "Music",
+"latency_s": 0.20372348802629858
+},
+{
+"file": "musdb/dec/17/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.4660962224006653,
+"speech": 0.11588091403245926,
+"top": "Music",
+"latency_s": 0.20066340104676783
+},
+{
+"file": "musdb/dec/18/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5381928086280823,
+"speech": 0.03613577410578728,
+"top": "Music",
+"latency_s": 0.10371940198820084
+},
+{
+"file": "musdb/dec/19/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.4720870852470398,
+"speech": 0.23271843791007996,
+"top": "Music",
+"latency_s": 0.18944308697246015
+},
+{
+"file": "musdb/dec/20/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.4669131338596344,
+"speech": 0.14968152344226837,
+"top": "Music",
+"latency_s": 0.12203811795916408
+},
+{
+"file": "musdb/dec/21/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.7595108151435852,
+"speech": 0.03484048321843147,
+"top": "Music",
+"latency_s": 0.22711356496438384
+},
+{
+"file": "musdb/dec/22/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5292141437530518,
+"speech": 0.0754716545343399,
+"top": "Music",
+"latency_s": 0.15012443694286048
+},
+{
+"file": "musdb/dec/23/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.7138257622718811,
+"speech": 0.022332744672894478,
+"top": "Music",
+"latency_s": 0.19601748301647604
+},
+{
+"file": "musdb/dec/24/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6250297427177429,
+"speech": 0.035709768533706665,
+"top": "Music",
+"latency_s": 0.12410478200763464
+},
+{
+"file": "musdb/dec/25/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.7343758940696716,
+"speech": 0.03158958628773689,
+"top": "Music",
+"latency_s": 0.19056022900622338
+},
+{
+"file": "musdb/dec/26/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6119452714920044,
+"speech": 0.03780890628695488,
+"top": "Music",
+"latency_s": 0.18448536191135645
+},
+{
+"file": "musdb/dec/27/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.7496932148933411,
+"speech": 0.02105254866182804,
+"top": "Music",
+"latency_s": 0.20014980505220592
+},
+{
+"file": "musdb/dec/28/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5061582922935486,
+"speech": 0.2520144581794739,
+"top": "Music",
+"latency_s": 0.1238951189443469
+},
+{
+"file": "musdb/dec/29/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.7155892252922058,
+"speech": 0.09150166064500809,
+"top": "Music",
+"latency_s": 0.2765745429787785
+},
+{
+"file": "musdb/dec/30/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5097704529762268,
+"speech": 0.046538133174180984,
+"top": "Music",
+"latency_s": 0.1988427930045873
+},
+{
+"file": "musdb/dec/31/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6463475823402405,
+"speech": 0.01227906346321106,
+"top": "Music",
+"latency_s": 0.12489168299362063
+},
+{
+"file": "musdb/dec/32/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6706871390342712,
+"speech": 0.061509814113378525,
+"top": "Music",
+"latency_s": 0.11402213003020734
+},
+{
+"file": "musdb/dec/33/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6958255767822266,
+"speech": 0.05079345777630806,
+"top": "Music",
+"latency_s": 0.16755109501536936
+},
+{
+"file": "musdb/dec/34/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6484804153442383,
+"speech": 0.39629846811294556,
+"top": "Music",
+"latency_s": 0.11650263704359531
+},
+{
+"file": "musdb/dec/35/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5409355759620667,
+"speech": 0.03258008137345314,
+"top": "Music",
+"latency_s": 0.19421460502780974
+},
+{
+"file": "musdb/dec/36/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6538540124893188,
+"speech": 0.02149842493236065,
+"top": "Music",
+"latency_s": 0.9991185659309849
+},
+{
+"file": "musdb/dec/37/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5108296871185303,
+"speech": 0.031705815345048904,
+"top": "Music",
+"latency_s": 0.21103432797826827
+},
+{
+"file": "musdb/dec/38/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6154285669326782,
+"speech": 0.037107545882463455,
+"top": "Music",
+"latency_s": 0.6922272230731323
+},
+{
+"file": "musdb/dec/39/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.530307948589325,
+"speech": 0.08014616370201111,
+"top": "Music",
+"latency_s": 0.11623912607319653
+},
+{
+"file": "musdb/dec/40/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.521986186504364,
+"speech": 0.0799325555562973,
+"top": "Music",
+"latency_s": 0.11260436300653964
+},
+{
+"file": "musdb/dec/41/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6030482649803162,
+"speech": 0.03131671994924545,
+"top": "Music",
+"latency_s": 0.11400073289405555
+},
+{
+"file": "musdb/dec/42/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.6196427941322327,
+"speech": 0.048799049109220505,
+"top": "Music",
+"latency_s": 0.11354868998751044
+},
+{
+"file": "musdb/dec/43/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.508980393409729,
+"speech": 0.04675966873764992,
+"top": "Music",
+"latency_s": 0.11175322299823165
+},
+{
+"file": "musdb/dec/44/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5085852742195129,
+"speech": 0.07646211236715317,
+"top": "Music",
+"latency_s": 0.11103376804385334
+},
+{
+"file": "musdb/dec/45/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.5849969387054443,
+"speech": 0.04518299177289009,
+"top": "Music",
+"latency_s": 0.12865077692549676
+},
+{
+"file": "musdb/dec/46/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.8774989247322083,
+"speech": 0.023576227948069572,
+"top": "Music",
+"latency_s": 0.11506822099909186
+},
+{
+"file": "musdb/dec/47/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.4276808798313141,
+"speech": 0.04092414677143097,
+"top": "Music",
+"latency_s": 0.16580149997025728
+},
+{
+"file": "musdb/dec/48/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.4943270683288574,
+"speech": 0.04260898008942604,
+"top": "Music",
+"latency_s": 0.12011194601655006
+},
+{
+"file": "musdb/dec/49/mix.wav",
+"label": "music",
+"dur_s": 6.8034375,
+"n_windows": 1,
+"music": 0.492745578289032,
+"speech": 0.07038910686969757,
+"top": "Music",
+"latency_s": 0.27847060200292617
+},
+{
+"file": "data/fullsong.wav",
+"label": "music",
+"dur_s": 230.656875,
+"n_windows": 4,
+"music": 0.6771763563156128,
+"speech": 0.027670856565237045,
+"top": "Music",
+"latency_s": 1.1687171149533242
+},
+{
+"file": "data/speech_say/speech_0_Fred.wav",
+"label": "speech",
+"dur_s": 13.474125,
+"n_windows": 2,
+"music": 0.00419985968619585,
+"speech": 0.6882055401802063,
+"top": "Speech synthesizer",
+"latency_s": 0.14416156604420394
+},
+{
+"file": "data/speech_say/speech_1_Daniel.wav",
+"label": "speech",
+"dur_s": 10.063875,
+"n_windows": 1,
+"music": 0.0005077967653051019,
+"speech": 0.7771170139312744,
+"top": "Speech",
+"latency_s": 0.09706395701505244
+},
+{
+"file": "data/speech_say/speech_1_Karen.wav",
+"label": "speech",
+"dur_s": 9.668,
+"n_windows": 1,
+"music": 0.0006248328718356788,
+"speech": 0.7420063018798828,
+"top": "Speech",
+"latency_s": 0.17930535809136927
+},
+{
+"file": "data/speech_say/speech_2_Moira.wav",
+"label": "speech",
+"dur_s": 9.6073125,
+"n_windows": 1,
+"music": 0.0008172679226845503,
+"speech": 0.8786868453025818,
+"top": "Speech",
+"latency_s": 0.11573846894316375
+},
+{
+"file": "data/speech_say/speech_2_Samantha.wav",
+"label": "speech",
+"dur_s": 9.16225,
+"n_windows": 1,
+"music": 0.0008732595015317202,
+"speech": 0.8394749760627747,
+"top": "Speech",
+"latency_s": 0.18467940599657595
+},
+{
+"file": "data/speech_say/speech_3_Fred.wav",
+"label": "speech",
+"dur_s": 10.9845625,
+"n_windows": 2,
+"music": 0.007551558315753937,
+"speech": 0.6763021349906921,
+"top": "Speech synthesizer",
+"latency_s": 0.1417772670974955
+},
+{
+"file": "data/speech_say/speech_3_Tessa.wav",
+"label": "speech",
+"dur_s": 10.3418125,
+"n_windows": 2,
+"music": 0.0010265372693538666,
+"speech": 0.7671457529067993,
+"top": "Speech",
+"latency_s": 0.15679263893980533
+},
+{
+"file": "data/speech_say/speech_4_Karen.wav",
+"label": "speech",
+"dur_s": 8.8404375,
+"n_windows": 1,
+"music": 0.0007251473725773394,
+"speech": 0.8311476707458496,
+"top": "Speech",
+"latency_s": 0.12337132496759295
+},
+{
+"file": "data/speech_say/speech_4_Rishi.wav",
+"label": "speech",
+"dur_s": 9.38775,
+"n_windows": 1,
+"music": 0.0008938836981542408,
+"speech": 0.8883658647537231,
+"top": "Speech",
+"latency_s": 0.28242266294546425
+},
+{
+"file": "data/speech_say/speech_5_Moira.wav",
+"label": "speech",
+"dur_s": 9.371125,
+"n_windows": 1,
+"music": 0.0009969499660655856,
+"speech": 0.8731265664100647,
+"top": "Speech",
+"latency_s": 0.12486551702022552
+},
+{
+"file": "data/speech_say/speech_6_Daniel.wav",
+"label": "speech",
+"dur_s": 9.731875,
+"n_windows": 1,
+"music": 0.00037365203024819493,
+"speech": 0.6387163400650024,
+"top": "Speech",
+"latency_s": 0.18361921806354076
+},
+{
+"file": "data/speech_say/speech_6_Tessa.wav",
+"label": "speech",
+"dur_s": 10.791875,
+"n_windows": 2,
+"music": 0.0008508366299793124,
+"speech": 0.7595201730728149,
+"top": "Speech",
+"latency_s": 0.22226344398222864
+},
+{
+"file": "data/speech_say/speech_7_Rishi.wav",
+"label": "speech",
+"dur_s": 10.0965625,
+"n_windows": 1,
+"music": 0.0006341378320939839,
+"speech": 0.7228680849075317,
+"top": "Speech synthesizer",
+"latency_s": 0.16784950601868331
+},
+{
+"file": "data/speech_say/speech_7_Samantha.wav",
+"label": "speech",
+"dur_s": 9.65925,
+"n_windows": 1,
+"music": 0.0004670761991292238,
+"speech": 0.8253522515296936,
+"top": "Speech",
+"latency_s": 0.12388411001302302
+},
+{
+"file": "data/speech_libri/1272-128104-0000.wav",
+"label": "speech",
+"dur_s": 5.855,
+"n_windows": 1,
+"music": 0.007773430086672306,
+"speech": 0.7676891684532166,
+"top": "Speech",
+"latency_s": 0.11821017309557647
+},
+{
+"file": "data/speech_libri/1272-128104-0001.wav",
+"label": "speech",
+"dur_s": 4.815,
+"n_windows": 1,
+"music": 0.008798204362392426,
+"speech": 0.8135805726051331,
+"top": "Speech",
+"latency_s": 0.18410540209151804
+},
+{
+"file": "data/speech_libri/1272-128104-0002.wav",
+"label": "speech",
+"dur_s": 12.485,
+"n_windows": 2,
+"music": 0.0011956891976296902,
+"speech": 0.7863789200782776,
+"top": "Speech",
+"latency_s": 0.14029345707967877
+},
+{
+"file": "data/speech_libri/1272-128104-0003.wav",
+"label": "speech",
+"dur_s": 9.9,
+"n_windows": 1,
+"music": 0.001191284623928368,
+"speech": 0.796591579914093,
+"top": "Speech",
+"latency_s": 0.16501130198594183
+},
+{
+"file": "data/speech_libri/1272-128104-0004.wav",
+"label": "speech",
+"dur_s": 29.4,
+"n_windows": 3,
+"music": 0.0013130683219060302,
+"speech": 0.7705562114715576,
+"top": "Speech",
+"latency_s": 0.23113057704176754
+},
+{
+"file": "data/speech_libri/1272-128104-0005.wav",
+"label": "speech",
+"dur_s": 9.01,
+"n_windows": 1,
+"music": 0.0015844323206692934,
+"speech": 0.8166652321815491,
+"top": "Speech",
+"latency_s": 0.6603202519472688
+},
+{
+"file": "data/speech_libri/1272-128104-0006.wav",
+"label": "speech",
+"dur_s": 5.64,
+"n_windows": 1,
+"music": 0.010728293098509312,
+"speech": 0.8947144150733948,
+"top": "Speech",
+"latency_s": 0.2185073159635067
+},
+{
+"file": "data/speech_libri/1272-128104-0007.wav",
+"label": "speech",
+"dur_s": 9.24,
+"n_windows": 1,
+"music": 0.0015035277465358377,
+"speech": 0.8239830732345581,
+"top": "Speech",
+"latency_s": 0.11582195805385709
+},
+{
+"file": "data/speech_libri/1272-128104-0008.wav",
+"label": "speech",
+"dur_s": 5.12,
+"n_windows": 1,
+"music": 0.005563979968428612,
+"speech": 0.7948887348175049,
+"top": "Speech",
+"latency_s": 0.12545884191058576
+},
+{
+"file": "data/speech_libri/1272-128104-0009.wav",
+"label": "speech",
+"dur_s": 18.29,
+"n_windows": 2,
+"music": 0.0014694674173370004,
+"speech": 0.764500081539154,
+"top": "Speech",
+"latency_s": 0.1787132458994165
+},
+{
+"file": "data/speech_libri/1272-128104-0010.wav",
+"label": "speech",
+"dur_s": 5.6,
+"n_windows": 1,
+"music": 0.007961644791066647,
+"speech": 0.8501013517379761,
+"top": "Speech",
+"latency_s": 0.09999297605827451
+},
+{
+"file": "data/speech_libri/1272-128104-0011.wav",
+"label": "speech",
+"dur_s": 15.115,
+"n_windows": 2,
+"music": 0.0010740384459495544,
+"speech": 0.7922708988189697,
+"top": "Speech",
+"latency_s": 0.11970517400186509
+},
+{
+"file": "data/speech_libri/1272-128104-0012.wav",
+"label": "speech",
+"dur_s": 5.38,
+"n_windows": 1,
+"music": 0.004723721649497747,
+"speech": 0.8795539736747742,
+"top": "Speech",
+"latency_s": 0.10011852800380439
+},
+{
+"file": "data/speech_libri/1272-128104-0013.wav",
+"label": "speech",
+"dur_s": 7.1,
+"n_windows": 1,
+"music": 0.007595554459840059,
+"speech": 0.8587139248847961,
+"top": "Speech",
+"latency_s": 0.18013068102300167
+},
+{
+"file": "data/speech_libri/1272-128104-0014.wav",
+"label": "speech",
+"dur_s": 2.245,
+"n_windows": 1,
+"music": 0.016167625784873962,
+"speech": 0.7883032560348511,
+"top": "Speech",
+"latency_s": 0.09948367101605982
+},
+{
+"file": "data/speech_libri/1272-135031-0000.wav",
+"label": "speech",
+"dur_s": 10.885,
+"n_windows": 2,
+"music": 0.004817620851099491,
+"speech": 0.8403469324111938,
+"top": "Speech",
+"latency_s": 0.12578979402314872
+},
+{
+"file": "data/speech_libri/1272-135031-0001.wav",
+"label": "speech",
+"dur_s": 11.13,
+"n_windows": 2,
+"music": 0.002889013849198818,
+"speech": 0.8396105766296387,
+"top": "Speech",
+"latency_s": 0.19318982609547675
+},
+{
+"file": "data/speech_libri/1272-135031-0002.wav",
+"label": "speech",
+"dur_s": 11.475,
+"n_windows": 2,
+"music": 0.002032236894592643,
+"speech": 0.8076083660125732,
+"top": "Speech",
+"latency_s": 0.18067944201175123
+},
+{
+"file": "data/speech_libri/1272-135031-0003.wav",
+"label": "speech",
+"dur_s": 4.755,
+"n_windows": 1,
+"music": 0.02411818690598011,
+"speech": 0.7349601984024048,
+"top": "Speech",
+"latency_s": 0.09972718800418079
+},
+{
+"file": "data/speech_libri/1272-135031-0004.wav",
+"label": "speech",
+"dur_s": 4.225,
+"n_windows": 1,
+"music": 0.031318824738264084,
+"speech": 0.7351235747337341,
+"top": "Speech",
+"latency_s": 0.1101170510519296
+},
+{
+"file": "data/speech_libri/1272-135031-0005.wav",
+"label": "speech",
+"dur_s": 4.625,
+"n_windows": 1,
+"music": 0.013784217648208141,
+"speech": 0.7343544960021973,
+"top": "Speech",
+"latency_s": 0.19394037988968194
+},
+{
+"file": "data/speech_libri/1272-135031-0006.wav",
+"label": "speech",
+"dur_s": 4.09,
+"n_windows": 1,
+"music": 0.02407902665436268,
+"speech": 0.8149734139442444,
+"top": "Speech",
+"latency_s": 0.19852687895763665
+},
+{
+"file": "data/speech_libri/1272-135031-0007.wav",
+"label": "speech",
+"dur_s": 4.055,
+"n_windows": 1,
+"music": 0.024139512330293655,
+"speech": 0.6886958479881287,
+"top": "Speech",
+"latency_s": 0.11065419192891568
+},
+{
+"file": "data/speech_libri/1272-135031-0008.wav",
+"label": "speech",
+"dur_s": 3.67,
+"n_windows": 1,
+"music": 0.02009507454931736,
+"speech": 0.8045624494552612,
+"top": "Speech",
+"latency_s": 0.18569390999618918
+},
+{
+"file": "data/speech_libri/1272-135031-0009.wav",
+"label": "speech",
+"dur_s": 1.91,
+"n_windows": 1,
+"music": 0.024643471464514732,
+"speech": 0.7837147116661072,
+"top": "Speech",
+"latency_s": 0.09967294696252793
+},
+{
+"file": "data/speech_libri/1272-135031-0010.wav",
+"label": "speech",
+"dur_s": 8.995,
+"n_windows": 1,
+"music": 0.004803607705980539,
+"speech": 0.8935724496841431,
+"top": "Speech",
+"latency_s": 0.10278685297816992
+},
+{
+"file": "data/speech_libri/1272-135031-0011.wav",
+"label": "speech",
+"dur_s": 3.18,
+"n_windows": 1,
+"music": 0.0201188363134861,
+"speech": 0.7282972931861877,
+"top": "Speech",
+"latency_s": 0.11573961994145066
+},
+{
+"file": "data/speech_libri/1272-135031-0012.wav",
+"label": "speech",
+"dur_s": 2.04,
+"n_windows": 1,
+"music": 0.04991850256919861,
+"speech": 0.7742864489555359,
+"top": "Speech",
+"latency_s": 0.18110085499938577
+},
+{
+"file": "data/speech_libri/1272-135031-0013.wav",
+"label": "speech",
+"dur_s": 3.7,
+"n_windows": 1,
+"music": 0.02339431829750538,
+"speech": 0.7550828456878662,
+"top": "Speech",
+"latency_s": 0.11270013102330267
+},
+{
+"file": "data/speech_libri/1272-135031-0014.wav",
+"label": "speech",
+"dur_s": 1.74,
+"n_windows": 1,
+"music": 0.029795022681355476,
+"speech": 0.7037443518638611,
+"top": "Speech",
+"latency_s": 0.19367826997768134
+},
+{
+"file": "data/speech_libri/1272-135031-0015.wav",
+"label": "speech",
+"dur_s": 7.375,
+"n_windows": 1,
+"music": 0.024559009820222855,
+"speech": 0.8098510503768921,
+"top": "Speech",
+"latency_s": 0.10962369595654309
+},
+{
+"file": "data/speech_libri/1272-135031-0016.wav",
+"label": "speech",
+"dur_s": 2.28,
+"n_windows": 1,
+"music": 0.03641726076602936,
+"speech": 0.7166052460670471,
+"top": "Speech",
+"latency_s": 0.18301354895811528
+},
+{
+"file": "data/speech_libri/1272-135031-0017.wav",
+"label": "speech",
+"dur_s": 6.86,
+"n_windows": 1,
+"music": 0.01155910175293684,
+"speech": 0.828241229057312,
+"top": "Speech",
+"latency_s": 0.0999558320036158
+},
+{
+"file": "data/speech_libri/1272-135031-0018.wav",
+"label": "speech",
+"dur_s": 2.4449375,
+"n_windows": 1,
+"music": 0.018460553139448166,
+"speech": 0.8067307472229004,
+"top": "Speech",
+"latency_s": 0.09959532308857888
+},
+{
+"file": "data/speech_libri/1272-135031-0019.wav",
+"label": "speech",
+"dur_s": 3.525,
+"n_windows": 1,
+"music": 0.018248917534947395,
+"speech": 0.7769634127616882,
+"top": "Speech",
+"latency_s": 0.10004288598429412
+},
+{
+"file": "data/speech_libri/1272-135031-0020.wav",
+"label": "speech",
+"dur_s": 4.65,
+"n_windows": 1,
+"music": 0.013157788664102554,
+"speech": 0.7113916277885437,
+"top": "Speech",
+"latency_s": 0.09990506002213806
+},
+{
+"file": "data/speech_libri/1272-135031-0021.wav",
+"label": "speech",
+"dur_s": 2.595,
+"n_windows": 1,
+"music": 0.027282796800136566,
+"speech": 0.7135047316551208,
+"top": "Speech",
+"latency_s": 0.20337227603886276
+},
+{
+"file": "data/speech_libri/1272-135031-0022.wav",
+"label": "speech",
+"dur_s": 2.695,
+"n_windows": 1,
+"music": 0.054364535957574844,
+"speech": 0.6577154397964478,
+"top": "Speech",
+"latency_s": 0.0959048030199483
+},
+{
+"file": "data/speech_libri/1272-135031-0023.wav",
+"label": "speech",
+"dur_s": 7.52,
+"n_windows": 1,
+"music": 0.011733226478099823,
+"speech": 0.7780948877334595,
+"top": "Speech",
+"latency_s": 0.09988173993770033
+},
+{
+"file": "data/speech_libri/1272-135031-0024.wav",
+"label": "speech",
+"dur_s": 14.47,
+"n_windows": 2,
+"music": 0.00596662750467658,
+"speech": 0.7920025587081909,
+"top": "Speech",
+"latency_s": 0.20861150894779712
+},
+{
+"file": "data/speech_libri/1272-141231-0000.wav",
+"label": "speech",
+"dur_s": 4.65,
+"n_windows": 1,
+"music": 0.00921601615846157,
+"speech": 0.8521081805229187,
+"top": "Speech",
+"latency_s": 0.9075114099541679
+},
+{
+"file": "data/speech_libri/1272-141231-0001.wav",
+"label": "speech",
+"dur_s": 6.535,
+"n_windows": 1,
+"music": 0.00809900276362896,
+"speech": 0.8274533748626709,
+"top": "Speech",
+"latency_s": 0.10847878700587898
+},
+{
+"file": "data/speech_libri/1272-141231-0002.wav",
+"label": "speech",
+"dur_s": 13.335,
+"n_windows": 2,
+"music": 0.001395264407619834,
+"speech": 0.7723987698554993,
+"top": "Speech",
+"latency_s": 0.1254556740168482
+},
+{
+"file": "data/speech_libri/1272-141231-0003.wav",
+"label": "speech",
+"dur_s": 5.42,
+"n_windows": 1,
+"music": 0.0028015878051519394,
+"speech": 0.7557624578475952,
+"top": "Speech",
+"latency_s": 0.10156997200101614
+},
+{
+"file": "data/speech_libri/1272-141231-0004.wav",
+"label": "speech",
+"dur_s": 5.09,
+"n_windows": 1,
+"music": 0.00443534180521965,
+"speech": 0.8504915237426758,
+"top": "Speech",
+"latency_s": 0.09710615093354136
+},
+{
+"file": "data/speech_libri/1272-141231-0005.wav",
+"label": "speech",
+"dur_s": 5.81,
+"n_windows": 1,
+"music": 0.0055479565635323524,
+"speech": 0.7322171330451965,
+"top": "Speech",
+"latency_s": 0.09636283398140222
+},
+{
+"file": "data/speech_libri/1272-141231-0006.wav",
+"label": "speech",
+"dur_s": 4.93,
+"n_windows": 1,
+"music": 0.008359255269169807,
+"speech": 0.8335075974464417,
+"top": "Speech",
+"latency_s": 0.09978560300078243
+},
+{
+"file": "data/speech_libri/1272-141231-0007.wav",
+"label": "speech",
+"dur_s": 4.735,
+"n_windows": 1,
+"music": 0.006982169579714537,
+"speech": 0.820902943611145,
+"top": "Speech",
+"latency_s": 0.1681997439591214
+},
+{
+"file": "data/speech_libri/1272-141231-0008.wav",
+"label": "speech",
+"dur_s": 4.595,
+"n_windows": 1,
+"music": 0.011490327306091785,
+"speech": 0.7695976495742798,
+"top": "Speech",
+"latency_s": 0.10068827890790999
+},
+{
+"file": "data/speech_libri/1272-141231-0009.wav",
+"label": "speech",
+"dur_s": 8.62,
+"n_windows": 1,
+"music": 0.0020500391256064177,
+"speech": 0.7866145968437195,
+"top": "Speech",
+"latency_s": 0.18438621202949435
+},
+{
+"file": "data/speech_libri/1272-141231-0010.wav",
+"label": "speech",
+"dur_s": 10.76,
+"n_windows": 2,
+"music": 0.001236434793099761,
+"speech": 0.7859752178192139,
+"top": "Speech",
+"latency_s": 0.12472201802302152
+},
+{
+"file": "data/speech_libri/1272-141231-0011.wav",
+"label": "speech",
+"dur_s": 5.015,
+"n_windows": 1,
+"music": 0.008055264130234718,
+"speech": 0.770139753818512,
+"top": "Speech",
+"latency_s": 0.17477583698928356
+},
+{
+"file": "data/speech_libri/1272-141231-0012.wav",
+"label": "speech",
+"dur_s": 7.74,
+"n_windows": 1,
+"music": 0.0036333065945655107,
+"speech": 0.8735928535461426,
+"top": "Speech",
+"latency_s": 0.09964412404224277
+},
+{
+"file": "data/speech_libri/1272-141231-0013.wav",
+"label": "speech",
+"dur_s": 1.6399375,
+"n_windows": 1,
+"music": 0.022988490760326385,
+"speech": 0.7785866260528564,
+"top": "Speech",
+"latency_s": 0.10811218700837344
+},
+{
+"file": "data/speech_libri/1272-141231-0014.wav",
+"label": "speech",
+"dur_s": 7.305,
+"n_windows": 1,
+"music": 0.004232622217386961,
+"speech": 0.8058388233184814,
+"top": "Speech",
+"latency_s": 0.10454112698789686
+},
+{
+"file": "data/speech_libri/1272-141231-0015.wav",
+"label": "speech",
+"dur_s": 5.68,
+"n_windows": 1,
+"music": 0.008788329549133778,
+"speech": 0.7457211017608643,
+"top": "Speech",
+"latency_s": 0.18703143298625946
+},
+{
+"file": "data/speech_libri/1272-141231-0016.wav",
+"label": "speech",
+"dur_s": 1.85,
+"n_windows": 1,
+"music": 0.01378236897289753,
+"speech": 0.85232013463974,
+"top": "Speech",
+"latency_s": 0.11589990800712258
+},
+{
+"file": "data/speech_libri/1272-141231-0017.wav",
+"label": "speech",
+"dur_s": 3.735,
+"n_windows": 1,
+"music": 0.013662013225257397,
+"speech": 0.6878699064254761,
+"top": "Speech",
+"latency_s": 0.10196677001658827
+},
+{
+"file": "data/speech_libri/1272-141231-0018.wav",
+"label": "speech",
+"dur_s": 6.0,
+"n_windows": 1,
+"music": 0.004448020365089178,
+"speech": 0.8585940599441528,
+"top": "Speech",
+"latency_s": 0.18120295903645456
+},
+{
+"file": "data/speech_libri/1272-141231-0019.wav",
+"label": "speech",
+"dur_s": 4.7,
+"n_windows": 1,
+"music": 0.011483271606266499,
+"speech": 0.766608715057373,
+"top": "Speech",
+"latency_s": 0.09999027207959443
+},
+{
+"file": "data/speech_libri/1272-141231-0020.wav",
+"label": "speech",
+"dur_s": 4.32,
+"n_windows": 1,
+"music": 0.005569898523390293,
+"speech": 0.8375558257102966,
+"top": "Speech",
+"latency_s": 0.20687111397273839
+},
+{
+"file": "data/speech_libri/1272-141231-0021.wav",
+"label": "speech",
+"dur_s": 4.65,
+"n_windows": 1,
+"music": 0.009611272253096104,
+"speech": 0.7588081955909729,
+"top": "Speech",
+"latency_s": 0.20246151403989643
+},
+{
+"file": "data/speech_libri/1272-141231-0022.wav",
+"label": "speech",
+"dur_s": 8.35,
+"n_windows": 1,
+"music": 0.0025894183199852705,
+"speech": 0.8477216958999634,
+"top": "Speech",
+"latency_s": 0.19556216499768198
+},
+{
+"file": "data/speech_libri/1272-141231-0023.wav",
+"label": "speech",
+"dur_s": 8.66,
+"n_windows": 1,
+"music": 0.002013975055888295,
+"speech": 0.8458297848701477,
+"top": "Speech",
+"latency_s": 0.09932015195954591
+},
+{
+"file": "data/speech_libri/1272-141231-0024.wav",
+"label": "speech",
+"dur_s": 3.64,
+"n_windows": 1,
+"music": 0.017345769330859184,
+"speech": 0.7666318416595459,
+"top": "Speech",
+"latency_s": 0.19845243694726378
+},
+{
+"file": "data/speech_libri/1272-141231-0025.wav",
+"label": "speech",
+"dur_s": 8.725,
+"n_windows": 1,
+"music": 0.002848392352461815,
+"speech": 0.8215550780296326,
+"top": "Speech",
+"latency_s": 0.10984025907237083
+},
+{
+"file": "data/speech_libri/1272-141231-0026.wav",
+"label": "speech",
+"dur_s": 6.635,
+"n_windows": 1,
+"music": 0.005926839541643858,
+"speech": 0.8082577586174011,
+"top": "Speech",
+"latency_s": 0.12459156895056367
+},
+{
+"file": "data/speech_libri/1272-141231-0027.wav",
+"label": "speech",
+"dur_s": 6.57,
+"n_windows": 1,
+"music": 0.009804229252040386,
+"speech": 0.8297058939933777,
+"top": "Speech",
+"latency_s": 0.1609722530702129
+},
+{
+"file": "data/speech_libri/1272-141231-0028.wav",
+"label": "speech",
+"dur_s": 5.65,
+"n_windows": 1,
+"music": 0.007589159067720175,
+"speech": 0.8154386878013611,
+"top": "Speech",
+"latency_s": 0.11425652692560107
+},
+{
+"file": "data/speech_libri/1272-141231-0029.wav",
+"label": "speech",
+"dur_s": 6.88,
+"n_windows": 1,
+"music": 0.007545869797468185,
+"speech": 0.8442499041557312,
+"top": "Speech",
+"latency_s": 0.09429593896493316
+},
+{
+"file": "data/speech_libri/1272-141231-0030.wav",
+"label": "speech",
+"dur_s": 7.13,
+"n_windows": 1,
+"music": 0.007796204183250666,
+"speech": 0.8726888298988342,
+"top": "Speech",
+"latency_s": 0.19109871692489833
+},
+{
+"file": "data/speech_libri/1272-141231-0031.wav",
+"label": "speech",
+"dur_s": 7.115,
+"n_windows": 1,
+"music": 0.007904247380793095,
+"speech": 0.8437129855155945,
+"top": "Speech",
+"latency_s": 0.10989900107961148
+},
+{
+"file": "data/speech_libri/1272-141231-0032.wav",
+"label": "speech",
+"dur_s": 4.48,
+"n_windows": 1,
+"music": 0.00948368851095438,
+"speech": 0.8007665872573853,
+"top": "Speech",
+"latency_s": 0.1896261260844767
+},
+{
+"file": "data/sfx_esc50/airplane__1-11687-A-47.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.026670360937714577,
+"speech": 0.031938761472702026,
+"top": "Aircraft",
+"latency_s": 0.1130479930434376
+},
+{
+"file": "data/sfx_esc50/airplane__1-24796-A-47.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.016325777396559715,
+"speech": 0.03025851771235466,
+"top": "Vehicle",
+"latency_s": 0.1019683659542352
+},
+{
+"file": "data/sfx_esc50/breathing__1-18631-A-23.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005772290751338005,
+"speech": 0.011319366283714771,
+"top": "Snort",
+"latency_s": 0.18461643694899976
+},
+{
+"file": "data/sfx_esc50/breathing__1-30709-A-23.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.002056160708889365,
+"speech": 0.014597591944038868,
+"top": "Snort",
+"latency_s": 0.19994364806916565
+},
+{
+"file": "data/sfx_esc50/brushing_teeth__1-17092-A-27.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004400990437716246,
+"speech": 0.024085935205221176,
+"top": "Toothbrush",
+"latency_s": 0.20250094193033874
+},
+{
+"file": "data/sfx_esc50/brushing_teeth__1-17092-B-27.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.006138572469353676,
+"speech": 0.007683145347982645,
+"top": "Toothbrush",
+"latency_s": 0.11138790508266538
+},
+{
+"file": "data/sfx_esc50/can_opening__1-101404-A-34.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005150750745087862,
+"speech": 0.0149536719545722,
+"top": "Finger snapping",
+"latency_s": 0.18525470094755292
+},
+{
+"file": "data/sfx_esc50/can_opening__1-41615-A-34.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.00785747542977333,
+"speech": 0.012219235301017761,
+"top": "Plop",
+"latency_s": 0.10148416692391038
+},
+{
+"file": "data/sfx_esc50/car_horn__1-17124-A-43.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.002690271707251668,
+"speech": 0.015063958242535591,
+"top": "Vehicle horn, car horn, honking",
+"latency_s": 0.20580492704175413
+},
+{
+"file": "data/sfx_esc50/car_horn__1-19026-A-43.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004625566769391298,
+"speech": 0.011064445599913597,
+"top": "Vehicle horn, car horn, honking",
+"latency_s": 0.19222842599265277
+},
+{
+"file": "data/sfx_esc50/cat__1-34094-A-5.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.012373204343020916,
+"speech": 0.04638276249170303,
+"top": "Cat",
+"latency_s": 0.11068002693355083
+},
+{
+"file": "data/sfx_esc50/cat__1-34094-B-5.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.033184587955474854,
+"speech": 0.02572445385158062,
+"top": "Cat",
+"latency_s": 0.11538248404394835
+},
+{
+"file": "data/sfx_esc50/chainsaw__1-116765-A-41.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.01142049115151167,
+"speech": 0.030076472088694572,
+"top": "Vehicle",
+"latency_s": 0.17812765506096184
+},
+{
+"file": "data/sfx_esc50/chainsaw__1-19898-A-41.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.00465524522587657,
+"speech": 0.02260575070977211,
+"top": "Chainsaw",
+"latency_s": 0.09845161298289895
+},
+{
+"file": "data/sfx_esc50/chirping_birds__1-100038-A-14.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.008950300514698029,
+"speech": 0.05399803817272186,
+"top": "Bird",
+"latency_s": 0.09992075792979449
+},
+{
+"file": "data/sfx_esc50/chirping_birds__1-34495-A-14.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.05240952968597412,
+"speech": 0.030051428824663162,
+"top": "Bird",
+"latency_s": 0.1995571490842849
+},
+{
+"file": "data/sfx_esc50/church_bells__1-13571-A-46.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.011407874524593353,
+"speech": 0.006387770175933838,
+"top": "Church bell",
+"latency_s": 0.1023443479789421
+},
+{
+"file": "data/sfx_esc50/church_bells__1-13572-A-46.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.06598439067602158,
+"speech": 0.07668639719486237,
+"top": "Church bell",
+"latency_s": 0.19945647206623107
+},
+{
+"file": "data/sfx_esc50/clapping__1-104089-A-22.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.00975365936756134,
+"speech": 0.011471418663859367,
+"top": "Clapping",
+"latency_s": 0.09702688199467957
+},
+{
+"file": "data/sfx_esc50/clapping__1-104089-B-22.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.010434908792376518,
+"speech": 0.01664453186094761,
+"top": "Clapping",
+"latency_s": 0.09813548193778843
+},
+{
+"file": "data/sfx_esc50/clock_alarm__1-13613-A-37.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.007546805776655674,
+"speech": 0.013228422962129116,
+"top": "Engine",
+"latency_s": 0.09900766506325454
+},
+{
+"file": "data/sfx_esc50/clock_alarm__1-14262-A-37.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0024194978177547455,
+"speech": 0.004600767511874437,
+"top": "Alarm clock",
+"latency_s": 0.11667330504860729
+},
+{
+"file": "data/sfx_esc50/clock_tick__1-21934-A-38.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0303652361035347,
+"speech": 0.005850282497704029,
+"top": "Tick",
+"latency_s": 0.18324851896613836
+},
+{
+"file": "data/sfx_esc50/clock_tick__1-21935-A-38.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.00563943712040782,
+"speech": 0.009636965580284595,
+"top": "Tick-tock",
+"latency_s": 0.1218435859773308
+},
+{
+"file": "data/sfx_esc50/coughing__1-19111-A-24.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0070996712893247604,
+"speech": 0.02426382340490818,
+"top": "Throat clearing",
+"latency_s": 0.10147072304971516
+},
+{
+"file": "data/sfx_esc50/coughing__1-19118-A-24.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.003878772258758545,
+"speech": 0.023871732875704765,
+"top": "Throat clearing",
+"latency_s": 0.30406957399100065
+},
+{
+"file": "data/sfx_esc50/cow__1-16568-A-3.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0019060414051637053,
+"speech": 0.0023769226390868425,
+"top": "Moo",
+"latency_s": 0.18442787800449878
+},
+{
+"file": "data/sfx_esc50/cow__1-202111-A-3.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0028816000558435917,
+"speech": 0.003968074452131987,
+"top": "Cattle, bovinae",
+"latency_s": 0.7149117019725963
+},
+{
+"file": "data/sfx_esc50/crackling_fire__1-17150-A-12.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004172643180936575,
+"speech": 0.015482215210795403,
+"top": "Crackle",
+"latency_s": 0.13371500198263675
+},
+{
+"file": "data/sfx_esc50/crackling_fire__1-17565-A-12.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0018793850904330611,
+"speech": 0.006469129119068384,
+"top": "Crack",
+"latency_s": 0.10117565898690373
+},
+{
+"file": "data/sfx_esc50/crickets__1-57316-A-13.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.015246021561324596,
+"speech": 0.026308441534638405,
+"top": "Rattle",
+"latency_s": 0.1470544550102204
+},
+{
+"file": "data/sfx_esc50/crickets__1-57318-A-13.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0169126708060503,
+"speech": 0.0250314362347126,
+"top": "Rattle",
+"latency_s": 0.09943915798794478
+},
+{
+"file": "data/sfx_esc50/crow__1-103298-A-9.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.024405786767601967,
+"speech": 0.025970857590436935,
+"top": "Crow",
+"latency_s": 0.10325484292116016
+},
+{
+"file": "data/sfx_esc50/crow__1-39835-A-9.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.007887651212513447,
+"speech": 0.02824074774980545,
+"top": "Crow",
+"latency_s": 0.10141986003145576
+},
+{
+"file": "data/sfx_esc50/crying_baby__1-187207-A-20.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0014312752755358815,
+"speech": 0.4050893485546112,
+"top": "Baby cry, infant cry",
+"latency_s": 0.10225965804420412
+},
+{
+"file": "data/sfx_esc50/crying_baby__1-211527-A-20.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0037168513517826796,
+"speech": 0.14141610264778137,
+"top": "Baby cry, infant cry",
+"latency_s": 0.10281646600924432
+},
+{
+"file": "data/sfx_esc50/dog__1-100032-A-0.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.015445386059582233,
+"speech": 0.017347289249300957,
+"top": "Bark",
+"latency_s": 0.10432062402833253
+},
+{
+"file": "data/sfx_esc50/dog__1-110389-A-0.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.014817080460488796,
+"speech": 0.019412148743867874,
+"top": "Bow-wow",
+"latency_s": 0.10458271903917193
+},
+{
+"file": "data/sfx_esc50/door_wood_creaks__1-51805-A-33.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.1042768806219101,
+"speech": 0.01786087267100811,
+"top": "Door",
+"latency_s": 0.1454990420024842
+},
+{
+"file": "data/sfx_esc50/door_wood_creaks__1-51805-B-33.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.37172847986221313,
+"speech": 0.021788030862808228,
+"top": "Music",
+"latency_s": 0.12634002906270325
+},
+{
+"file": "data/sfx_esc50/door_wood_knock__1-101336-A-30.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.00533391023054719,
+"speech": 0.009571538306772709,
+"top": "Knock",
+"latency_s": 0.10024150495883077
+},
+{
+"file": "data/sfx_esc50/door_wood_knock__1-103995-A-30.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.027467116713523865,
+"speech": 0.002688195090740919,
+"top": "Knock",
+"latency_s": 0.11260152200702578
+},
+{
+"file": "data/sfx_esc50/drinking_sipping__1-17295-A-29.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.011801013723015785,
+"speech": 0.0037097090389579535,
+"top": "Stomach rumble",
+"latency_s": 0.18547819403465837
+},
+{
+"file": "data/sfx_esc50/drinking_sipping__1-32579-A-29.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0024952900130301714,
+"speech": 0.004504260141402483,
+"top": "Stomach rumble",
+"latency_s": 0.11329952394589782
+},
+{
+"file": "data/sfx_esc50/engine__1-18527-A-44.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.013083197176456451,
+"speech": 0.04644649848341942,
+"top": "Vehicle",
+"latency_s": 0.1864086319692433
+},
+{
+"file": "data/sfx_esc50/engine__1-18527-B-44.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.012464077211916447,
+"speech": 0.05381446331739426,
+"top": "Vehicle",
+"latency_s": 0.20008473098278046
+},
+{
+"file": "data/sfx_esc50/fireworks__1-115545-A-48.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.01011315081268549,
+"speech": 0.016875574365258217,
+"top": "Explosion",
+"latency_s": 0.11170965107157826
+},
+{
+"file": "data/sfx_esc50/fireworks__1-115545-B-48.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.002446524566039443,
+"speech": 0.008440046571195126,
+"top": "Fireworks",
+"latency_s": 0.11228929995559156
+},
+{
+"file": "data/sfx_esc50/footsteps__1-155858-A-25.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005286248400807381,
+"speech": 0.03258141875267029,
+"top": "Walk, footsteps",
+"latency_s": 0.21296416106633842
+},
+{
+"file": "data/sfx_esc50/footsteps__1-155858-B-25.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0025441490579396486,
+"speech": 0.018718617036938667,
+"top": "Walk, footsteps",
+"latency_s": 0.27108240500092506
+},
+{
+"file": "data/sfx_esc50/frog__1-15689-A-4.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.001816011150367558,
+"speech": 0.002466817619279027,
+"top": "Frog",
+"latency_s": 0.19103359803557396
+},
+{
+"file": "data/sfx_esc50/frog__1-15689-B-4.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.001674950122833252,
+"speech": 0.0021053997334092855,
+"top": "Frog",
+"latency_s": 0.12646429298911244
+},
+{
+"file": "data/sfx_esc50/glass_breaking__1-20133-A-39.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.006061726715415716,
+"speech": 0.008630353026092052,
+"top": "Breaking",
+"latency_s": 0.2729192649712786
+},
+{
+"file": "data/sfx_esc50/glass_breaking__1-84536-A-39.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.010862990282475948,
+"speech": 0.011527420952916145,
+"top": "Breaking",
+"latency_s": 0.10197531792800874
+},
+{
+"file": "data/sfx_esc50/hand_saw__1-18810-A-49.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0017339197220280766,
+"speech": 0.004692433401942253,
+"top": "Wood",
+"latency_s": 0.10395816108211875
+},
+{
+"file": "data/sfx_esc50/hand_saw__1-23706-A-49.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.002311189891770482,
+"speech": 0.0044740596786141396,
+"top": "Sawing",
+"latency_s": 0.11051165906246752
+},
+{
+"file": "data/sfx_esc50/helicopter__1-172649-A-40.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.04489300027489662,
+"speech": 0.23921118676662445,
+"top": "Vehicle",
+"latency_s": 0.1849157699616626
+},
+{
+"file": "data/sfx_esc50/helicopter__1-172649-B-40.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.032584190368652344,
+"speech": 0.4468233585357666,
+"top": "Speech",
+"latency_s": 0.12067867501173168
+},
+{
+"file": "data/sfx_esc50/hen__1-18074-A-6.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0033626933582127094,
+"speech": 0.00734471483156085,
+"top": "Chicken, rooster",
+"latency_s": 0.11950491392053664
+},
+{
+"file": "data/sfx_esc50/hen__1-18074-B-6.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.006005778908729553,
+"speech": 0.010842110961675644,
+"top": "Chicken, rooster",
+"latency_s": 0.1644578870618716
+},
+{
+"file": "data/sfx_esc50/insects__1-17585-A-7.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004214671440422535,
+"speech": 0.015469325706362724,
+"top": "Insect",
+"latency_s": 0.1925561319803819
+},
+{
+"file": "data/sfx_esc50/insects__1-19501-A-7.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004034694284200668,
+"speech": 0.04336163401603699,
+"top": "Bee, wasp, etc.",
+"latency_s": 0.12594405107665807
+},
+{
+"file": "data/sfx_esc50/keyboard_typing__1-137-A-32.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0018722187960520387,
+"speech": 0.005829707253724337,
+"top": "Computer keyboard",
+"latency_s": 0.275882396963425
+},
+{
+"file": "data/sfx_esc50/keyboard_typing__1-53501-A-32.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0022694028448313475,
+"speech": 0.00741499662399292,
+"top": "Computer keyboard",
+"latency_s": 0.19714398693758994
+},
+{
+"file": "data/sfx_esc50/laughing__1-1791-A-26.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.009582025930285454,
+"speech": 0.0425252802670002,
+"top": "Snicker",
+"latency_s": 0.10374755796510726
+},
+{
+"file": "data/sfx_esc50/laughing__1-30039-A-26.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.013607894070446491,
+"speech": 0.7588438391685486,
+"top": "Speech",
+"latency_s": 0.10662684391718358
+},
+{
+"file": "data/sfx_esc50/mouse_click__1-118206-A-31.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0046450127847492695,
+"speech": 0.04088747873902321,
+"top": "Clicking",
+"latency_s": 0.18908244196791202
+},
+{
+"file": "data/sfx_esc50/mouse_click__1-18655-A-31.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0011954524088650942,
+"speech": 0.014905410818755627,
+"top": "Computer keyboard",
+"latency_s": 0.10950036405120045
+},
+{
+"file": "data/sfx_esc50/pig__1-208757-A-2.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0021527735516428947,
+"speech": 0.3573640286922455,
+"top": "Oink",
+"latency_s": 0.10160366294439882
+},
+{
+"file": "data/sfx_esc50/pig__1-208757-B-2.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.010997994802892208,
+"speech": 0.16163717210292816,
+"top": "Oink",
+"latency_s": 0.19247191690374166
+},
+{
+"file": "data/sfx_esc50/pouring_water__1-118559-A-17.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005321649368852377,
+"speech": 0.05153907090425491,
+"top": "Water",
+"latency_s": 0.11207818996626884
+},
+{
+"file": "data/sfx_esc50/pouring_water__1-50625-A-17.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0062888143584132195,
+"speech": 0.006605779752135277,
+"top": "Drip",
+"latency_s": 0.18345206300728023
+},
+{
+"file": "data/sfx_esc50/rain__1-17367-A-10.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.020469004288315773,
+"speech": 0.033472172915935516,
+"top": "Rain",
+"latency_s": 0.10088333406019956
+},
+{
+"file": "data/sfx_esc50/rain__1-21189-A-10.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.012766271829605103,
+"speech": 0.02645992673933506,
+"top": "Rain on surface",
+"latency_s": 0.09862756996881217
+},
+{
+"file": "data/sfx_esc50/rooster__1-26806-A-1.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.010949868708848953,
+"speech": 0.002575129037722945,
+"top": "Crowing, cock-a-doodle-doo",
+"latency_s": 0.21702861797530204
+},
+{
+"file": "data/sfx_esc50/rooster__1-27724-A-1.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.009567610919475555,
+"speech": 0.006068328861147165,
+"top": "Fowl",
+"latency_s": 0.10611370706465095
+},
+{
+"file": "data/sfx_esc50/sea_waves__1-28135-A-11.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.01668274775147438,
+"speech": 0.03493430092930794,
+"top": "Waves, surf",
+"latency_s": 0.1785122730070725
+},
+{
+"file": "data/sfx_esc50/sea_waves__1-28135-B-11.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.016046393662691116,
+"speech": 0.03690164536237717,
+"top": "Waves, surf",
+"latency_s": 0.11076688300818205
+},
+{
+"file": "data/sfx_esc50/sheep__1-121951-A-8.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004162526689469814,
+"speech": 0.0764356479048729,
+"top": "Sheep",
+"latency_s": 0.19653758499771357
+},
+{
+"file": "data/sfx_esc50/sheep__1-196660-A-8.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.020927440375089645,
+"speech": 0.3954066038131714,
+"top": "Sheep",
+"latency_s": 0.11365035898052156
+},
+{
+"file": "data/sfx_esc50/siren__1-31482-A-42.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.03760141134262085,
+"speech": 0.2139277309179306,
+"top": "Siren",
+"latency_s": 0.19354596210177988
+},
+{
+"file": "data/sfx_esc50/siren__1-31482-B-42.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.009237662889063358,
+"speech": 0.2648751437664032,
+"top": "Emergency vehicle",
+"latency_s": 0.10608520195819438
+},
+{
+"file": "data/sfx_esc50/sneezing__1-26143-A-21.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0018591275438666344,
+"speech": 0.016673561185598373,
+"top": "Throat clearing",
+"latency_s": 0.17655971902422607
+},
+{
+"file": "data/sfx_esc50/sneezing__1-29680-A-21.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005512754898518324,
+"speech": 0.03825486823916435,
+"top": "Sigh",
+"latency_s": 0.10935373499523848
+},
+{
+"file": "data/sfx_esc50/snoring__1-20545-A-28.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0060622296296060085,
+"speech": 0.010579139925539494,
+"top": "Snoring",
+"latency_s": 0.19455427897628397
+},
+{
+"file": "data/sfx_esc50/snoring__1-27403-A-28.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005186302121728659,
+"speech": 0.01826118491590023,
+"top": "Snoring",
+"latency_s": 0.10494651098269969
+},
+{
+"file": "data/sfx_esc50/thunderstorm__1-101296-A-19.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0032565828878432512,
+"speech": 0.005864142905920744,
+"top": "Thunder",
+"latency_s": 0.10229018493555486
+},
+{
+"file": "data/sfx_esc50/thunderstorm__1-101296-B-19.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.002857113955542445,
+"speech": 0.009364038705825806,
+"top": "Thunder",
+"latency_s": 0.09945887397043407
+},
+{
+"file": "data/sfx_esc50/toilet_flush__1-20736-A-18.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.005857330281287432,
+"speech": 0.00923666451126337,
+"top": "Toilet flush",
+"latency_s": 0.19059980695601553
+},
+{
+"file": "data/sfx_esc50/toilet_flush__1-28005-A-18.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.0030002109706401825,
+"speech": 0.008966349996626377,
+"top": "Toilet flush",
+"latency_s": 0.10060393309686333
+},
+{
+"file": "data/sfx_esc50/train__1-119125-A-45.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.009888265281915665,
+"speech": 0.10495386272668839,
+"top": "Train",
+"latency_s": 0.20814840402454138
+},
+{
+"file": "data/sfx_esc50/train__1-54065-A-45.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.015273314900696278,
+"speech": 0.04457610473036766,
+"top": "Train",
+"latency_s": 0.1957864360883832
+},
+{
+"file": "data/sfx_esc50/vacuum_cleaner__1-100210-A-36.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004513028543442488,
+"speech": 0.021285712718963623,
+"top": "Vacuum cleaner",
+"latency_s": 0.19469474209472537
+},
+{
+"file": "data/sfx_esc50/vacuum_cleaner__1-100210-B-36.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004248151555657387,
+"speech": 0.024166002869606018,
+"top": "Jet engine",
+"latency_s": 0.10528778994921595
+},
+{
+"file": "data/sfx_esc50/washing_machine__1-21896-A-35.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.004789172206073999,
+"speech": 0.016330519691109657,
+"top": "Vehicle",
+"latency_s": 0.10753534303512424
+},
+{
+"file": "data/sfx_esc50/washing_machine__1-23996-A-35.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.013044986873865128,
+"speech": 0.030850708484649658,
+"top": "Vehicle",
+"latency_s": 0.2840309189632535
+},
+{
+"file": "data/sfx_esc50/water_drops__1-12653-A-15.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.03247428312897682,
+"speech": 0.00848538801074028,
+"top": "Drip",
+"latency_s": 0.12618063401896507
+},
+{
+"file": "data/sfx_esc50/water_drops__1-12654-A-15.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.003867455990985036,
+"speech": 0.015056043863296509,
+"top": "Plop",
+"latency_s": 0.19618979294318706
+},
+{
+"file": "data/sfx_esc50/wind__1-137296-A-16.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.006830948870629072,
+"speech": 0.016658790409564972,
+"top": "Vehicle",
+"latency_s": 0.2769789929734543
+},
+{
+"file": "data/sfx_esc50/wind__1-29532-A-16.wav",
+"label": "sfx",
+"dur_s": 5.0,
+"n_windows": 1,
+"music": 0.2240455597639084,
+"speech": 0.052479568868875504,
+"top": "Music",
+"latency_s": 0.10268029710277915
+},
+{
+"file": "data/speech_over_music/som-10_00.wav",
+"label": "speech_over_music",
+"dur_s": 13.474125,
+"n_windows": 2,
+"music": 0.6074354648590088,
+"speech": 0.6696904897689819,
+"top": "Speech",
+"latency_s": 0.14466326299589127
+},
+{
+"file": "data/speech_over_music/som-10_01.wav",
+"label": "speech_over_music",
+"dur_s": 10.063875,
+"n_windows": 1,
+"music": 0.6314062476158142,
+"speech": 0.7665600776672363,
+"top": "Speech",
+"latency_s": 0.13000909402035177
+},
+{
+"file": "data/speech_over_music/som-10_02.wav",
+"label": "speech_over_music",
+"dur_s": 9.668,
+"n_windows": 1,
+"music": 0.7501615285873413,
+"speech": 0.8004997372627258,
+"top": "Speech",
+"latency_s": 0.10725069302134216
+},
+{
+"file": "data/speech_over_music/som-10_03.wav",
+"label": "speech_over_music",
+"dur_s": 9.6073125,
+"n_windows": 1,
+"music": 0.6340732574462891,
+"speech": 0.7226702570915222,
+"top": "Speech",
+"latency_s": 0.12054487003479153
+},
+{
+"file": "data/speech_over_music/som-10_04.wav",
+"label": "speech_over_music",
+"dur_s": 9.16225,
+"n_windows": 1,
+"music": 0.6870523691177368,
+"speech": 0.6580790877342224,
+"top": "Music",
+"latency_s": 0.10630638105794787
+},
+{
+"file": "data/speech_over_music/som-10_05.wav",
+"label": "speech_over_music",
+"dur_s": 10.9845625,
+"n_windows": 2,
+"music": 0.5169347524642944,
+"speech": 0.6169394850730896,
+"top": "Speech",
+"latency_s": 0.13242704200092703
+},
+{
+"file": "data/speech_over_music/som-10_06.wav",
+"label": "speech_over_music",
+"dur_s": 10.3418125,
+"n_windows": 2,
+"music": 0.7355338335037231,
+"speech": 0.5502091646194458,
+"top": "Music",
+"latency_s": 0.2550417109159753
+},
+{
+"file": "data/speech_over_music/som-10_07.wav",
+"label": "speech_over_music",
+"dur_s": 8.8404375,
+"n_windows": 1,
+"music": 0.6030808091163635,
+"speech": 0.6435631513595581,
+"top": "Speech",
+"latency_s": 0.11253546294756234
+},
+{
+"file": "data/speech_over_music/som-10_08.wav",
+"label": "speech_over_music",
+"dur_s": 9.38775,
+"n_windows": 1,
+"music": 0.6749798059463501,
+"speech": 0.7670105695724487,
+"top": "Speech",
+"latency_s": 0.1074871300952509
+},
+{
+"file": "data/speech_over_music/som-10_09.wav",
+"label": "speech_over_music",
+"dur_s": 9.371125,
+"n_windows": 1,
+"music": 0.639340341091156,
+"speech": 0.7009343504905701,
+"top": "Speech",
+"latency_s": 0.09785455092787743
+},
+{
+"file": "data/speech_over_music/som-20_00.wav",
+"label": "speech_over_music",
+"dur_s": 13.474125,
+"n_windows": 2,
+"music": 0.624347984790802,
+"speech": 0.6920194625854492,
+"top": "Speech",
+"latency_s": 0.18147504795342684
+},
+{
+"file": "data/speech_over_music/som-20_01.wav",
+"label": "speech_over_music",
+"dur_s": 10.063875,
+"n_windows": 1,
+"music": 0.6282728314399719,
+"speech": 0.8143850564956665,
+"top": "Speech",
+"latency_s": 0.10784802201669663
+},
+{
+"file": "data/speech_over_music/som-20_02.wav",
+"label": "speech_over_music",
+"dur_s": 9.668,
+"n_windows": 1,
+"music": 0.6959600448608398,
+"speech": 0.7883123159408569,
+"top": "Speech",
+"latency_s": 0.2001228779554367
+},
+{
+"file": "data/speech_over_music/som-20_03.wav",
+"label": "speech_over_music",
+"dur_s": 9.6073125,
+"n_windows": 1,
+"music": 0.6458155512809753,
+"speech": 0.7923551797866821,
+"top": "Speech",
+"latency_s": 0.10558182594832033
+},
+{
+"file": "data/speech_over_music/som-20_04.wav",
+"label": "speech_over_music",
+"dur_s": 9.16225,
+"n_windows": 1,
+"music": 0.760547399520874,
+"speech": 0.8215709924697876,
+"top": "Speech",
+"latency_s": 0.19654548703692853
+},
+{
+"file": "data/speech_over_music/som-20_05.wav",
+"label": "speech_over_music",
+"dur_s": 10.9845625,
+"n_windows": 2,
+"music": 0.5649416446685791,
+"speech": 0.6443030834197998,
+"top": "Speech",
+"latency_s": 0.18866762390825897
+},
+{
+"file": "data/speech_over_music/som-20_06.wav",
+"label": "speech_over_music",
+"dur_s": 10.3418125,
+"n_windows": 2,
+"music": 0.6255009174346924,
+"speech": 0.7606271505355835,
+"top": "Speech",
+"latency_s": 0.19973122293595225
+},
+{
+"file": "data/speech_over_music/som-20_07.wav",
+"label": "speech_over_music",
+"dur_s": 8.8404375,
+"n_windows": 1,
+"music": 0.5944057703018188,
+"speech": 0.7278629541397095,
+"top": "Speech",
+"latency_s": 0.324388928944245
+},
+{
+"file": "data/speech_over_music/som-20_08.wav",
+"label": "speech_over_music",
+"dur_s": 9.38775,
+"n_windows": 1,
+"music": 0.7253851294517517,
+"speech": 0.8563267588615417,
+"top": "Speech",
+"latency_s": 0.47518125001806766
+},
+{
+"file": "data/speech_over_music/som-20_09.wav",
+"label": "speech_over_music",
+"dur_s": 9.371125,
+"n_windows": 1,
+"music": 0.5797834396362305,
+"speech": 0.6777560114860535,
+"top": "Speech",
+"latency_s": 0.10818348499014974
+}
+]

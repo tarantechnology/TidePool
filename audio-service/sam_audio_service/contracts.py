@@ -1,0 +1,365 @@
+"""Pydantic models for the audio inference API.
+
+These are Person 1's *proposed* audio-specific schemas (Contracts B, C, D). They are
+designed to be a strict superset of what Person 4's backend already sends and reads
+(``metadata = {"prompts": [...], "visual_prompt": {...}}`` in, ``stems[].name`` and
+``stems[].audio_base64`` out), so adopting the extra fields is optional for every team.
+Status: awaiting team agreement; see docs/contracts/.
+"""
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer, model_validator
+
+from . import CONTRACT_VERSION
+
+AnchorToken = Literal["+", "-"]
+
+
+class TimeRange(BaseModel):
+    """Seconds on the *source media timeline* (0 = first sample of the uploaded media)."""
+
+    model_config = ConfigDict(extra="ignore")
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def ordered(self) -> "TimeRange":
+        if self.end <= self.start:
+            raise ValueError("time range end must be greater than start")
+        return self
+
+
+class Anchor(BaseModel):
+    """Span prompt. ``+`` marks a span where the target sound is present, ``-`` where it is absent."""
+
+    model_config = ConfigDict(extra="ignore")
+    token: AnchorToken = "+"
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def ordered(self) -> "Anchor":
+        if self.end <= self.start:
+            raise ValueError("anchor end must be greater than start")
+        return self
+
+
+class VisualPrompt(BaseModel):
+    """Contract D (proposed): visual guidance from Person 2.
+
+    SAM Audio's visual prompting needs, for every video frame, the frame itself and a
+    binary mask of the selected object. Bounding boxes, labels and track ids alone are
+    not sufficient model input, so the model-facing requirement is a *mask video*: a
+    losslessly encoded video with the same frame count, frame rate and resolution as the
+    source video where pixels > 127 belong to the selected object. Frames where the object
+    is absent are all zero. Visible intervals do not imply audible sound; supply explicit anchors separately.
+    Unknown extra fields (bboxes, scores, ...) are accepted and ignored.
+    """
+
+    model_config = ConfigDict(extra="allow")
+    object_id: str | None = None
+    label: str | None = None
+    asset_id: str | None = None
+    video_ref: str | None = Field(default=None, description="file:// or http(s) reference to the source video")
+    mask_video_ref: str | None = Field(default=None, description="file:// or http(s) reference to the per-frame mask video")
+    time_range: TimeRange | None = None
+    time_ranges: list[TimeRange] = Field(default_factory=list)
+    coordinate_system: Literal["pixel", "normalized"] = "pixel"
+    frame_rate: float | None = Field(default=None, gt=0)
+
+    def all_time_ranges(self) -> list[TimeRange]:
+        return ([self.time_range] if self.time_range else []) + list(self.time_ranges)
+
+    def has_model_input(self) -> bool:
+        return bool(self.video_ref and self.mask_video_ref)
+
+
+class InferenceOptions(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    model_id: str | None = None
+    predict_spans: bool | None = None
+    reranking_candidates: int | None = Field(default=None, ge=1, le=16)
+    residual: Literal["mixture_minus_targets", "model", "none"] = "mixture_minus_targets"
+    residual_name: str = Field(default="residual", min_length=1, max_length=200)
+    stereo_mode: Literal["duplicate", "per_channel"] | None = None
+    chunk_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    chunk_batch: int | None = Field(default=None, ge=1, le=8)
+    seed: int | None = Field(default=None, ge=0)
+    # Multi-pass separation: rerun each prompt on its own residual up to this many times.
+    # The upper bound is AUDIO_MAX_PASSES (checked by the engine, 400 INVALID_REQUEST).
+    passes: int | None = Field(default=None, ge=1, strict=True, description="1..AUDIO_MAX_PASSES; default 1")
+    # Time-frequency mask refinement of each target (post-processing; see refine.py).
+    # None falls back to the AUDIO_REFINE* settings, which default to off.
+    refine: Literal["off", "mask"] | None = None
+    refine_p: float | None = Field(default=None, gt=0, le=8, allow_inf_nan=False)
+    refine_n_fft: Literal[512, 1024, 2048, 4096] | None = None
+    refine_floor: float | None = Field(default=None, ge=0, le=0.5, allow_inf_nan=False)
+    refine_blend: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    refine_threshold: float | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+    refine_residual_threshold: float | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+    refine_gate_db: float | None = Field(default=None, ge=0, le=80, allow_inf_nan=False)
+    # Independent noise draws returned per chunk window and the rule that picks one
+    # (distinct from reranking_candidates, which the model ranks internally). See candidates.py.
+    candidates: int | None = Field(default=None, ge=1, le=8)
+    candidate_select: Literal["first", "overlap", "mean", "auto"] | None = None
+    output_format: Literal["pcm_f32le", "pcm_s16le"] = "pcm_f32le"
+    # "base64" inlines WAV bytes (Person 4's current contract). "file" writes stems under
+    # AUDIO_OUTPUT_ROOT and returns file:// references instead.
+    return_mode: Literal["base64", "file"] = "base64"
+    # Model routing (routing.py). None -> AUDIO_ROUTING_DEFAULT (auto). "prompted" is the text/
+    # span/visual model; "music_stems" splits a song into instrument stems.
+    mode: Literal["auto", "prompted", "music_stems"] | None = None
+    # music_stems only: which stems to return (vocals, drums, bass, guitar, piano, other,
+    # instrumental, or an alias). None -> the prompts, or every stem when there are none.
+    stems: list[str] | None = Field(default=None, min_length=1, max_length=8)
+    # music_stems only: must equal the configured AUDIO_STEM_MODEL (one model per process).
+    stem_model: str | None = None
+
+
+class PromptSpec(BaseModel):
+    """One separation target. ``prompts`` entries may be plain strings or this object."""
+
+    model_config = ConfigDict(extra="ignore")
+    text: str = Field(default="", max_length=500)
+    name: str | None = Field(default=None, max_length=500, description="Stem name shown to the user; defaults to the caller's wording of ``text``")
+    anchors: list[Anchor] = Field(default_factory=list)
+    visual_prompt: VisualPrompt | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_name_to_callers_wording(cls, data: Any) -> Any:
+        """Unnamed text prompts keep the caller's wording as the stem name.
+
+        Person 3's editor matches stems case-insensitively against the prompt it sent
+        (``frontend/src/components/ProjectPanel.tsx``), while ``text`` is normalised for the
+        model ("Isolate the dog barking!" -> "dog barking"). So the default stem name is the
+        caller's own wording with whitespace collapsed; case and punctuation are preserved.
+        Prompts that normalise to nothing (punctuation only) stay unnamed so ``display_name``
+        can fall back to the visual label.
+        """
+        if isinstance(data, dict) and data.get("name") is None:
+            text = data.get("text")
+            if isinstance(text, str) and normalise_description(text):
+                data = {**data, "name": " ".join(text.split())}
+        return data
+
+    @field_validator("text")
+    @classmethod
+    def normalise_text(cls, value: str) -> str:
+        return normalise_description(value)
+
+    # A prompt may be text-less when visual guidance is supplied (per prompt or shared through
+    # ``metadata.visual_prompt``). Whether that guidance is actually usable is only known after
+    # translation, so the engine performs that check and reports why it failed.
+
+    @property
+    def display_name(self) -> str:
+        return self.name or self.text or (self.visual_prompt.label if self.visual_prompt and self.visual_prompt.label else "visual target")
+
+
+def normalise_description(value: str) -> str:
+    """SAM Audio was trained on lowercase noun/verb phrases ("thunder", "man speaking")."""
+    text = " ".join(value.strip().split()).lower()
+    while text and text[-1] in ".!?,;:":
+        text = text[:-1]
+    for prefix in ("isolate the ", "isolate ", "extract the ", "extract ", "the "):
+        if text.startswith(prefix) and len(text) > len(prefix):
+            text = text[len(prefix):]
+            break
+    return MODEL_ALIASES.get(text, text)
+
+
+# Wordings people type that the model does not reliably recognise, mapped to the caption
+# vocabulary it was trained on. Measured 2026-11-13 on a 48 s cooking video with
+# sam-audio-large: "narrator speaking" came back silent for whole 10 s windows (the voice
+# dropped out for ten seconds at a time) while "speech" was continuous. Gendered wordings
+# ("man speaking", "woman speaking") are meaningful to the model and are left alone. The stem
+# keeps the caller's own wording as its name (see PromptSpec).
+MODEL_ALIASES = {
+    **{w: "speech" for w in (
+        "narrator", "narrator speaking", "narrator talking", "narration", "narrating", "voiceover", "voice over", "voice-over",
+        "talking", "someone talking", "someone speaking", "people talking", "people speaking",
+        "person talking", "person speaking", "a person speaking", "a person talking", "speaker", "speaking", "dialogue", "dialog",
+        "conversation", "spoken words", "human voice", "human speech", "talk")},
+    **{w: "singing" for w in ("singer", "vocalist", "someone singing", "person singing", "a person singing")},
+}
+
+
+class SourceRef(BaseModel):
+    """Where the ORIGINAL uploaded media lives (Contract A subset, proposed).
+
+    Person 4 sends only extracted audio bytes today. Visual prompting additionally needs
+    the original video, so this optional block lets the caller point at it: a ``file://``
+    path under ``AUDIO_MEDIA_ROOT`` (shared volume) or an allow-listed http(s) URL. ``sha256``
+    lets the service confirm Person 2's masks were computed on the same bytes.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    asset_id: str | None = None
+    original_ref: str | None = None
+    sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    duration: float | None = Field(default=None, ge=0)
+    frame_rate: float | None = Field(default=None, gt=0)
+
+
+class RoutingHints(BaseModel):
+    """What the caller knows about the upload. Used by the router as a tie-breaker only."""
+
+    model_config = ConfigDict(extra="ignore")
+    source_kind: Literal["audio", "video"] | None = Field(default=None, description="audio-only upload or the soundtrack of a video")
+
+
+class SeparationMetadata(BaseModel):
+    """Contract B (proposed): what arrives in the ``metadata`` form field / JSON body."""
+
+    model_config = ConfigDict(extra="allow")
+    prompts: list[str | PromptSpec] = Field(default_factory=list)
+    source: SourceRef | None = None
+    # Legacy/shared visual prompt applied to every prompt (Person 4 forwards the project's
+    # visual metadata here unchanged). Accepted as free-form JSON and translated leniently.
+    visual_prompt: dict[str, Any] | None = None
+    anchors: list[Anchor] = Field(default_factory=list, description="Span anchors applied to every prompt")
+    options: InferenceOptions = Field(default_factory=InferenceOptions)
+    asset_id: str | None = None
+    request_id: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    hints: RoutingHints = Field(default_factory=RoutingHints)
+
+    def resolved_prompts(self, max_prompts: int) -> list[PromptSpec]:
+        specs: list[PromptSpec] = []
+        for item in self.prompts:
+            # Both prompt forms name their stem identically: ``PromptSpec`` defaults ``name`` to the
+            # caller's wording, so the string form needs nothing beyond the text.
+            spec = PromptSpec(text=item) if isinstance(item, str) else item
+            if self.anchors and not spec.anchors:
+                spec = spec.model_copy(update={"anchors": list(self.anchors)})
+            specs.append(spec)
+        if len(specs) > max_prompts:
+            raise ValueError(f"at most {max_prompts} prompts per request")
+        return specs
+
+
+class SeparationRequest(SeparationMetadata):
+    """JSON body for ``POST /v1/separate`` (asset-reference variant of the multipart endpoint)."""
+
+    audio_ref: str = Field(min_length=1, description="file:// path under AUDIO_MEDIA_ROOT or allow-listed http(s) URL")
+
+
+class SourceInfo(BaseModel):
+    asset_id: str | None = None
+    duration: float
+    sample_rate: int
+    channels: int
+    sample_count: int
+
+
+class Refinement(BaseModel):
+    """Multi-pass bookkeeping for a target stem (``options.passes``)."""
+
+    passes_requested: int
+    passes_run: int
+    per_pass_energy_db: list[float] = Field(description="10*log10(energy of pass i's extra target / mixture energy), floored at -120")
+    stopped_early: bool
+    stop_reason: str | None = Field(default=None, description="Why the chain stopped early: negligible | too_much | dissimilar | silent_residual | silent_first_pass")
+
+
+class StemTag(BaseModel):
+    label: str = Field(description='Display name, e.g. "Synth", "Strings", "Female singing"')
+    score: float = Field(ge=0, le=1)
+
+
+class StemResult(BaseModel):
+    """Contract C (proposed): one stem. ``name`` + ``audio_base64`` are what Person 4 reads today."""
+
+    name: str
+    audio_base64: str | None = None
+    audio_ref: str | None = None
+    stem_id: str
+    role: Literal["target", "residual"]
+    prompt: str | None = None
+    label: str | None = None
+    start_time: float = 0.0
+    duration: float
+    sample_rate: int
+    channels: int
+    sample_count: int
+    format: str = "wav/pcm_f32le"
+    spans: list[list[float]] | None = Field(default=None, description="[[start, end], ...] seconds where the target is active, if known")
+    source_asset_id: str | None = None
+    refinement: Refinement | None = Field(default=None, description="Target stems only; null on the residual")
+    tags: list[StemTag] | None = Field(
+        default=None,
+        description="music_stems results only: up to 3 instrument tags (AudioSet instrument classes, display names), "
+        "score = mean probability over the stem's active windows, sorted by score. [] when nothing clears the minimum "
+        "score or the stem is near-silent; null on prompted results and when labeling is off or failed",
+    )
+
+    @model_serializer(mode="wrap")
+    def _keep_refinement_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema
+        # The API serialises with exclude_none, which would drop the key; the contract
+        # promises ``refinement: null`` on residual stems, so always emit it.
+        data = handler(self)
+        if isinstance(data, dict):
+            data.setdefault("refinement", None)
+            data.setdefault("tags", None)
+        return data
+
+
+class ModelInfo(BaseModel):
+    backend: str
+    model_id: str | None
+    device: str | None
+    dtype: str | None = None
+    predict_spans: bool
+    reranking_candidates: int
+    stereo_mode: str
+    chunked: bool
+    passes: int = Field(default=1, description="Most separation passes run for any prompt")
+    elapsed_seconds: float
+    chunk_seconds: float = 0
+    chunk_overlap_seconds: float = 2
+    requested_chunk_batch: int = 1
+    effective_chunk_batch: int = 1
+    peak_memory_bytes: int | None = None
+    is_mock: bool = False
+    refine: dict[str, Any] | None = Field(default=None, description="Effective mask refinement {mode, p, n_fft, floor, blend, threshold, residual_threshold, gate_db}; null when off")
+    candidates: int = Field(default=1, description="Noise draws returned per window (options.candidates)")
+    candidate_select: str = Field(default="first", description="How a draw was picked per window; 'first' when candidates == 1")
+
+
+class RouteInfo(BaseModel):
+    """Which separator handled (or would handle) a request, and why."""
+
+    mode: Literal["prompted", "music_stems"]
+    engine: str = Field(description="What runs: mock | sam | audiosep for prompted; mock | demucs | chain for music_stems")
+    model_id: str | None
+    reason: str
+    scores: dict[str, float] | None = Field(default=None, description="Content classifier {music, speech} in [0, 1]; null when it was not run or is unavailable")
+    stems: list[str] | None = Field(default=None, description="music_stems only: canonical names of the returned target stems")
+
+    @model_serializer(mode="wrap")
+    def _keep_scores_key(self, handler: SerializerFunctionWrapHandler):  # no return annotation: keeps the schema
+        data = handler(self)
+        if isinstance(data, dict):
+            data.setdefault("scores", None)  # the contract promises scores: null, even under exclude_none
+        return data
+
+
+class SeparationResponse(BaseModel):
+    stems: list[StemResult]
+    model: ModelInfo
+    source: SourceInfo
+    request_id: str
+    routing: RouteInfo | None = None
+    warnings: list[str] = Field(default_factory=list)
+    contract_version: str = CONTRACT_VERSION
+
+
+class RouteResponse(BaseModel):
+    """``POST /v1/route``: the routing decision for a request, without separating anything."""
+
+    routing: RouteInfo
+    source: SourceInfo
+    warnings: list[str] = Field(default_factory=list)
+    contract_version: str = CONTRACT_VERSION

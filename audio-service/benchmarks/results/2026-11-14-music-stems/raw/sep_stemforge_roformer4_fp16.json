@@ -1,0 +1,39 @@
+{
+ "tag": "stemforge_roformer4_fp16",
+ "model": "zft:bs_roformer_4stem",
+ "shifts": 0,
+ "overlap": 0.25,
+ "segment": null,
+ "load_s": 8.29800588695798,
+ "first_clip_s": 1.488921795040369,
+ "mean_clip_s_excl_first": 0.9454858478049425,
+ "audio_s_per_clip": 6.8034375,
+ "rtf": 0.13897178416130704,
+ "peak_alloc_mb": 1655,
+ "peak_reserved_mb": 1978,
+ "stems_native": [
+  "bass",
+  "drums",
+  "other",
+  "vocals"
+ ],
+ "config": {
+  "tag": "stemforge_roformer4_fp16",
+  "model": "zft:bs_roformer_4stem",
+  "num_overlap": 2,
+  "fp16": true
+ },
+ "load_report": [
+  {
+   "popped_config_keys": [
+    "linear_transformer_depth",
+    "mlp_expansion_factor",
+    "use_torch_checkpoint",
+    "skip_connection"
+   ],
+   "missing_keys": 0,
+   "unexpected_keys": 0,
+   "model_tensors": 1355
+  }
+ ]
+}

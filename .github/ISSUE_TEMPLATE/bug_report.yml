@@ -1,0 +1,16 @@
+name: Bug report
+description: Report reproducible behavior that needs fixing
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include expected behavior and steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, environment, and other context
+      description: Remove tokens and personal data before posting.

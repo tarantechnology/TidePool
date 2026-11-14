@@ -1,0 +1,28 @@
+{
+ "model": "chain:sep:model_bs_roformer_ep_317_sdr_12.9755.ckpt+demucs:htdemucs_ft",
+ "shifts": 0,
+ "overlap": 0.25,
+ "file": "/workspace/music-bench/data/fullsong.wav",
+ "duration_s": 230.656875,
+ "load_s": 12.468394892988726,
+ "runs": [
+  {
+   "stage1_s": 203.0097679940518,
+   "total_s": 256.61724574305117,
+   "project_s": 0.5019208110170439,
+   "max_abs_mix_err": 1.7881393432617188e-07,
+   "peak_alloc_mb": 2405,
+   "peak_reserved_mb": 3108
+  },
+  {
+   "stage1_s": 213.93364182207733,
+   "total_s": 393.72719838505145,
+   "project_s": 0.5192878280067816,
+   "max_abs_mix_err": 1.7881393432617188e-07,
+   "peak_alloc_mb": 2405,
+   "peak_reserved_mb": 3760
+  }
+ ],
+ "rtf_warm": 1.7069822799994643,
+ "tag": "chain_sep_model_bs_roformer_ep_317_sdr_12.9755.ckpt+demucs_htdemucs_ft_s0"
+}

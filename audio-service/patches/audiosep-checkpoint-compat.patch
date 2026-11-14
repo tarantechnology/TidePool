@@ -1,0 +1,25 @@
+diff --git a/models/CLAP/open_clip/factory.py b/models/CLAP/open_clip/factory.py
+index 844f9ca..5621dbd 100755
+--- a/models/CLAP/open_clip/factory.py
++++ b/models/CLAP/open_clip/factory.py
+@@ -64,6 +64,7 @@ def load_state_dict(checkpoint_path: str, map_location="cpu", skip_params=True):
+     #     if k.startswith('transformer'):
+     #         v = state_dict.pop(k)
+     #         state_dict['text_branch.' + k[12:]] = v
++    state_dict.pop("text_branch.embeddings.position_ids", None)
+     return state_dict
+ 
+ 
+diff --git a/models/audiosep.py b/models/audiosep.py
+index a3e602a..af4d45d 100644
+--- a/models/audiosep.py
++++ b/models/audiosep.py
+@@ -16,7 +16,7 @@ class AudioSep(pl.LightningModule, PyTorchModelHubMixin):
+         self,
+         ss_model: nn.Module = None,
+         waveform_mixer = None,
+-        query_encoder: nn.Module = CLAP_Encoder().eval(),
++        query_encoder: nn.Module = None,
+         loss_function = None,
+         optimizer_type: str = None,
+         learning_rate: float = None,

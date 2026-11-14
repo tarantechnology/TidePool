@@ -223,8 +223,8 @@ def export(stems, original, destination, fmt, include_video):
                 expr=f'if(lt(t,{t2}),{v1}+({v2}-{v1})*(t-{t1})/({t2}-{t1}),{expr})'
             expr=f"({s['volume']})*if(lt(t,{float(points[0]['time'])}),{float(points[0]['value'])},{expr})"
         for rg in ranges: expr=f'({expr})*if(between(t,{float(rg[0])},{float(rg[1])}),0,1)'
-        delay=round(float(s['start_offset'])*1000)
-        filters.append(f"[{base+i}:a]adelay={delay}:all=1,volume='{expr}':eval=frame[a{i}]")
+        delay=round(float(s['start_offset'])*48000)
+        filters.append(f"[{base+i}:a]aresample=48000,adelay={delay}S:all=1,volume='{expr}':eval=frame[a{i}]")
         labels.append(f'[a{i}]')
     silent=base+len(active)
     labels.append(f'[{silent}:a]')

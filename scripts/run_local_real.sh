@@ -2,6 +2,7 @@
 # Start TidePool with the default remote AudioSep GPU service.
 #   scripts/run_local_real.sh          use the AudioSep tunnel (8001), start backend (8000) and editor (5173)
 #   scripts/run_local_real.sh stop     stop all three
+#   scripts/run_local_real.sh real     use SAM Audio small on Apple MPS
 #   scripts/run_local_real.sh mock     same, but mock audio backend (instant, no real separation)
 #   scripts/run_local_real.sh remote   audio service on a GPU host reached through an SSH tunnel on 127.0.0.1:8001 (see scripts/runpod_setup.sh)
 # Logs: logs/audio.log logs/backend.log logs/frontend.log

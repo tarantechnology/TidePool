@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictBool, model_validator
 from .core import MAX_UPLOAD, connect, digest, event, init, max_passes, probe, project_dir, run, stem, uid
 from .guidance import Guidance, SoundPrompt, EditScope, Interval, validate_timing, options, description
 from .commands import parse
@@ -210,9 +210,11 @@ def project(pid: str, authorization: str | None=Header(None)):
         latest=db.execute("SELECT id,status FROM jobs WHERE project_id=? AND kind='process' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
         completed=db.execute("SELECT id FROM jobs WHERE project_id=? AND kind='process' AND status='completed' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
         visual_job=db.execute("SELECT id,status FROM jobs WHERE project_id=? AND kind='vision' ORDER BY rowid DESC LIMIT 1",(pid,)).fetchone()
+        history=db.execute("SELECT h.candidate_id,h.applied_revisions FROM candidate_history h JOIN jobs j ON j.id=h.candidate_id WHERE j.project_id=? AND h.undone=0 ORDER BY h.rowid DESC LIMIT 1",(pid,)).fetchone()
     current_stems=list_stems(pid,authorization)
     if not current_stems: completed=None
-    return {'project_id':pid,'status':p['status'],'filename':p['filename'],'metadata':json.loads(p['metadata']) if p['metadata'] else None,'visual_metadata':json.loads(p['visual']) if p['visual'] else None,'stems':current_stems,'latest_job':dict(latest) if latest else None,'last_completed_job_id':completed['id'] if completed else None,'latest_visual_job':dict(visual_job) if visual_job else None}
+    undoable=history['candidate_id'] if history and {r['id']:r['revision'] for r in current_stems}==json.loads(history['applied_revisions']) else None
+    return {'latest_undoable_candidate_id':undoable,'project_id':pid,'status':p['status'],'filename':p['filename'],'metadata':json.loads(p['metadata']) if p['metadata'] else None,'visual_metadata':json.loads(p['visual']) if p['visual'] else None,'stems':current_stems,'latest_job':dict(latest) if latest else None,'last_completed_job_id':completed['id'] if completed else None,'latest_visual_job':dict(visual_job) if visual_job else None}
 
 @app.get('/api/projects/{pid}/original')
 def original(pid: str, authorization: str | None=Header(None)):
@@ -337,6 +339,10 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration'],'canonical_label':r['label'],'tags':[t['label'] for t in json.loads(r['tags'])] if r['tags'] else None} for r in rows]
     body.tracks=[{'stemId':r['id'],'gain':r['volume'],'muted':bool(r['muted']),'solo':bool(r['solo']),'automation':[{'t':k['time'],'value':k['value']} for k in json.loads(r['automation'])]} for r in rows]
     if p['metadata']: body.duration=json.loads(p['metadata'])['duration']
+    # Never let a replacement instruction fall through to a separation-only planner.
+    import re
+    if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I):
+        return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -465,6 +471,99 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
 
 
 
+class GenerateEffectRequest(BaseModel):
+    prompt: str = Field(min_length=1,max_length=300)
+
+@app.post('/api/projects/{pid}/sound-effects/generate',status_code=202)
+def generate_effect(pid: str, body: GenerateEffectRequest, authorization: str | None=Header(None)):
+    auth(pid,authorization)
+    if not os.getenv('SOUNDCANVAS_SFX_CLI','').strip(): raise HTTPException(503,'Sound generation is unavailable; upload an effect instead.')
+    return {'job_id':start(pid,'sfx_generation',body.model_dump()),'status':'queued'}
+
+@app.get('/api/sound-effect-jobs/{jid}')
+def effect_job(jid: str, authorization: str | None=Header(None)):
+    return get_job(jid,'sfx_generation',authorization)
+
+@app.post('/api/projects/{pid}/sound-effects/upload')
+async def upload_effect(pid: str, file: UploadFile=File(...), authorization: str | None=Header(None)):
+    auth(pid,authorization)
+    directory=project_dir(pid)/'effects';directory.mkdir(parents=True,exist_ok=True)
+    aid=uid();temp=directory/(aid+'.upload');out=directory/(aid+'.wav');size=0
+    try:
+        with temp.open('wb') as target:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>20*1024*1024: raise HTTPException(413,'Sound effect must be under 20 MB.')
+                target.write(chunk)
+        info=probe(temp)
+        if not 0<info['duration']<=15: raise HTTPException(422,'Sound effect must be between 0 and 15 seconds.')
+        run('ffmpeg','-v','error','-y','-i',str(temp),'-vn','-ar','48000','-ac','2','-c:a','pcm_f32le',str(out))
+        return {'asset_id':aid,'duration':probe(out)['duration'],'source':'uploaded'}
+    except HTTPException:
+        out.unlink(missing_ok=True);raise
+    except (RuntimeError,ValueError,KeyError) as exc:
+        out.unlink(missing_ok=True);raise HTTPException(422,'Could not read that sound effect.') from exc
+    finally: temp.unlink(missing_ok=True);await file.close()
+
+@app.get('/api/projects/{pid}/sound-effects/{aid}/audio')
+def effect_audio(pid: str, aid: str, authorization: str | None=Header(None)):
+    auth(pid,authorization)
+    from .replacement import asset_path
+    try: path=asset_path(pid,aid)
+    except ValueError as exc: raise HTTPException(404,'Sound effect not found.') from exc
+    return FileResponse(path,media_type='audio/wav')
+
+class ReplacementRequest(BaseModel):
+    asset_id: str = Field(min_length=32,max_length=32)
+    effect_label: str = Field(min_length=1,max_length=100)
+    source_prompt: str = Field(min_length=1,max_length=200)
+    mode: Literal['replace','add']='replace'
+    intervals: list[Interval] = Field(min_length=1,max_length=100)
+    @model_validator(mode='after')
+    def ordered(self):
+        if self.mode=='replace' and len(self.intervals)>20: raise ValueError('At most 20 separation ranges are supported.')
+        for a,b in zip(self.intervals,self.intervals[1:]):
+            if a.end>b.start: raise ValueError('Intervals must be ordered and not overlap.')
+        if any(i.end-i.start>10 for i in self.intervals): raise ValueError('Each sound selection must be at most 10 seconds.')
+        return self
+
+@app.post('/api/projects/{pid}/replacement-preview',status_code=202)
+def replacement_preview(pid: str, body: ReplacementRequest, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    from .replacement import asset_path
+    try:
+        source=safe_path(pid,p['audio']);effect=asset_path(pid,body.asset_id)
+        if any(i.end>probe(source)['duration'] for i in body.intervals): raise HTTPException(422,'Select times within the clip.')
+        with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+        if body.mode=='replace' and rows and (len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1): raise HTTPException(409,'Replacement needs one unshifted residual layer. Choose add over the original or use a fresh project.')
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(422,'Project audio or sound effect is unavailable.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_replacement':True,'_candidate':snapshot,'asset_sha256':file_sha256(effect),**body.model_dump()}),'status':'queued'}
+
+class AutoReplacementRequest(BaseModel):
+    request: str = Field(min_length=1,max_length=500)
+
+@app.post('/api/projects/{pid}/automatic-replacement',status_code=202)
+def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first.')
+    if not os.getenv('SOUNDCANVAS_SFX_CLI','').strip(): raise HTTPException(503,'Sound generation is unavailable; use an uploaded effect instead.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    from .replacement import parse_replacement
+    from .effect_followup import matching_effects
+    try:
+        source=safe_path(pid,p['audio']);plan=parse_replacement(body.request,probe(source)['duration'])
+        with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+        known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
+        if plan.get('mode')!='add' and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Try a fresh project or add a sound over the original.')
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
+    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':body.request}),'status':'queued'}
+
 class LayerEffectsRequest(BaseModel):
     stem_id: str | None = Field(default=None,max_length=100)
     bass: float = Field(default=0,ge=-12,le=12,allow_inf_nan=False)
@@ -546,15 +645,39 @@ def director_adjust(cid: str, body: DirectorAdjustment, authorization: str | Non
     refuse_during_refine(row['project_id'])
     return {'candidate_id':start(row['project_id'],'candidate',{'_director_adjust':True,'parent_id':cid,'stem_id':body.stem_id,'enabled':body.enabled}), 'status':'queued'}
 
+class ReplacementAdjustment(BaseModel):
+    operation: Literal['toggle','move','add','alignment']
+    event_id: str | None = Field(default=None,max_length=100)
+    enabled: StrictBool | None = None
+    time: float | None = Field(default=None,ge=0,le=86400,allow_inf_nan=False)
+    alignment: Literal['peak','onset'] | None = None
+    @model_validator(mode='after')
+    def fields_match(self):
+        if self.operation=='toggle' and (not self.event_id or self.enabled is None): raise ValueError('Choose a placement and its state.')
+        if self.operation=='move' and (not self.event_id or self.time is None): raise ValueError('Choose a placement and a time.')
+        if self.operation=='add' and self.time is None: raise ValueError('Choose a time.')
+        if self.operation=='alignment' and self.alignment is None: raise ValueError('Choose an alignment.')
+        return self
+
+@app.post('/api/candidates/{cid}/replacement-adjust',status_code=202)
+def replacement_adjust(cid: str,body: ReplacementAdjustment,authorization: str | None=Header(None)):
+    row=candidate_record(cid,authorization)
+    if row['status']!='completed' or not row['output']:raise HTTPException(409,'Preview is not ready.')
+    output=json.loads(row['output']);provenance=output.get('provenance') or {}
+    if provenance.get('kind')!='replacement' or not output.get('_replacement_edit'):raise HTTPException(422,'This preview cannot be adjusted.')
+    if body.event_id and not any(e.get('id')==body.event_id for e in provenance.get('events',[])):raise HTTPException(422,'This placement is unavailable.')
+    refuse_during_refine(row['project_id'])
+    return {'candidate_id':start(row['project_id'],'candidate',{'_replacement_adjust':True,'parent_id':cid,**body.model_dump()}),'status':'queued'}
+
 @app.get('/api/candidates/{cid}')
 def candidate_status(cid: str,authorization: str | None=Header(None)):
     row=candidate_record(cid,authorization); output=json.loads(row['output']) if row['output'] else None
     return {'id':cid,'project_id':row['project_id'],'status':row['status'],'progress':row['progress'],'error':row['error'],
         'stage':row['stage'] if row['status']=='processing' else None,
-        'audio_url':f'/api/candidates/{cid}/audio' if output else None,
+        'audio_url':f'/api/candidates/{cid}/audio' if output and row['status']=='completed' else None,
         'mix_url':f'/api/candidates/{cid}/audio?part=mix' if output and 'mix' in output else None,
         'original_url':f'/api/candidates/{cid}/audio?part=original' if output and 'original' in output else None,
-        'provenance':output.get('provenance') if output else None,'inference':output.get('inference') if output else None}
+        'provenance':output.get('provenance') if output else None,'inference':output.get('inference') if output else None,'recovery':output.get('recovery') if output else None}
 
 @app.get('/api/candidates/{cid}/audio')
 def candidate_audio(cid: str,part: Literal['target','residual','mix','original']='target',authorization: str | None=Header(None)):

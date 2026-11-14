@@ -162,8 +162,18 @@ def work_once():
                 if not current or current['audio']!=p['audio'] or file_sha256(p['audio'])!=payload['audio_sha256']:
                     raise ValueError('Project audio changed; run discovery again.')
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
+        elif job['kind']=='sfx_generation':
+            from .replacement import prepare_effect
+            output=prepare_effect(p,payload)
+            with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='candidate':
-            if payload.get('_effects'):
+            if payload.get('_replacement_adjust'):
+                from .replacement import adjust as build
+            elif payload.get('_auto_replacement'):
+                from .replacement import auto_build as build
+            elif payload.get('_replacement'):
+                from .replacement import build
+            elif payload.get('_effects'):
                 from .effects import build
             elif payload.get('_director_adjust'):
                 from .director import adjust as build
@@ -231,7 +241,8 @@ def work_once():
         retryable=e.retryable if isinstance(e,InferenceError) else None
         event('job_failed',job_id=job['id'],error=str(e),error_code=code,retryable=retryable)
         with connect() as db:
-            db.execute("UPDATE jobs SET status='failed',error=?,error_code=?,retryable=? WHERE id=?",(str(e)[:1000],code,retryable,job['id']))
+            recovery=getattr(e,'recovery',None)
+            db.execute("UPDATE jobs SET status='failed',error=?,error_code=?,retryable=?,output=? WHERE id=?",(str(e)[:1000],code,retryable,json.dumps({'recovery':recovery}) if recovery else None,job['id']))
             if job['kind']=='process': db.execute("UPDATE projects SET status='failed' WHERE id=?",(pid,))
     return True
 

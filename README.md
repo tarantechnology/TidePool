@@ -1,6 +1,10 @@
-# SoundCanvas
+# TidePool
 
-SoundCanvas is a browser-based audio-layer editor for video. Create a project, upload media, separate sounds into stems, adjust and automate the layers, and export the result. The repository includes the editor, FastAPI backend, audio service and vision pipeline. See [INTEGRATION.md](INTEGRATION.md) for their contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for collaboration.
+TidePool is a browser-based audio-layer editor for video. Create a project, upload media, separate sounds into stems, adjust and automate the layers, and export the result. The repository includes the editor, FastAPI backend, audio service and vision pipeline. See [INTEGRATION.md](INTEGRATION.md) for their contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for collaboration.
+
+## Repository guide
+
+Start with the [architecture and development guide](docs/ARCHITECTURE.md) for the code map, request flow, configuration, and test commands. [INTEGRATION.md](INTEGRATION.md) describes service contracts and feature limitations; component-specific setup lives in [audio-service/README.md](audio-service/README.md), [frontend/README.md](frontend/README.md), and [vision/README.md](vision/README.md).
 
 ## Default separator: AudioSep
 
@@ -61,7 +65,7 @@ The Mac runs the browser. The Linux GPU machine runs the editor, backend, CPU vi
 2. Clone this repository on the VM and start it there. AudioSep uses public, pinned official checkpoints; no gated SAM token is required:
 
    ```sh
-   cd SoundCanvas
+   cd TidePool
    docker compose -f compose.cloud.yaml up --build -d
    docker compose -f compose.cloud.yaml logs -f
    ```
@@ -128,3 +132,20 @@ Try **“Make it more dramatic”**, **“Make it cool”**, or **“Emphasize t
 For a local edit, say **“Remove the chopping at 4.8 seconds”** or mark a processing range. The detector looks near the timestamp and, when it finds a matching supported event, proposes its approximate interval; otherwise the editor uses a short window around the time and reports that fallback. AudioSep processes that window with a little context, and the resulting edit is confined to the selected interval. **Discover sounds** suggests categories and intervals for review; a suggestion is not a separated layer.
 
 The optional YAMNet ONNX detector runs on CPU (`onnxruntime`, model and class map configured separately). Optional local Qwen3-VL scene captions use GPU memory and can inform creative planning; images stay local, while the resulting caption and detected labels may be sent to the configured language model. Captions and detections can be wrong. See [integration details](INTEGRATION.md#creative-director-and-local-sound-discovery).
+
+
+For repeated effects, try **“Replace every punch with a quack”**. If the detector
+cannot find the sound, provide an example time; SoundCanvas can look for similar
+sounds, separate short candidate windows, and preview suggested placements. The
+experimental text detector and example matching may miss or misidentify events. In
+the preview you can listen, disable or nudge individual placements, add a placement
+within a processed range, and compare peak and attack alignment. On apply, each added
+effect becomes a separate layer. Muting an effect layer later does not restore the
+original sound reduction; use Undo to restore the previous mix. See
+[repeated-event integration and model setup](INTEGRATION.md#experimental-repeated-event-discovery-and-editing).
+
+Follow up with **“Replace all quacks with loud gongs”** to replace matching effect
+layers at their current positions, without another audio separation. The preview
+preserves existing layer edits and warns that original video audio was not searched.
+Less literal references can use the configured LangChain/OpenAI resolver; it chooses
+only among known project effect labels and asks for clarification when uncertain.

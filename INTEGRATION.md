@@ -206,7 +206,7 @@ can include other sounds, so compare before applying. No separation quality impr
 is implied by perfect mixture reconstruction.
 
 Candidate requests may supply `processing_time` or `processing_interval`, but not both.
-A timestamp is localized only among supported nearby detector categories; absent a useful
+A timestamp for a single-sound separation is localized only among supported nearby detector categories; absent a useful
 match, a short time-centered fallback is used. FFmpeg supplies up to one second of
 context, then the full-length target is faded to zero outside the processing interval
 and the residual is derived from the original. Local range processing and visual
@@ -240,3 +240,119 @@ persistent editable effect parameters: applying creates processed audio, so
 subsequent effect applications build on it. Earlier cinematic processing is
 already rendered and cannot be adjusted independently. Extreme boosts can clip;
 listen and adjust layer volume as needed.
+
+## Add or replace sound effects
+
+Use **Add or replace sounds** in the editor or enter a command such as “replace every
+punch with a quack.” The existing YAMNet detector proposes impact intervals; a simple
+transient pass suggests shorter impact positions. The classifier and onset heuristic can
+miss sounds or find unrelated ones, so review, adjust, add or remove the times. The
+backend limits a preview to 20 ordered, non-overlapping selections of at most 10 seconds.
+
+Users can upload an effect (up to 20 MB and 15 seconds) or generate one. Generation uses
+an independently installed Stable Audio 3 Small SFX CLI configured via
+`SOUNDCANVAS_SFX_CLI`; model weights require the account to accept the model terms and
+be logged in on the host. See https://huggingface.co/stabilityai/stable-audio-3-small-sfx
+and the associated license before production use. Generation jobs are asynchronous;
+model weights and dependencies are not bundled. If unavailable, the app offers upload.
+
+Replace mode runs the configured separator once per chosen interval on the current
+residual and locally attenuates the extracted target near each enabled event. Add mode
+preserves the original. Both preview the original and edited mixes and use candidate revision checks, apply
+and undo. Each accepted effect placement becomes a short, independently editable
+timeline layer. Preview placements can be disabled, added or nudged without running
+the separator again; disabling one restores the separated target around that event. Isolation is approximate, and
+removing an impact may affect overlapping speech or music. Input audio and effect
+assets remain project-scoped and require the project token.
+
+On the November 2026 A40 Pod, Stable Audio 3 Small SFX generated a three-second
+quack with its gated checkpoint after account access was configured. A browser smoke
+check then generated an effect through the app and completed preview, apply and undo
+using the real AudioSep service. This confirms execution, not the quality of event
+detection or isolation on arbitrary videos. The current CLI starts a model process for
+each generation, so model loading adds noticeable latency.
+
+Natural-language replacement commands can run the detection, generation and bounded
+separation steps as one asynchronous preview, for example “replace every punch with a
+quack” or “replace the punch at 4 seconds with two quacks.” “Add a quack at 4 seconds”
+adds a generated effect at that time without separating or muting the original. If no sound is found, the
+app asks for a timestamp; unsupported or ambiguous instructions require clarification.
+The automatic detector is limited to its supported categories, and the system does not
+claim that it finds every occurrence. It previews before applying.
+
+A quack request defaults to one event and produces a more explicit generation prompt.
+For multiple quacks, the generated first burst is isolated and copied with short gaps.
+This is a waveform heuristic: it cannot guarantee semantic sound identity or that one
+burst contains exactly one quack. The preview warns users to listen. Other generated
+sounds receive explicit count instructions but their count is not verified.
+
+### Follow-up replacement of known effects
+
+Effect stems store an asset ID, group ID and semantic label in additive SQLite columns;
+their layer IDs, current offsets, gain, mute and automation remain the authoritative
+timeline state. Existing projects with effect roles but no metadata use their layer
+names. A matching follow-up generates one new asset and replaces the matched effect
+files at their current peaks without running detection or separation. “Loud” increases
+the layer gain by 50%, bounded to 2. The preview reports that original video audio was
+not searched and warns about clipping. Apply is atomic and revision checked; undo
+restores the previous effects and settings.
+
+When the exact effect label does not match, the LangChain OpenAI integration can
+resolve the reference to one of the project's existing effect labels. The existing
+`OPENAI_AGENT_MODEL` and `OPENAI_API_KEY`/`OPENAI_API_KEY_FILE` settings apply; only
+the reference and labels are sent to the configured model, not audio. The structured
+result is validated against project-owned effect labels before any file is changed;
+ambiguous requests ask for clarification. If the assistant is unavailable, exact
+labels still work and unrelated audio can still use the existing detection path.
+This resolver does not judge separation quality or prove that untracked sounds in the
+original audio were removed.
+
+
+### Peak-aligned effect placement
+
+Within each selected range, replacement measures short-window energy in the separated
+target, detects distinct local attacks and aligns the strongest sample in each effect
+with each detected attack. Multiple attacks inside one selection therefore get multiple
+effect copies. Very close peaks (within 90 ms) are treated as one; weak or sustained
+sounds can be missed, and separator leakage can cause extra detections. When no distinct
+attack can be found in an audible selection, the preview uses one strongest point and
+warns; a silent target fails instead of fabricating placements. Effects extending past
+clip boundaries are trimmed with a warning. The preview reports peak times and warns
+about overlapping effects. These checks do not prove source identity or separation
+quality. Add-only requests align the effect peak with the supplied time.
+
+An A40 execution check on a 1.7-second range of the user's cooking clip produced five
+detected peaks; a short test effect was aligned within one 48 kHz sample at each reported
+peak. This was not a listening-based count of the true chopping events.
+
+
+### Experimental repeated-event discovery and editing
+
+For “replace all … at [time],” the supplied time is an example: a local CPU spectral
+onset and fingerprint matcher scans the current residual for similar events (up to ten
+minutes). Matches are heuristic, not calibrated probabilities; they can miss sounds or
+match unrelated events. AudioSep is only run on the grouped candidate windows, and its
+output must contain an event near a proposed onset. Weak or mixture-like separations are
+skipped. If none are usable, the UI offers an explicit add-only preview using the
+already generated effect; no automatic fallback mutes or rewrites the project.
+
+Optional [FlexSED](https://github.com/JHU-LCAP/FlexSED) text-conditioned detection uses
+its MIT-licensed checkpoint and the Apache-2.0 CLAP text encoder, loaded in a separate
+process with offline model access and weights-only checkpoint loading. Configure
+`SOUNDCANVAS_FLEXSED_ROOT`, `SOUNDCANVAS_FLEXSED_CHECKPOINT`, and
+`SOUNDCANVAS_FLEXSED_PYTHON` with a prepared local installation and checkpoint. It runs
+only when needed; absence or failure falls back to YAMNet, and no GPU restart is needed.
+It checks for at least 3 GiB free GPU memory. For example matching, FlexSED filters the
+proposals only if it also supports the user-selected reference and retains more than one
+match. FlexSED's fixed 0.5 threshold is a heuristic, not calibrated confidence. The
+small fixed-mixture measurements and caveats are in
+[replacement timing results](audio-service/benchmarks/results/replacement-timing-synthetic-2026-11-14.md).
+
+The candidate retains raw separated targets and short event metadata. Each enabled event
+attenuates a short region with 10 ms edges; disabling it in the preview restores that
+region from the raw target. Changes produce a new revision-checked candidate without
+new model inference. Users can nudge events by 30 ms, add a point in a processed range,
+and compare onset versus peak alignment. Audio onset estimation is heuristic; peak is
+still the default pending listening tests. Apply creates short individual effect layers
+so their volumes and offsets remain editable; the original reduction is rendered into
+the separated source and is restored through candidate undo, not by muting an effect.

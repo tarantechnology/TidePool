@@ -513,10 +513,12 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
     refuse_during_refine(pid)
     from .candidates import safe_path
     from .replacement import parse_replacement
+    from .effect_followup import matching_effects
     try:
         source=safe_path(pid,p['audio']);plan=parse_replacement(body.request,probe(source)['duration'])
         with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-        if plan.get('mode')!='add' and rows and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Try a fresh project or add a sound over the original.')
+        known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
+        if plan.get('mode')!='add' and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Try a fresh project or add a sound over the original.')
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':body.request}),'status':'queued'}

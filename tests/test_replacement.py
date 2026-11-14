@@ -51,8 +51,9 @@ def test_generation_unavailable_is_explicit(client):
 
 def test_generated_effect_job_and_asset_authorization(client,tmp_path,monkeypatch):
     fake=tmp_path/'stable-audio'
-    fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n')
+    fake.write_text('#!/bin/sh\n[ -z "$PYTHONPATH" ] || exit 99\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n')
     fake.chmod(0o755);monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    monkeypatch.setenv('PYTHONPATH','/incompatible-editor-dependencies')
     p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
     assert client.post(f'/api/projects/{pid}/sound-effects/generate',json={'prompt':'quack'}).status_code==401
     job=client.post(f'/api/projects/{pid}/sound-effects/generate',headers=h,json={'prompt':'quack'}).json()['job_id']
@@ -83,6 +84,9 @@ def test_parse_replacement_and_vague_requests():
     assert parse_replacement('can you make every punch sound like a quack?',10)=={'source':'punch','effect':'quack','time':None}
     assert parse_replacement('add a quack at 4 seconds',10)=={'source':'','effect':'quack','time':4,'mode':'add'}
     assert parse_replacement('replace the punch at 4 seconds with a quack',10)=={'source':'punch','effect':'quack','time':4}
+    assert parse_replacement('Replace all knife chopping sounds with a quack; use the sound at 4 seconds as an example',10)=={'source':'knife chopping sounds','effect':'quack','time':4,'all_occurrences':True}
+    assert parse_replacement('replace every punch with a gong, using that sound around 3.5s as an example.',10)=={'source':'punch','effect':'gong','time':3.5,'all_occurrences':True}
+    with pytest.raises(ValueError):parse_replacement('replace the punch at 2 seconds with a quack; use the sound at 4 seconds as an example',10)
     with pytest.raises(ValueError):parse_replacement('replace punch with something',10)
     with pytest.raises(ValueError):parse_replacement('replace the punch at 15s with a quack',10)
     with pytest.raises(ValueError):parse_replacement('replace punch with quack at 4s and add music',10)
@@ -103,6 +107,76 @@ def test_automatic_replacement_finds_generates_and_previews(client,tmp_path,monk
     assert job['inference']['model']['is_mock'] is True
     assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
     assert client.post('/api/candidates/'+cid+'/undo',headers=h).status_code==200
+
+
+def test_followup_replaces_known_effects_at_current_positions_and_undoes(client,tmp_path,monkeypatch):
+    import app.candidates as candidates
+    import app.discovery as discovery
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,freq in [(audio,440),(fx,880)]:
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency={freq}:duration=5','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('effect.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'quack','source_prompt':'sound','mode':'add','intervals':[{'start':1,'end':1.01},{'start':3,'end':3.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed'
+    assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    initial=client.get(f'/api/projects/{pid}/stems',headers=h).json();effects=[s for s in initial if s['role']=='effect'];assert len(effects)==2
+    assert effects[0]['effect_group_id'] and effects[0]['effect_group_id']==effects[1]['effect_group_id']
+    assert effects[0]['effect_asset_id']==aid and effects[0]['effect_label']=='quack'
+    # Projects made before effect metadata existed remain resolvable by layer name.
+    from app.core import connect
+    with connect() as db:db.execute("UPDATE stems SET effect_group_id=NULL,effect_asset_id=NULL,effect_label=NULL WHERE project_id=? AND role='effect'",(pid,))
+    first=effects[0];edit={'expected_revision':first['revision'],'start_offset':first['start_offset']+.2,'volume':.6,'muted':True,'automation':[{'time':0,'value':.8}]}
+    assert client.patch(f'/api/projects/{pid}/stems/{first["id"]}',headers=h,json=edit).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    monkeypatch.setattr(candidates,'build',lambda *a,**kw:pytest.fail('Known effects must not run separation.'))
+    monkeypatch.setattr(discovery,'discover',lambda *a,**kw:pytest.fail('Known effects must not run detection.'))
+    request={'request':'Replace all quacks with loud gongs'}
+    assert client.post(f'/api/projects/{pid}/automatic-replacement',json=request).status_code==401
+    res=client.post(f'/api/projects/{pid}/automatic-replacement',headers=h,json=request);assert res.status_code==202,res.text
+    newcid=res.json()['candidate_id'];job=wait(client,newcid,h);assert job['status']=='completed',job
+    assert job['provenance']['kind']=='known-effect-replacement' and len(job['provenance']['peak_times'])==2
+    assert 'loud gong.' in job['provenance']['generation_prompt']
+    assert client.post('/api/candidates/'+newcid+'/apply',headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json();changed={s['id']:s for s in after}
+    assert all(changed[s['id']]['name'].startswith('loud gongs') for s in effects)
+    assert changed[first['id']]['muted'] and changed[first['id']]['automation']==edit['automation']
+    assert changed[first['id']]['volume']==pytest.approx(.9)
+    assert [s for s in before if s['role']!='effect'][0]['name']==[s for s in after if s['role']!='effect'][0]['name']
+    assert client.post('/api/candidates/'+newcid+'/undo',headers=h).status_code==200
+    restored={s['id']:s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}
+    for row in before:
+        for key in ('name','start_offset','volume','muted','automation'):assert restored[row['id']][key]==row[key]
+    # A follow-up preview must not overwrite a later edit.
+    stale=client.post(f'/api/projects/{pid}/automatic-replacement',headers=h,json=request).json()['candidate_id']
+    assert wait(client,stale,h)['status']=='completed'
+    row=restored[first['id']]
+    assert client.patch(f'/api/projects/{pid}/stems/{row["id"]}',headers=h,json={'expected_revision':row['revision'],'volume':.7}).status_code==200
+    assert client.post('/api/candidates/'+stale+'/apply',headers=h).status_code==409
+
+
+def test_langchain_effect_resolution_validates_only_known_labels(monkeypatch):
+    import sys,types
+    import app.agent as agent
+    from app.effect_followup import resolve_effect_reference,EffectReference
+    rows=[{'id':'a','role':'effect','name':'quack','effect_label':'quack'}, {'id':'b','role':'effect','name':'quack 2','effect_label':'quack'}, {'id':'c','role':'target','name':'dog'}]
+    monkeypatch.setattr(agent,'_key',lambda:'test-key')
+    class FakeModel:
+        result=EffectReference(decision='match',label='quack')
+        def __init__(self,**kwargs):pass
+        def with_structured_output(self,*args,**kwargs):return self
+        def invoke(self,messages):return self.result
+    monkeypatch.setitem(sys.modules,'langchain_openai',types.SimpleNamespace(ChatOpenAI=FakeModel))
+    assert [r['id'] for r in resolve_effect_reference('duck sound',rows)]==['a','b']
+    FakeModel.result=EffectReference(decision='match',label='dog')
+    with pytest.raises(ValueError,match='verified'):resolve_effect_reference('dog',rows)
+    FakeModel.result=EffectReference(decision='ambiguous',label=None)
+    with pytest.raises(ValueError,match='Several sounds'):resolve_effect_reference('that sound',rows)
+    FakeModel.result=EffectReference(decision='none',label=None)
+    assert resolve_effect_reference('footsteps',rows)==[]
 
 
 def test_automatic_no_matches_asks_for_time(client,tmp_path,monkeypatch):

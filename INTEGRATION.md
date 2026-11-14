@@ -283,6 +283,27 @@ This is a waveform heuristic: it cannot guarantee semantic sound identity or tha
 burst contains exactly one quack. The preview warns users to listen. Other generated
 sounds receive explicit count instructions but their count is not verified.
 
+### Follow-up replacement of known effects
+
+Effect stems store an asset ID, group ID and semantic label in additive SQLite columns;
+their layer IDs, current offsets, gain, mute and automation remain the authoritative
+timeline state. Existing projects with effect roles but no metadata use their layer
+names. A matching follow-up generates one new asset and replaces the matched effect
+files at their current peaks without running detection or separation. “Loud” increases
+the layer gain by 50%, bounded to 2. The preview reports that original video audio was
+not searched and warns about clipping. Apply is atomic and revision checked; undo
+restores the previous effects and settings.
+
+When the exact effect label does not match, the LangChain OpenAI integration can
+resolve the reference to one of the project's existing effect labels. The existing
+`OPENAI_AGENT_MODEL` and `OPENAI_API_KEY`/`OPENAI_API_KEY_FILE` settings apply; only
+the reference and labels are sent to the configured model, not audio. The structured
+result is validated against project-owned effect labels before any file is changed;
+ambiguous requests ask for clarification. If the assistant is unavailable, exact
+labels still work and unrelated audio can still use the existing detection path.
+This resolver does not judge separation quality or prove that untracked sounds in the
+original audio were removed.
+
 
 ### Peak-aligned effect placement
 

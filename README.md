@@ -133,3 +133,9 @@ within a processed range, and compare peak and attack alignment. On apply, each 
 effect becomes a separate layer. Muting an effect layer later does not restore the
 original sound reduction; use Undo to restore the previous mix. See
 [repeated-event integration and model setup](INTEGRATION.md#experimental-repeated-event-discovery-and-editing).
+
+Follow up with **“Replace all quacks with loud gongs”** to replace matching effect
+layers at their current positions, without another audio separation. The preview
+preserves existing layer edits and warns that original video audio was not searched.
+Less literal references can use the configured LangChain/OpenAI resolver; it chooses
+only among known project effect labels and asks for clarification when uncertain.

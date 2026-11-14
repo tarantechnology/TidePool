@@ -24,6 +24,13 @@ describe('toJobStatus', () => {
   it('throws on a state it does not know', () => {
     expect(() => toJobStatus({ status: 'weird' })).toThrow('Unknown job status: weird')
   })
+
+  it('carries a routing decision, and drops one it cannot read', () => {
+    const routing = { mode: 'music_stems', engine: 'demucs', model_id: 'htdemucs_ft', reason: 'no prompts; music', scores: { music: 0.9 }, stems: ['vocals'] }
+    expect(toJobStatus({ status: 'completed', routing }).routing).toEqual({ mode: 'music_stems', engine: 'demucs', modelId: 'htdemucs_ft', reason: 'no prompts; music', stems: ['vocals'] })
+    expect(toJobStatus({ status: 'completed', routing: { mode: 'magic' } })).not.toHaveProperty('routing')
+    expect(toJobStatus({ status: 'completed', routing: null })).not.toHaveProperty('routing')
+  })
 })
 
 describe('toExportStatus', () => {

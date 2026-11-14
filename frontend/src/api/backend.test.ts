@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendStem } from './backend'
-import { createCandidate, fetchStemBlobUrl, processProject, toRefinement, toStem } from './backend'
+import { createCandidate, describeRouting, fetchStemBlobUrl, getRoute, processProject, splitTracks, toCapabilities, toRefinement, toStem } from './backend'
 import { buildVisualPrompt, NO_VISUAL_PROMPT } from './separation'
 
 const config = { baseUrl: 'http://api.test:8000', token: 'tok' }
@@ -99,6 +99,11 @@ describe('toStem', () => {
     expect(toStem(row({}), 'blob:x').label).toBe('dog barking')
   })
 
+  it('shows a music stem by its display name, not its canonical label', () => {
+    expect(toStem(row({ name: 'Vocals', label: 'vocals', role: 'target' }), 'blob:x').label).toBe('Vocals')
+    expect(toStem(row({ name: 'singing', label: 'vocals', role: 'target' }), 'blob:x').label).toBe('singing')
+  })
+
   it('works unchanged for a backend that sends none of the new fields', () => {
     expect(toStem(row({}), 'blob:x')).toEqual({
       id: 's1',
@@ -141,5 +146,38 @@ describe('toRefinement', () => {
       perPassEnergyDb: [-10, -20],
       stoppedEarly: false,
     })
+  })
+})
+
+describe('music splits and routing', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('asks /process for music stems with no prompts, and a subset with its edit', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ job_id: 'j1' })))
+    expect(await splitTracks(config, 'p1')).toBe('j1')
+    expect(bodyOf(0)).toEqual({ prompts: [], visual_prompt: {}, mode: 'music_stems' })
+    await splitTracks(config, 'p1', ['vocals'], { action: 'mute' })
+    expect(bodyOf(1)).toEqual({ prompts: [], visual_prompt: {}, mode: 'music_stems', stems: ['vocals'], edit_scope: { action: 'mute' } })
+    // Everyone else leaves the mode to the service.
+    await processProject(config, 'p1', ['dog'], NO_VISUAL_PROMPT)
+    expect(bodyOf(2)).not.toHaveProperty('mode')
+  })
+
+  it('reads the route decision and describes it', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ mode: 'music_stems', engine: 'demucs', model_id: 'htdemucs_ft', reason: 'music 0.97', scores: null, stems: null })))
+    const route = await getRoute(config, 'p1')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://api.test:8000/api/projects/p1/route')
+    expect(route).toEqual({ mode: 'music_stems', engine: 'demucs', modelId: 'htdemucs_ft', reason: 'music 0.97', stems: null })
+    expect(describeRouting(route!)).toBe('Music stems · demucs (htdemucs_ft): music 0.97')
+    expect(describeRouting({ mode: 'prompted', engine: null, modelId: null, reason: null, stems: null })).toBe('Prompted separation')
+  })
+
+  it('reads the music_stems capability, and treats a missing one as absent', () => {
+    expect(toCapabilities({ music_stems: { available: true, stems: ['vocals', 'drums', 3] } }).musicStems).toEqual({ available: true, stems: ['vocals', 'drums'] })
+    expect(toCapabilities({}).musicStems).toBeUndefined()
   })
 })

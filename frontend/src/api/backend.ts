@@ -63,6 +63,40 @@ export interface BackendJob {
   /** Read from get_job in app/main.py. INTEGRATION.md does not list this field. */
   project_id?: string
   inference?: { model?: { is_mock?: boolean; backend?: string }; warnings?: string[] } | null
+  /** Which separator the audio service picked, and why. Absent from older backends and the prompted fake. */
+  routing?: unknown
+}
+
+/** How the audio service separates: `auto` lets its router decide (a song becomes music stems). */
+export type SeparationMode = 'auto' | 'prompted' | 'music_stems'
+
+/** Stem names the music splitters use. The service narrows this to its model's own list. */
+export const MUSIC_STEMS = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] as const
+
+/** A routing decision, from a job's `routing` or from GET /route. */
+export interface Routing {
+  mode: SeparationMode
+  engine: string | null
+  modelId: string | null
+  reason: string | null
+  stems: string[] | null
+}
+
+/** Null for anything that is not a recognisable decision; it only feeds hints and a status line. */
+export function toRouting(raw: unknown): Routing | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (r.mode !== 'auto' && r.mode !== 'prompted' && r.mode !== 'music_stems') return null
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const stems = Array.isArray(r.stems) && r.stems.every((s) => typeof s === 'string') ? (r.stems as string[]) : null
+  return { mode: r.mode, engine: str(r.engine), modelId: str(r.model_id), reason: str(r.reason), stems }
+}
+
+/** One line for a status card: "Music stems · demucs (htdemucs_ft): the content is music". */
+export function describeRouting(r: Routing): string {
+  const mode = r.mode === 'music_stems' ? 'Music stems' : r.mode === 'prompted' ? 'Prompted separation' : 'Automatic'
+  const model = r.engine ? ` · ${r.engine}${r.modelId && r.modelId !== r.engine ? ` (${r.modelId})` : ''}` : ''
+  return `${mode}${model}${r.reason ? `: ${r.reason}` : ''}`
 }
 
 /** Covers a whole request, including large stem downloads. */
@@ -185,9 +219,11 @@ export function toRefinement(raw: unknown): Refinement | undefined {
 export function toStem(stem: BackendStem, url: string): Stem {
   const refinement = toRefinement(stem.refinement)
   // The backend has no kind field, and kinds are not guessed from names.
+  const label = stem.label?.trim()
   return {
     id: stem.id,
-    label: stem.label?.trim() || stem.name,
+    // A music split labels stems canonically ("vocals") and names them for display ("Vocals").
+    label: label && (MUSIC_STEMS as readonly string[]).includes(label) && stem.name.trim() ? stem.name.trim() : label || stem.name,
     kind: stem.role === 'residual' ? 'residual' : 'sfx',
     url,
     duration: stem.duration,
@@ -295,9 +331,21 @@ export function passesField(passes = 1): { passes?: number } {
   return passes > 1 ? { passes } : {}
 }
 
-export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false, passes = 1): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), ...passesField(passes), visual_prompt: visualPrompt ?? {}})})
+/** How a /process request routes. Left out entirely, the service's default (auto) applies. */
+export interface ProcessRouting { mode?: SeparationMode; stems?: string[] | null; edit_scope?: EditScope }
+export async function processProject(config: BackendConfig, projectId: string, prompts: string[], visualPrompt?: unknown, append = false, passes = 1, routing: ProcessRouting = {}): Promise<string> {
+  const {mode, stems, edit_scope} = routing
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/process`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompts, ...(append ? {append:true} : {}), ...passesField(passes), visual_prompt: visualPrompt ?? {}, ...(mode ? {mode} : {}), ...(stems?.length ? {stems} : {}), ...(edit_scope ? {edit_scope} : {})})})
   return ((await res.json()) as {job_id:string}).job_id
+}
+/** Split a song into one track per instrument: all of them, or `stems` plus one residual. */
+export function splitTracks(config: BackendConfig, projectId: string, stems: string[] | null = null, editScope?: EditScope): Promise<string> {
+  return processProject(config, projectId, [], undefined, false, 1, {mode: 'music_stems', stems, ...(editScope ? {edit_scope: editScope} : {})})
+}
+/** The audio service's dry-run routing decision for the upload. Null when it gives none. */
+export async function getRoute(config: BackendConfig, projectId: string, signal?: AbortSignal): Promise<Routing | null> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/route`, {}, signal, 120_000)
+  return toRouting(await res.json())
 }
 export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
   const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4'})})
@@ -350,7 +398,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string }
+export interface AgentPlan { edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -374,7 +422,7 @@ export interface VisionCapability {available:boolean;reason:string|null;model:st
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
  */
-export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean}
+export interface Capabilities {quality:boolean;visual:boolean;reason:string;spanAnchors?:boolean;vision?:VisionCapability;max_passes?:number;refine?:boolean;musicStems?:{available:boolean;stems:string[]}}
 const text=(v:unknown):string|null=>typeof v==='string' && v.trim() ? v.trim() : null
 export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
@@ -391,7 +439,11 @@ export function toCapabilities(raw:unknown):Capabilities {
     ...(vision?{vision}:{}),
     ...(typeof c.max_passes==='number'?{max_passes:c.max_passes}:{}),
     ...(typeof c.refine==='boolean'?{refine:c.refine}:{}),
+    ...(c.music_stems && typeof c.music_stems==='object' ? {musicStems:toMusicStems(c.music_stems as Record<string,unknown>)} : {}),
   }
+}
+function toMusicStems(m:Record<string,unknown>):{available:boolean;stems:string[]} {
+  return {available:m.available===true,stems:Array.isArray(m.stems)?m.stems.filter((s):s is string=>typeof s==='string'):[]}
 }
 export async function getCapabilities(config:BackendConfig,projectId:string):Promise<Capabilities> {
   return toCapabilities(await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/capabilities`)).json())

@@ -1,14 +1,16 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, SavedStem, VisualMetadata } from '../api/backend'
+import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata } from '../api/backend'
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
-import { separationCommand } from '../separationCommand'
+import { musicCommand, separationCommand } from '../separationCommand'
 import { separationSettings } from '../agent/separationSettings'
+import { muteExistingStem } from '../agent/planOutcome'
+import { splitSuggestion } from '../state/projectStems'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, getCandidate, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { pollJob, toJobStatus } from '../api/jobs'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -53,6 +55,8 @@ export interface ProjectPanelHandle {
   uploadMedia: (file:File) => Promise<void>
   visualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
+  /** Split the uploaded song into one track per instrument. */
+  splitSong: () => Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -103,6 +107,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   // A manual open/close lasts until the flow moves on (a new project, preview or apply).
   const [manualStep, setManualStep] = useState<{key:string;id:StepId|'none'}|null>(null)
   const [error, setError] = useState('')
+  // The router's answer for this upload, and which separator the last split used.
+  const [suggestion, setSuggestion] = useState<{projectId:string;text:string}|null>(null)
+  const [routing, setRouting] = useState<Routing|null>(null)
   const abort = useRef<AbortController | null>(null)
   const attachedVideo = useRef<File | null>(null)
   const mounted = useRef(true)
@@ -115,7 +122,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
-  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings})},[projectId,mockStems,candidateWarnings,onProjectState])
+  const audioOnly = project?.metadata?.has_video === false
+  // A split replaces every layer, so it is offered only before the first separation.
+  const canSplit = Boolean(project?.metadata) && !jobId && !candidateId && capabilities?.musicStems?.available !== false
+  const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
+  useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
@@ -150,13 +161,33 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage(job.status === 'queued' ? 'Waiting for the separator…' : 'Separating the sound…');await new Promise(resolve=>setTimeout(resolve,1000))
     }
   }
+  /** Ask the router what the upload is, in the background; a song gets "Split into tracks" offered. */
+  const suggestRoute = (cfg: BackendConfig, id: string) => {
+    void getRoute(cfg, id).then(r => { const text = splitSuggestion(r); if (mounted.current && text) setSuggestion({projectId:id, text}) }).catch(() => { /* Only a hint; the split button still works. */ })
+  }
+  /** Run a music split as the project's separation and load its tracks. */
+  const splitInto = async (cfg: BackendConfig, info: ProjectInfo, stems: string[] | null, scope?: EditScope) => {
+    await flush()
+    setMessage('Splitting into tracks…')
+    const id = await splitTracks(cfg, info.project_id, stems, scope)
+    const controller = new AbortController(); abort.current = controller
+    const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(`Splitting into tracks: ${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''}`)})
+    if (result.state === 'failed') throw new Error(result.error || 'The split failed.')
+    const job = await getJob(cfg, id)
+    await onLoadStems(new HttpStemSource(cfg, id), 'Project stems')
+    const how = toRouting(job.routing)
+    setJobId(id); setMockStems(job.inference?.model?.is_mock ?? null); setCandidateWarnings(job.inference?.warnings || []); setRouting(how); setSuggestion(null)
+    setPrompt(stems?.join(', ') || 'All instruments'); setProject(await getProject(cfg, info.project_id))
+    const count = job.stems?.filter(s => s.role !== 'residual').length ?? 0
+    setMessage([`Split into ${count} track${count === 1 ? '' : 's'}.`, ...(job.inference?.warnings || [])].join(' '))
+  }
   const resume = (id: string, credential: string) => run(async () => {
     if (!id.trim() || !credential.trim()) throw new Error('Enter both project ID and token.')
     await flush()
     const cfg = {baseUrl, token:credential.trim()}
     const info = await getProject(cfg, id.trim())
     attachedVideo.current = null; setFile(null)
-    setUndoId(''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([])
+    setUndoId(''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
     setToken(cfg.token); setProject(info); rememberProject(info.project_id, cfg.token)
     setJobId(info.last_completed_job_id || ''); setSettingsStems([]); setMessages([])
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav'); setSelection(null); onClearSelection(); setVisualName(''); setSelectionName('')
@@ -173,9 +204,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (result.state === 'failed') throw new Error(result.error || 'Processing failed')
       const job = await getJob(cfg, latest.id)
       await onLoadStems(new HttpStemSource(cfg, latest.id), 'Project stems')
-      setJobId(latest.id); setMockStems(job.inference?.model?.is_mock ?? null)
+      setJobId(latest.id); setMockStems(job.inference?.model?.is_mock ?? null); setRouting(toRouting(job.routing))
     } else if (info.last_completed_job_id) await onLoadStems(new HttpStemSource(cfg, info.last_completed_job_id), 'Project stems')
-    else await onLoadStems({load: async () => original ? [{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}] : []}, original ? 'Original audio' : 'No stems yet')
+    else {
+      await onLoadStems({load: async () => original ? [{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}] : []}, original ? 'Original audio' : 'No stems yet')
+      if (info.metadata) suggestRoute(cfg, info.project_id)
+    }
     setMessage('Project restored.')
     try {
       const saved = sessionStorage.getItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`)
@@ -197,7 +231,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
-    setMockStems(null);setJobId(''); setUndoId('');setAnchors([]); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+    setMockStems(null);setJobId(''); setUndoId(''); setRouting(null); setSuggestion(null);setAnchors([]); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
@@ -207,7 +241,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}]}, 'Original audio')
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav')
     await loadVideo(cfg, info)
-    setMessage('Uploaded. Pick a sound to separate.')
+    suggestRoute(cfg, created.project_id)
+    setMessage(info.metadata?.has_video ? 'Uploaded. Pick a sound to separate.' : 'Uploaded. Split it into tracks, or pick a sound to separate.')
   })
   const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1) => {
     await flush()
@@ -226,7 +261,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if(selection)visual={...selection as object,interval:{start_seconds:Number(rangeStart),end_seconds:Number(rangeEnd)}}
     await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices))
   })
-  useImperativeHandle(ref, () => ({ uploadMedia, visualAction: async (chosen, description, action) => {
+  const splitSong = () => run(async () => {
+    if (!project) return
+    await splitInto(config, project, null)
+  })
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
     if (busyRef.current) throw new Error('A project operation is already running.')
@@ -272,12 +311,26 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         await uploadProject(cfg,created.project_id,video); attachedVideo.current=video
         current=await getProject(cfg,created.project_id); setProject(current); setFormat('mp4')
       }
-      if (!current || !currentToken) throw new Error('Upload a video first to use AI commands.')
+      if (!current || !currentToken) throw new Error('Upload a video or song first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
       const hasStems=Boolean(currentJob)
       // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
-      const local=separationCommand(text)
-      const result:AgentPlan=await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
+      const local=separationCommand(text), music=musicCommand(text)
+      let result:AgentPlan=await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{
+        if(music)return {kind:'separate',description:music.description,remove:music.remove,separation_mode:'music_stems',stems:music.stems,...(music.remove?{edit_scope:{action:'mute'}}:{}),use_visual:false,actions:[],message:''}
+        if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
+      // "Remove the vocals" on a split song mutes its Vocals track; no new separation needed.
+      if (result.kind === 'separate' && hasStems) {
+        const muted = muteExistingStem(result, await getSavedStems(cfg, current.project_id))
+        if (muted) { setMessage(muted.message); return muted }
+      }
+      if (result.kind === 'separate' && result.separation_mode === 'music_stems') {
+        if (hasStems) throw new Error('This project already has layers. Upload the song again to split it into tracks.')
+        const scope:EditScope|undefined = result.edit_scope && result.edit_scope.action !== 'keep' ? result.edit_scope : result.remove ? {action:'mute'} : undefined
+        await splitInto(cfg, current, result.stems ?? null, scope)
+        result = {...result, message: result.remove ? 'Split done; the vocals are muted.' : 'Split into tracks.'}
+        return result
+      }
       if(result.kind==='edit' && Array.isArray(result.actions) && result.actions.some(a=>a.type==='mute_range')) {
         if(result.actions.some(a=>a.type!=='mute_range'))throw new Error('Apply timed mute separately from other commands.')
         for(const action of result.actions as Array<{stemId:string;start:number;end:number}>) {
@@ -458,8 +511,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <label className={`flex cursor-pointer flex-col items-center gap-1 rounded-xl border border-dashed px-3 py-3 text-center transition-colors ${file ? 'border-accent/50 bg-accent-soft' : 'border-line-strong hover:border-accent/50 hover:bg-accent-soft/60'}`}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-accent" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
             <span className="text-xs font-medium text-fg">{file ? file.name : 'Choose a video or audio file'}</span>
-            <span className="text-[11px] text-subtle">MP4, MOV, WAV or MP3. You can also drop it anywhere.</span>
-            <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3" aria-label="Media" disabled={busy} onChange={e => { const f=e.target.files?.[0] || null; setFile(f); if (f) void uploadMedia(f) }} />
+            <span className="text-[11px] text-subtle">MP4, MOV, WAV, MP3, FLAC or M4A. You can also drop it anywhere.</span>
+            <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3,.flac,.m4a,video/*,audio/*" aria-label="Media" disabled={busy} onChange={e => { const f=e.target.files?.[0] || null; setFile(f); if (f) void uploadMedia(f) }} />
           </label>
           {project && <details className="mt-2 text-xs"><summary className="cursor-pointer">Project credentials</summary><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e=>e.currentTarget.select()}/></label><p className="text-muted">Keep these private. Copy them to resume after closing this tab.</p></details>}
           <details className="mt-2 text-xs"><summary className="cursor-pointer">Resume a project</summary><div className="mt-2 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={()=>void resume(resumeId,resumeToken)}>Resume</button></div></details>
@@ -485,6 +538,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
               </div>
             </details>}
             {project && <button className={`${button} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
+            {routing && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
             {(project?.metadata?.audio_quality?.findings.length ?? 0) > 0 && <details className="text-xs text-amber-700"><summary className="cursor-pointer">Notes about this clip ({project?.metadata?.audio_quality?.findings.length})</summary><ul className="mt-1 list-disc space-y-1 pl-4">{project?.metadata?.audio_quality?.findings.map(f=><li key={f}>{f}</li>)}</ul></details>}
           </div>
         </Step>

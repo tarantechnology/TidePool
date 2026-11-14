@@ -1,4 +1,4 @@
-import type { BackendJob } from '../api/backend'
+import type { BackendJob, Routing } from '../api/backend'
 import { PROJECT_STEMS_LABEL } from '../api/stemSources'
 
 // What the editor shell knows about the project the panel holds. Mock output is
@@ -12,6 +12,13 @@ export interface ProjectStemsState {
   mockStems: boolean | null
   /** Warnings the inference backend reported for the loaded stems. */
   warnings: string[]
+  /** The upload has no video stream: a song or another audio file. */
+  audioOnly?: boolean
+  /**
+   * Set while "Split into tracks" can run. `suggested` is the router's reason
+   * when it heard a song, so the split can be offered as the next step.
+   */
+  split?: { suggested: string | null } | null
 }
 
 export const NO_PROJECT_STEMS: ProjectStemsState = { projectId: null, mockStems: null, warnings: [] }
@@ -38,4 +45,10 @@ export function stemsReadySummary(mockStems: boolean | null): string {
  */
 export function showsMockBadge(state: ProjectStemsState, stemsLabel: string): boolean {
   return state.mockStems === true && stemsLabel === PROJECT_STEMS_LABEL
+}
+
+/** What to say when the router thinks the upload is a song; null when it does not. */
+export function splitSuggestion(routing: Routing | null): string | null {
+  if (routing?.mode !== 'music_stems') return null
+  return routing.reason ? `This sounds like a song (${routing.reason}).` : 'This sounds like a song.'
 }

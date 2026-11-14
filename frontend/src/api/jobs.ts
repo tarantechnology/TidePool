@@ -1,4 +1,5 @@
-import type { BackendJob, ExportInfo } from './backend'
+import { toRouting } from './backend'
+import type { BackendJob, ExportInfo, Routing } from './backend'
 
 export type JobState = 'queued' | 'processing' | 'done' | 'failed'
 
@@ -7,6 +8,8 @@ export interface JobStatus {
   /** 0 to 100, as the backend reports it. */
   progress?: number
   error?: string
+  /** Which separator ran and why, when the backend says. */
+  routing?: Routing
 }
 
 export const DEFAULT_POLL_MS = 1000
@@ -16,6 +19,7 @@ export const MAX_POLL_FAILURES = 3
 /** The backend says `completed`, the UI type says `done`. Unknown states are errors, not guesses. */
 export function toJobStatus(job: BackendJob): JobStatus {
   const { status, progress, error } = job
+  const routing = toRouting(job.routing)
   if (status !== 'queued' && status !== 'processing' && status !== 'completed' && status !== 'failed') {
     throw new Error(`Unknown job status: ${status}`)
   }
@@ -23,6 +27,7 @@ export function toJobStatus(job: BackendJob): JobStatus {
     state: status === 'completed' ? 'done' : status,
     ...(typeof progress === 'number' ? { progress } : {}),
     ...(error ? { error } : {}),
+    ...(routing ? { routing } : {}),
   }
 }
 

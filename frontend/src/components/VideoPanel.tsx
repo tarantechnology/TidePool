@@ -28,9 +28,14 @@ interface Props {
   onVisualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
   /** Seek requests from outside, such as the object list. `n` makes a repeat of the same time count. */
   seekTo?: { time: number; n: number } | null
+  /** The project is an audio file (a song): there is no picture to show. */
+  audioOnly?: boolean
 }
 
-export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onVisualAction, seekTo }: Props) {
+/** Fixed bar heights for the audio-only placeholder; a shape, not the file's waveform. */
+const BARS = Array.from({ length: 48 }, (_, i) => 10 + Math.round(30 * Math.abs(Math.sin(i * 0.55) * Math.cos(i * 0.21))))
+
+export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onVisualAction, seekTo, audioOnly = false }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
   const picker = useRef<HTMLInputElement>(null)
@@ -61,7 +66,7 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
     <input
       ref={picker}
       type="file"
-      accept="video/*"
+      accept="video/*,audio/*"
       hidden
       onChange={(e) => {
         const picked = e.target.files?.[0]
@@ -75,7 +80,7 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
       onClick={() => picker.current?.click()}
       className={src ? 'rounded-full bg-white/90 px-3 py-1 text-[11px] text-fg shadow-sm backdrop-blur hover:bg-white' : 'rounded-full bg-accent px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3]'}
     >
-      {src ? 'Replace video' : 'Choose a video'}
+      {src ? 'Replace video' : audioOnly ? 'Replace file' : 'Choose a video or song'}
     </button>
   )
 
@@ -147,6 +152,26 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
     )
   }
 
+  if (audioOnly) {
+    const played = engine?.duration ? t / engine.duration : 0
+    return (
+      <div className="shadow-card group relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-line bg-surface">
+        <div className="bg-grid fade-edges absolute inset-0 opacity-70" />
+        <div className="relative flex flex-col items-center px-4 text-center">
+          <div className="flex h-12 items-center gap-1" aria-hidden="true">
+            {BARS.map((h, i) => (
+              <span key={i} className={`w-1 rounded-full transition-colors ${i / BARS.length < played ? 'bg-accent' : 'bg-sky'}`} style={{ height: h }} />
+            ))}
+          </div>
+          <div className="mt-3 text-sm font-medium text-fg">Audio only</div>
+          <div className="mt-1 max-w-xs text-xs text-muted">There is no picture to show. Every track plays in the timeline below.</div>
+        </div>
+        {input}
+        <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">{pickButton}</div>
+      </div>
+    )
+  }
+
   return (
     <div className="shadow-card relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="bg-grid fade-edges absolute inset-0 opacity-70" />
@@ -159,8 +184,8 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
           <rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" strokeWidth="1.5" />
           <path d="M10 9.5v5l4-2.5-4-2.5z" fill="currentColor" />
         </svg>
-        <div className="mt-3 text-sm font-medium text-fg">Start with a video</div>
-        <div className="mt-1 max-w-xs text-center text-xs text-muted">Drop a clip anywhere, then click what you want to hear.</div>
+        <div className="mt-3 text-sm font-medium text-fg">Start with a video or a song</div>
+        <div className="mt-1 max-w-xs text-center text-xs text-muted">Drop a clip anywhere, then click what you want to hear. A song can be split into one track per instrument.</div>
         <div className="mt-4">{pickButton}</div>
         {input}
       </div>

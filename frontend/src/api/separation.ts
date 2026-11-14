@@ -1,3 +1,4 @@
+import { MUSIC_STEMS } from './backend'
 import type { SavedStem } from './backend'
 
 // What the separation requests carry, and how their results are matched back to
@@ -41,10 +42,31 @@ export interface RemoveTargets {
   target: SavedStem | null
   /** Everything else, which has to exist for muting the target to mean anything. */
   residual: SavedStem | null
+  /**
+   * The target is one instrument of a full music split. Its sibling tracks
+   * already hold the rest of the song, so muting it works with no residual.
+   */
+  split: boolean
 }
 
-const matchesDescription = (stem: SavedStem, wanted: string): boolean =>
-  [stem.prompt, stem.label, stem.name].some((value) => typeof value === 'string' && normalizeStemName(value) === wanted)
+/** Everyday words for a music splitter's stems, as the audio service's router maps them. */
+const MUSIC_ALIASES: Record<string, string> = {
+  vocal: 'vocals', voice: 'vocals', voices: 'vocals', singing: 'vocals', singer: 'vocals', 'lead vocal': 'vocals', 'lead vocals': 'vocals',
+  drum: 'drums', percussion: 'drums', beat: 'drums', bassline: 'bass', 'bass line': 'bass', guitars: 'guitar', keys: 'piano', keyboard: 'piano',
+}
+
+/** The music stem a description names ("the singer" is vocals), or null for any other sound. */
+export function musicStemName(description: string): string | null {
+  const name = normalizeStemName(description).replace(/^the /, '')
+  const canonical = MUSIC_ALIASES[name] ?? name
+  return (MUSIC_STEMS as readonly string[]).includes(canonical) ? canonical : null
+}
+
+/** Whether a stem is the sound described, by prompt, label or name; "singer" finds a Vocals track. */
+export const matchesDescription = (stem: SavedStem, wanted: string): boolean => {
+  const music = musicStemName(wanted)
+  return [stem.prompt, stem.label, stem.name].some((value) => typeof value === 'string' && (normalizeStemName(value) === wanted || (music !== null && musicStemName(value) === music)))
+}
 
 /**
  * Pick the two stems a "remove X" needs out of what the project holds now.
@@ -63,10 +85,21 @@ export function findRemoveTargets(stems: readonly SavedStem[], description: stri
     // One prompt was sent, so a lone target is the sound that was asked for even
     // if the service reworded it. Several, and only a name match will do.
     const target = targets.find((s) => matchesDescription(s, wanted)) ?? (targets.length === 1 ? targets[0] : null)
-    return { target, residual }
+    return { target, residual, split: isSplitStem(target, targets) }
   }
   const named = stems.filter((s) => normalizeStemName(s.name) === wanted)
-  return { target: named.length === 1 ? named[0] : null, residual }
+  return { target: named.length === 1 ? named[0] : null, residual, split: false }
+}
+
+/** An instrument track with other instrument tracks beside it: the rest of the song is still there. */
+function isSplitStem(target: SavedStem | null, targets: readonly SavedStem[]): boolean {
+  const music = (s: SavedStem) => typeof s.label === 'string' && musicStemName(s.label) === normalizeStemName(s.label)
+  return target !== null && music(target) && targets.filter(music).length > 1
+}
+
+/** Whether "remove X" can mute X: it needs the rest of the mix, as a residual or as split siblings. */
+export function canRemove({ target, residual, split }: RemoveTargets): boolean {
+  return target !== null && (residual !== null || split)
 }
 
 /** Why nothing was muted, in terms of what came back rather than what failed. */

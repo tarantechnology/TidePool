@@ -1,4 +1,5 @@
-import type { AgentPlan } from '../api/backend'
+import type { AgentPlan, SavedStem } from '../api/backend'
+import { canRemove, findRemoveTargets, matchesDescription, normalizeStemName } from '../api/separation'
 import { backendDetail, backendStatus, CANCELLED_MESSAGE, isAbort } from '../api/errors'
 
 // Turning what the planner said into what the prompt bar shows. Separate from
@@ -10,7 +11,7 @@ export interface PromptOutcome {
 }
 
 /** Shown wherever AI commands are offered but cannot run yet. */
-export const NO_PROJECT_HINT = 'Upload a video (step 1) to start giving commands'
+export const NO_PROJECT_HINT = 'Upload a video or song (step 1) to start giving commands'
 
 /**
  * The outcome for a plan that carries no local edit: a separation the backend
@@ -44,4 +45,19 @@ export function plannerFailure(err: unknown): PromptOutcome | null {
   if (backendStatus(err) !== 502) return null
   const detail = backendDetail(err)
   return detail ? { message: detail, ok: false } : null
+}
+
+/**
+ * "Remove X" when the project already has an X track (a split song's Vocals,
+ * or an earlier separation) is a mute, not another separation. Returns the
+ * edit plan, or null when the project has no such track to mute. A timed
+ * removal stays a separation, which handles the interval.
+ */
+export function muteExistingStem(plan: AgentPlan, saved: readonly SavedStem[]): AgentPlan | null {
+  if (plan.kind !== 'separate' || !plan.remove || plan.edit_scope?.interval) return null
+  const wanted = plan.stems?.length === 1 ? plan.stems[0] : plan.description
+  if (!wanted?.trim()) return null
+  const found = findRemoveTargets(saved, wanted)
+  if (!found.target || !canRemove(found) || !matchesDescription(found.target, normalizeStemName(wanted))) return null
+  return { ...plan, kind: 'edit', separation_mode: null, stems: null, actions: [{ type: 'set_mute', stemId: found.target.id, muted: true }], message: `Muted ${found.target.name}.` }
 }

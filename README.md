@@ -32,6 +32,8 @@ Open **http://localhost:5173**. The API documentation is at http://localhost:800
 3. Play and edit the layers, then choose MP4, WAV or MP3 and export. For video object selection, run visual analysis, pause the video, and click a detected object. A sound prompt is still required.
 
 Open **Trim and export** to keep a start/end range, either by entering seconds or setting each boundary at the playhead. Reset restores the full range. Trimming is applied to the exported copy, with the mixed audio and video kept together; the timeline and original media remain intact. You can also export a trimmed original before separating sounds.
+
+For a sequence, use **Add range as clip**, select a clip, and copy/paste, split at the source playhead, delete, or move it. Clip undo/redo buttons cover these sequence edits; the header undo/redo controls cover layer settings. Exports use the clips in the listed order and preserve the audio mix at the original source times. Clearing the list returns to exporting the single trim range. Clip sequences and their history are kept in the open browser session only; they are not restored after a refresh. The player and timeline still show the original, so review the exported file to see the assembled sequence.
 4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
 
 ### Without Docker
@@ -90,7 +92,7 @@ FastAPI serves `/docs` and `/openapi.json`. Project media and edits require `Aut
 
 With Python 3.11+, FFmpeg and ffprobe installed, run backend tests using `pip install -r requirements.txt pytest` and `pytest -q`. Run editor checks with `cd frontend && npm ci && npm run verify`. Vision's optional tests are documented in [vision/README.md](vision/README.md). An optional Playwright browser smoke test is in `tests/test_editor_browser.py`; point `SOUNDCANVAS_BROWSER_URL` at a running editor configured with fake inference and install Playwright plus Chromium to run it.
 
-The embedded SQLite worker is intended for one backend process and one replica. Jobs can be retried by submitting a new request after failure; interrupted work is recovered on startup. Untrimmed video export copies the video stream where the MP4 container supports it; trimmed video is re-encoded to H.264 for accurate boundaries. Audio is encoded as AAC. Incompatible video codecs may cause untrimmed export failure. Automation and remote mute ranges use timeline seconds.
+The embedded SQLite worker is intended for one backend process and one replica. Jobs can be retried by submitting a new request after failure; interrupted work is recovered on startup. Untrimmed video export copies the video stream where the MP4 container supports it; trimmed and assembled video is re-encoded to H.264 for accurate boundaries. Audio is encoded as AAC. Incompatible video codecs may cause untrimmed export failure. Automation and remote mute ranges use timeline seconds.
 
 This is a development MVP. Keep project tokens and uploaded media private; use a trusted SSH tunnel or a properly secured HTTPS deployment with authentication, access controls and rate limits. Photon integration is a placeholder pending an identified provider and verified API; local notifications do not send messages to a phone.
 

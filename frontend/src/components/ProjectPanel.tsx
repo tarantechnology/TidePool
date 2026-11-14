@@ -17,6 +17,7 @@ import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
 import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
+import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -85,6 +86,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [format, setFormat] = useState<'mp4'|'wav'|'mp3'>('mp4')
   const [trimStart,setTrimStart] = useState('0')
   const [trimEnd,setTrimEnd] = useState('')
+  const [clipHistory,setClipHistory] = useState(() => createHistory<{start:number;end:number}[]>([]))
+  const [clipClipboard,setClipClipboard] = useState<{start:number;end:number}|null>(null)
+  const [selectedClip,setSelectedClip] = useState<number|null>(null)
+  const clips = clipHistory.present
+  const changeClips = (next: {start:number;end:number}[]) => setClipHistory(h => commit(h,next))
   const [command, setCommand] = useState('')
   const [retryPrompt,setRetryPrompt]=useState('')
   const [retryStems,setRetryStems]=useState<SavedStem[]>([])
@@ -231,7 +237,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await flush()
     const cfg = {baseUrl, token:credential.trim()}
     const info = await getProject(cfg, id.trim())
-    setTrimStart('0'); setTrimEnd('')
+    setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     attachedVideo.current = null; setFile(null)
     setUndoId(info.latest_undoable_candidate_id || ''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
 
@@ -275,7 +281,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { if (readyToRestore) restoreTab() }, [baseUrl, readyToRestore])
   const uploadMedia = (media: File) => run(async () => {
     await flush()
-    setTrimStart('0'); setTrimEnd('')
+    setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     const created = await createProject(baseUrl)
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
@@ -548,9 +554,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await flush()
     const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : project.metadata?.duration
-    if (!trimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (project.metadata?.duration || 0) + 1e-6) throw new Error('Choose a valid trim range within the media duration.')
-    const trim = start === 0 && !trimEnd.trim() ? undefined : {start,end}
-    const id = await startExport(config,project.project_id,format,trim)
+    if (!clips.length && (!trimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (project.metadata?.duration || 0) + 1e-6)) throw new Error('Choose a valid trim range within the media duration.')
+    const trim = clips.length || end === undefined || (start === 0 && !trimEnd.trim()) ? undefined : {start,end}
+    const id = await startExport(config,project.project_id,format,trim,clips.length ? clips : undefined)
     await finishExport(id, format)
   })
   const readJson = async (input: File): Promise<unknown> => {
@@ -757,6 +763,25 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
 
         <Step n={4} title="Trim and export" tag={FEATURES.export} status={status('export')} open={open('export') && Boolean(project?.metadata)} onToggle={() => project?.metadata && toggle('export')}>
           {project?.metadata && <div className="space-y-2"><p className="text-muted">Choose the portion to keep. The original stays intact.</p><div className="flex gap-2"><label className="flex-1">Start (seconds)<input className={field} aria-label="Trim start" type="number" min="0" max={durationSeconds} step="0.01" value={trimStart} onChange={e=>setTrimStart(e.target.value)}/></label><label className="flex-1">End (seconds)<input className={field} aria-label="Trim end" type="number" min="0" max={durationSeconds} step="0.01" placeholder={durationSeconds?.toFixed(2)} value={trimEnd} onChange={e=>setTrimEnd(e.target.value)}/></label></div><div className="flex flex-wrap gap-1"><button type="button" className={secondary} onClick={()=>setTrimStart(getPlayhead().toFixed(2))}>Set start at playhead</button><button type="button" className={secondary} onClick={()=>setTrimEnd(getPlayhead().toFixed(2))}>Set end at playhead</button><button type="button" className={secondary} onClick={()=>{setTrimStart('0');setTrimEnd('')}}>Reset trim</button></div><div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy} onClick={exportFile}>Export</button></div></div>}
+          {project?.metadata && <div className="mt-3 space-y-2 border-t border-line pt-3 text-xs">
+            <p className="font-medium">Arrange clips for export</p>
+            <p className="text-muted">Add the range above, then copy, paste, split, delete or reorder clips. The player still shows the original timeline; these edits appear in the exported file.</p>
+            <button type="button" className={secondary} disabled={clips.length >= 100} onClick={() => {
+              const start = Number(trimStart), end = trimEnd.trim() ? Number(trimEnd) : project.metadata!.duration
+              if (!trimStart.trim() || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end || end > project.metadata!.duration + 1e-6) { setMessage('Choose a valid range before adding a clip.'); return }
+              changeClips([...clips, {start,end}]); setSelectedClip(clips.length)
+            }}>Add range as clip</button>
+            {clips.length > 0 && <ol aria-label="Export clips" className="space-y-1">{clips.map((clip,i) => <li key={i}><button type="button" aria-pressed={selectedClip === i} onClick={() => setSelectedClip(i)} className={`w-full rounded border px-2 py-1 text-left ${selectedClip === i ? 'border-accent bg-accent-soft' : 'border-line'}`}>{i+1}. {clip.start.toFixed(2)}–{clip.end.toFixed(2)}s</button></li>)}</ol>}
+            <div className="flex flex-wrap gap-1">
+              <button type="button" className={secondary} disabled={selectedClip === null || !clips[selectedClip]} onClick={() => { if (selectedClip !== null && clips[selectedClip]) setClipClipboard({...clips[selectedClip]}) }}>Copy clip</button>
+              <button type="button" className={secondary} disabled={!clipClipboard || clips.length >= 100} onClick={() => { if (!clipClipboard) return; const at = selectedClip !== null && clips[selectedClip] ? selectedClip + 1 : clips.length; const next = [...clips]; next.splice(at,0,{...clipClipboard}); changeClips(next); setSelectedClip(at) }}>Paste clip</button>
+              <button type="button" className={secondary} disabled={selectedClip === null || !clips[selectedClip]} onClick={() => { if (selectedClip === null || !clips[selectedClip]) return; changeClips(clips.filter((_,i) => i !== selectedClip)); setSelectedClip(null) }}>Delete clip</button>
+              <button type="button" className={secondary} disabled={selectedClip === null || !clips[selectedClip] || clips.length >= 100} onClick={() => { if (selectedClip === null || !clips[selectedClip]) return; const clip=clips[selectedClip], t=getPlayhead(); if (t <= clip.start || t >= clip.end) { setMessage('Move the source playhead inside the selected clip to split it.'); return } const next=[...clips]; next.splice(selectedClip,1,{start:clip.start,end:t},{start:t,end:clip.end}); changeClips(next) }}>Split at playhead</button>
+              {([-1,1] as const).map(delta => <button type="button" key={delta} className={secondary} disabled={selectedClip === null || !clips[selectedClip] || selectedClip + delta < 0 || selectedClip + delta >= clips.length} onClick={() => { if (selectedClip === null) return; const next=[...clips], target=selectedClip+delta; [next[selectedClip],next[target]]=[next[target],next[selectedClip]]; changeClips(next); setSelectedClip(target) }}>{delta < 0 ? 'Move earlier' : 'Move later'}</button>)}
+            </div>
+            <div className="flex flex-wrap gap-1"><button type="button" className={secondary} disabled={!canUndo(clipHistory)} onClick={() => {setClipHistory(h => undo(h)); setSelectedClip(null)}}>Undo clip edit</button><button type="button" className={secondary} disabled={!canRedo(clipHistory)} onClick={() => {setClipHistory(h => redo(h)); setSelectedClip(null)}}>Redo clip edit</button><button type="button" className={secondary} disabled={!clips.length} onClick={() => {changeClips([]); setSelectedClip(null)}}>Clear clips</button></div>
+            <p className="text-muted">{clips.length > 0 ? `Export uses the ${clips.length} listed clip${clips.length === 1 ? '' : 's'} in order. Clear clips to export only the trim range above.` : 'No clips listed: export uses the trim range above.'}</p>
+          </div>}
         </Step>
       </ol>
     </div>

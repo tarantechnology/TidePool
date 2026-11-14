@@ -153,9 +153,11 @@ class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
     include_video: bool=True
     trim: Interval | None = None
+    clips: list[Interval] | None = Field(default=None, min_length=1, max_length=100)
     @model_validator(mode='after')
     def valid_format(self):
         if self.include_video != (self.format=='mp4'): raise ValueError('Use mp4 with video, or wav/mp3 without video')
+        if self.trim and self.clips: raise ValueError('Use trim or clips, not both')
         return self
 class Message(BaseModel):
     project_id: str
@@ -771,6 +773,7 @@ def create_export(pid: str,body: Export,authorization: str | None=Header(None)):
     if not p['original'] or not p['audio']: raise HTTPException(409,'Upload media first')
     if body.include_video and not json.loads(p['metadata'])['has_video']: raise HTTPException(422,'Original has no video')
     if body.trim and body.trim.end > json.loads(p['metadata'])['duration'] + 1e-6: raise HTTPException(422,'Trim extends beyond the media duration')
+    if body.clips and any(c.end > json.loads(p['metadata'])['duration'] + 1e-6 for c in body.clips): raise HTTPException(422,'Clip extends beyond the media duration')
     return {'export_id':start(pid,'export',body.model_dump()),'status':'queued'}
 
 @app.get('/api/exports/{eid}')

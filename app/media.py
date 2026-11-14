@@ -203,7 +203,7 @@ def energy_db(samples):
     return round(max(-120.0, 10 * math.log10(power)) if power > 0 else -120.0, 3)
 
 
-def export(stems, original, destination, fmt, include_video, trim=None):
+def export(stems, original, destination, fmt, include_video, trim=None, clips=None):
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
     # A silent source maintains duration for an all-muted mix.
     duration = probe(original)['duration']
@@ -229,15 +229,31 @@ def export(stems, original, destination, fmt, include_video, trim=None):
     silent=base+len(active)
     labels.append(f'[{silent}:a]')
     mixed=''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0'
-    if trim:
+    if clips:
+        if len(clips)>100: raise ValueError('Too many clips')
+        for clip in clips:
+            if not 0 <= float(clip['start']) < float(clip['end']) <= duration + 1e-6: raise ValueError('Invalid clip interval')
+        filters.append(mixed+'[fullmix]')
+        filters.append(f"[fullmix]asplit={len(clips)}"+''.join(f'[as{i}]' for i in range(len(clips))))
+        if include_video: filters.append(f"[0:v]setpts=PTS-STARTPTS,split={len(clips)}"+''.join(f'[vs{i}]' for i in range(len(clips))))
+        for i,clip in enumerate(clips):
+            start,end=float(clip['start']),float(clip['end'])
+            filters.append(f'[as{i}]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[ac{i}]')
+            if include_video: filters.append(f'[vs{i}]trim=start={start}:end={end},setpts=PTS-STARTPTS[vc{i}]')
+        if include_video:
+            filters.append(''.join(f'[vc{i}][ac{i}]' for i in range(len(clips)))+f'concat=n={len(clips)}:v=1:a=1[video][mix]')
+        else:
+            filters.append(''.join(f'[ac{i}]' for i in range(len(clips)))+f'concat=n={len(clips)}:v=0:a=1[mix]')
+    elif trim:
         start,end=float(trim['start']),float(trim['end'])
         if not 0 <= start < end <= duration + 1e-6: raise ValueError('Invalid trim interval')
         mixed+=f',atrim=start={start}:end={end},asetpts=PTS-STARTPTS'
         if include_video: filters.append(f'[0:v]setpts=PTS-STARTPTS,trim=start={start}:end={end},setpts=PTS-STARTPTS[video]')
-    filters.append(mixed+'[mix]')
+    if not clips: filters.append(mixed+'[mix]')
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
     if include_video:
-        args += ['-map','[video]' if trim else '0:v:0','-c:v','libx264' if trim else 'copy','-c:a','aac','-b:a','192k','-t',str(end-start if trim else duration),'-movflags','+faststart']
+        output_duration=sum(float(c['end'])-float(c['start']) for c in clips) if clips else end-start if trim else duration
+        args += ['-map','[video]' if trim or clips else '0:v:0','-c:v','libx264' if trim or clips else 'copy','-c:a','aac','-b:a','192k','-t',str(output_duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
     else: args += ['-c:a','pcm_f32le']
     run(*args,str(destination))

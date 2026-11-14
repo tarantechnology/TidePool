@@ -93,6 +93,8 @@ SWEEPS: dict[str, list[dict[str, Any]]] = {
         {"name": "mask", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 1},
         {"name": "mask-k2-auto", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 2, "select": "auto"},
         {"name": "mask-k3-auto", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 3, "select": "auto"},
-        {"name": "quality-profile", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "window_candidates": 2, "select": "auto"},
+        {"name": "quality-profile", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "refine_threshold": 0.5, "window_candidates": 3, "select": "auto"},
+        {"name": "mask-whole-file", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 1, "chunk_seconds": 0.0},
+        {"name": "mask-chunk20", "refine": "mask", "refine_p": 2, "refine_nfft": 2048, "window_candidates": 1, "chunk_seconds": 20.0},
     ],
 }

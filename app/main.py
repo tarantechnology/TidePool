@@ -569,8 +569,8 @@ def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | No
     from .candidates import safe_path
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
     if body.effect_group_id and body.stem_id: raise HTTPException(422,'Choose a layer or a group, not both.')
-    if body.effect_group_id and not any(r['role']=='effect' and r['effect_group_id']==body.effect_group_id for r in rows):
-        raise HTTPException(422,'Select an effect group in this project.')
+    if body.effect_group_id and not any((r['role']=='effect' and r['effect_group_id']==body.effect_group_id) or (r['role']=='target' and r.get('sound_group_id')==body.effect_group_id) for r in rows):
+        raise HTTPException(422,'Select a sound group in this project.')
     if not body.effect_group_id and ((rows and not any(r['id']==body.stem_id for r in rows)) or (not rows and body.stem_id is not None)):
         raise HTTPException(422,'Select a layer in this project.')
     try:

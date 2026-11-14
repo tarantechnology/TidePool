@@ -15,8 +15,8 @@ def build(project, payload, candidate_id):
     selected=payload['stem_id'];group=payload.get('effect_group_id')
     if rows:
         if group:
-            selected_ids={r['id'] for r in rows if r.get('role')=='effect' and r.get('effect_group_id')==group}
-            if not selected_ids:raise ValueError('Effect group no longer exists.')
+            selected_ids={r['id'] for r in rows if (r.get('role')=='effect' and r.get('effect_group_id')==group) or (r.get('role')=='target' and r.get('sound_group_id')==group)}
+            if not selected_ids:raise ValueError('Sound group no longer exists.')
         else:
             if not any(r['id']==selected for r in rows): raise ValueError('Layer no longer exists.')
             selected_ids={selected}

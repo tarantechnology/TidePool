@@ -37,6 +37,20 @@ def test_upload_preview_replace_undo_and_validation(client,tmp_path):
     assert job['provenance']['kind']=='replacement' and job['inference']['model']['is_mock'] is True
     assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
     stems=client.get(f'/api/projects/{pid}/stems',headers=h).json();assert any(s['name']=='quack' for s in stems)
+    targets=[s for s in stems if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+    assert [s['sound_start'] for s in targets]==[1,3]
+    from app.core import connect,restore_legacy_effect_groups
+    with connect() as db:
+        db.execute("UPDATE stems SET sound_group_id=NULL,sound_group_label=NULL,sound_start=NULL,sound_end=NULL WHERE project_id=? AND role='target'",(pid,))
+        restore_legacy_effect_groups(db)
+    targets=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+    agent={'prompt':'make the punches quieter','stems':[],'tracks':[],'duration':5,'has_project_stems':True}
+    plan=client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json()
+    assert plan['kind']=='edit' and {a['stemId'] for a in plan['actions']}=={s['id'] for s in targets}
+    eq=client.post(f'/api/projects/{pid}/effects-preview',headers=h,json={'effect_group_id':targets[0]['sound_group_id'],'bass':2})
+    assert eq.status_code==202 and wait(client,eq.json()['candidate_id'],h)['status']=='completed'
     assert client.get(f'/api/projects/{pid}',headers=h).json()['latest_undoable_candidate_id']==cid
     assert client.post('/api/candidates/'+cid+'/undo',headers=h).status_code==200
     assert client.get(f'/api/projects/{pid}',headers=h).json()['latest_undoable_candidate_id'] is None
@@ -187,6 +201,45 @@ def test_group_commands_do_not_mix_distinct_groups(monkeypatch):
     assert result['kind']=='clarify' and result['actions']==[]
     result=plan_group_command('move the second gong later by 0.2 seconds',rows)
     assert result['kind']=='clarify' and result['actions']==[]
+
+
+def test_separate_identical_sound_prompts_share_a_group(client,tmp_path):
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=4','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    for start in (1,2):
+        response=client.post(f'/api/projects/{pid}/candidates',headers=h,json={'prompt':'knife chopping','processing_interval':{'start':start,'end':start+.3}})
+        assert response.status_code==202,response.text
+        cid=response.json()['candidate_id'];assert wait(client,cid,h)['status']=='completed';assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    targets=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+    assert [s['sound_start'] for s in targets]==[1,2]
+
+
+def test_process_append_groups_same_explicit_sound(client,tmp_path,monkeypatch):
+    import shutil
+    import app.worker as worker
+    def separate(source,directory,payload,report=None):
+        result=[]
+        for name in (payload['prompts'][0],'residual'):
+            path=directory/(worker.uid()+'.wav');shutil.copyfile(source,path)
+            result.append({'name':name,'path':path,'role':'residual' if name=='residual' else 'target','prompt':name,'label':name})
+        return result
+    monkeypatch.setattr(worker,'separate',separate)
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    for append in (False,True):
+        response=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog barking'],'append':append})
+        assert response.status_code==202,response.text
+        jid=response.json()['job_id']
+        for _ in range(300):
+            job=client.get('/api/jobs/'+jid,headers=h).json()
+            if job['status'] in ('completed','failed'):break
+            time.sleep(.05)
+        assert job['status']=='completed',job
+    targets=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
 
 
 def test_group_effects_preview_apply_and_undo(client,tmp_path):

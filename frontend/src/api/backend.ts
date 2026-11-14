@@ -31,6 +31,10 @@ export interface BackendStem {
   effect_group_id?: string | null
   effect_label?: string | null
   effect_asset_id?: string | null
+  sound_group_id?: string | null
+  sound_group_label?: string | null
+  sound_start?: number | null
+  sound_end?: number | null
   source_stem_id?: string
   prompt?: string
   label?: string
@@ -247,7 +251,8 @@ export function toStem(stem: BackendStem, url: string): Stem {
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
     muteRanges: stem.mute_ranges ?? [],
-    ...(stem.role === 'effect' && stem.effect_group_id ? { effectGroupId: stem.effect_group_id, effectLabel: stem.effect_label || stem.name } : {}),
+    ...(stem.role === 'effect' && stem.effect_group_id ? { effectGroupId: stem.effect_group_id, effectLabel: stem.effect_label || stem.name, isEffectClip:true } : {}),
+    ...(stem.role === 'target' && stem.sound_group_id ? {effectGroupId:stem.sound_group_id,effectLabel:stem.sound_group_label || stem.name,...(typeof stem.sound_start==='number' && typeof stem.sound_end==='number' && stem.sound_start>=0 && stem.sound_end>stem.sound_start ? {soundInterval:{start:stem.sound_start,end:stem.sound_end}} : {})} : {}),
     ...(refinement ? { refinement } : {}),
     ...(tags.length ? { tags } : {}),
   }

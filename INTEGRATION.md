@@ -323,6 +323,15 @@ nonliteral names. It asks for a displacement when a clip move has no amount and 
 for clarification when names identify multiple groups. Grouping is a presentation
 and mixer operation, not a new sound detector or a guarantee of separation quality.
 
+Separated target layers from one replacement share a sound-group identity and retain
+their selected intervals. Independently created target previews with the same
+normalized explicit prompt also share a group, unless they already belong to distinct
+groups. Startup recovers older targets from matching candidate history or matching
+explicit prompts without merging conflicting existing groups. The common fader,
+mute/solo commands and group EQ work for these targets too. Full-length separated
+target layers do not expose effect-clip deletion or movement controls. Identical
+descriptions are a grouping hint, not proof of speaker or source identity.
+
 
 ### Peak-aligned effect placement
 

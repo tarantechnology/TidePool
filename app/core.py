@@ -29,7 +29,8 @@ def connect():
 
 def restore_legacy_effect_groups(db):
     """Recover groups only from applied previews whose clip paths still match."""
-    if 'output' not in {row[1] for row in db.execute('PRAGMA table_info(jobs)')}:return
+    if not {'id','project_id','output'} <= {row[1] for row in db.execute('PRAGMA table_info(jobs)')}:return
+    if not {'id','project_id','path','role'} <= {row[1] for row in db.execute('PRAGMA table_info(stems)')}:return
     jobs=db.execute("SELECT j.id,j.project_id,j.output FROM candidate_history h JOIN jobs j ON j.id=h.candidate_id WHERE h.undone=0 AND j.output IS NOT NULL ORDER BY h.rowid DESC").fetchall()
     for job in jobs:
         try:
@@ -37,6 +38,19 @@ def restore_legacy_effect_groups(db):
             if not isinstance(data,dict):continue
             meta=data.get('_replacement_edit') or {}
             if not isinstance(meta,dict):continue
+            groups=meta.get('groups') or [];provenance=data.get('provenance') or {}
+            target=data.get('target') or {};window=provenance.get('processing_interval')
+            if isinstance(target,dict) and isinstance(window,dict) and isinstance(window.get('start'),(int,float)) and isinstance(window.get('end'),(int,float)):
+                db.execute("UPDATE stems SET sound_start=?,sound_end=? WHERE id=? AND project_id=? AND role='target' AND path=? AND sound_start IS NULL",(window['start'],window['end'],target.get('id'),job['project_id'],target.get('path')))
+            target_rows={r['id']:r for r in data.get('proposed',[]) if r.get('role')=='target'}
+            current_targets={r['id']:r for r in db.execute("SELECT id,path FROM stems WHERE project_id=? AND role='target' AND sound_group_id IS NULL",(job['project_id'],))}
+            targets=[g for g in groups if isinstance(g,dict) and g.get('target_id') in target_rows and g.get('target_id') in current_targets and target_rows[g['target_id']]['path']==current_targets[g['target_id']]['path'] and isinstance(g.get('interval'),dict)]
+            label=provenance.get('source_prompt')
+            if len(targets)>1 and isinstance(label,str) and label:
+                for item in targets:
+                    interval=item['interval']
+                    if not isinstance(interval.get('start'),(int,float)) or not isinstance(interval.get('end'),(int,float)):continue
+                    db.execute('UPDATE stems SET sound_group_id=?,sound_group_label=?,sound_start=?,sound_end=? WHERE id=? AND project_id=? AND sound_group_id IS NULL',('source-'+job['id'],label,interval['start'],interval['end'],item['target_id'],job['project_id']))
             ids=set(meta.get('effect_ids') or []);label=meta.get('effect_label')
             if not ids or not label:continue
             proposed={r['id']:r for r in data.get('proposed',[]) if r.get('id') in ids and r.get('role')=='effect'}
@@ -48,13 +62,32 @@ def restore_legacy_effect_groups(db):
                            (meta.get('effect_group_id') or job['id'],meta.get('effect_asset_id'),label,sid,job['project_id']))
         except (AttributeError,TypeError,ValueError,KeyError):
             continue
+    group_matching_explicit_targets(db)
+
+
+def group_matching_explicit_targets(db,pid=None):
+    """Group identical explicit prompts without merging conflicting groups."""
+    by_prompt={}
+    sql="SELECT id,project_id,prompt,sound_group_id FROM stems WHERE role='target' AND prompt IS NOT NULL AND trim(prompt)!=''"
+    for row in db.execute(sql+(' AND project_id=?' if pid else ''),(pid,) if pid else ()):
+        key=(row['project_id'],' '.join(row['prompt'].casefold().split()))
+        by_prompt.setdefault(key,[]).append(row)
+    for (project_id,_),rows in by_prompt.items():
+        groups={r['sound_group_id'] for r in rows if r['sound_group_id']}
+        if len(rows)<2 or len(groups)>1:continue
+        gid=next(iter(groups)) if groups else uid();label=rows[0]['prompt']
+        for row in rows:
+            if not row['sound_group_id']:
+                bump=',revision=revision+1' if pid is not None else ''
+                db.execute(f'UPDATE stems SET sound_group_id=?,sound_group_label=?{bump} WHERE id=? AND project_id=? AND sound_group_id IS NULL',(gid,label,row['id'],project_id))
 
 # Columns added after the first release. The audio service reports the stem fields; they
 # stay NULL for the fake adapter and for stems created before it returned them.
 STEM_COLUMNS = (('revision', 'INTEGER NOT NULL DEFAULT 0'), ('role', 'TEXT'), ('source_stem_id', 'TEXT'),
                 ('prompt', 'TEXT'), ('label', 'TEXT'), ('sample_rate', 'INTEGER'), ('channels', 'INTEGER'),
                 ('format', 'TEXT'), ('spans', 'TEXT'), ('refinement', 'TEXT'), ('tags', 'TEXT'),
-                ('effect_group_id', 'TEXT'), ('effect_asset_id', 'TEXT'), ('effect_label', 'TEXT'))
+                ('effect_group_id', 'TEXT'), ('effect_asset_id', 'TEXT'), ('effect_label', 'TEXT'),
+                ('sound_group_id','TEXT'),('sound_group_label','TEXT'),('sound_start','REAL'),('sound_end','REAL'))
 JOB_COLUMNS = (('error_code', 'TEXT'), ('retryable', 'INTEGER'), ('stage', 'TEXT'))
 
 def init():

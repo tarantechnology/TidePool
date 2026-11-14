@@ -145,3 +145,7 @@ to adjust or remove individual clips; the group controls adjust all member clips
 the EQ selector offers the group as one choice. “Mute all” and “Unmute all” set each
 clip's mute state, and Undo restores the previous edit. Separate effect groups stay
 separate even when they have the same name.
+
+Repeated separated sounds such as chopping also appear together when they came from
+the same operation or use the same explicit sound description. Grouping uses project
+history and prompts; it does not prove that the separator identified a source correctly.

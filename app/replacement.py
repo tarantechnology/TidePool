@@ -193,7 +193,7 @@ def build(project,payload,cid):
     original=directory/(uid()+'.wav');mix=directory/(uid()+'.wav');placed=directory/(uid()+'.wav')
     if rows: export(rows,source,original,'wav',False)
     else: shutil.copyfile(source,original)
-    warnings=[];is_mock=False;peak_samples=[];events=[];groups=[];rate=probe(source)['sample_rate']
+    warnings=[];is_mock=False;peak_samples=[];events=[];groups=[];rate=probe(source)['sample_rate'];sound_group_id=uid()
     if payload['mode']=='replace':
         for span in payload['intervals']:
             residuals=[r for r in rows if r['name'].lower()=='residual']
@@ -240,7 +240,7 @@ def build(project,payload,cid):
             for point in peaks:
                 events.append({'id':uid(),'group':group,'source_peak':point/rate,'source_onset':onset_before_peak(target,rate,point)/rate,'offset':0,'enabled':True})
             processed=directory/(uid()+'-ducked.wav');duck_events(raw_path,processed,events,group,rate)
-            next(row for row in next_rows if row['id']==target_id)['path']=str(processed)
+            next(row for row in next_rows if row['id']==target_id).update(path=str(processed),sound_group_id=sound_group_id,sound_group_label=payload['source_prompt'],sound_start=span['start'],sound_end=span['end'])
             rows=next_rows
             is_mock=is_mock or mock
             warnings.extend(inference.get('warnings') or [])

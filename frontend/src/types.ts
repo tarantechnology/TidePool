@@ -27,6 +27,9 @@ export interface Stem {
   /** Related effect clips share an identity even when their names change. */
   effectGroupId?: string
   effectLabel?: string
+  isEffectClip?: boolean
+  /** Range on the original stem timeline that contains a separated occurrence. */
+  soundInterval?: {start:number;end:number}
 }
 
 /**

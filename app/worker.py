@@ -149,6 +149,8 @@ def work_once():
                         row=db.execute('SELECT * FROM stems WHERE id=?',(item[0],)).fetchone()
                         edited=edit_target(row,payload['edit_scope'])
                         db.execute('UPDATE stems SET volume=?,muted=?,mute_ranges=? WHERE id=?',(edited['volume'],edited['muted'],edited['mute_ranges'],item[0]))
+                from .core import group_matching_explicit_targets
+                group_matching_explicit_targets(db,pid)
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
                 db.execute("UPDATE jobs SET status='completed',progress=100,stage=NULL,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))

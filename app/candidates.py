@@ -85,6 +85,18 @@ def build(project, payload, cid):
     residual['label']='everything else'
     replaced={snapshot['target_id'],snapshot['residual_id']}
     proposed=[dict(r) for r in rows if r['id'] not in replaced]+[target,residual]
+    if not snapshot['target_id']:
+        # The same explicitly requested description in one project represents the
+        # same logical sound. Do not combine different existing group identities.
+        prompt=' '.join(payload['prompts'][0].casefold().split())
+        matching=[r for r in proposed if r['id']!=target['id'] and r.get('role')=='target' and r.get('prompt') and ' '.join(r['prompt'].casefold().split())==prompt]
+        existing={r.get('sound_group_id') for r in matching if r.get('sound_group_id')}
+        group=next(iter(existing)) if len(existing)==1 else uid()
+        target.update(sound_group_id=group,sound_group_label=payload['prompts'][0],sound_start=interval['start'] if interval else None,sound_end=interval['end'] if interval else None)
+        if len(existing)<=1:
+            for item in matching:item.update(sound_group_id=group,sound_group_label=payload['prompts'][0])
+        elif matching:
+            inference.setdefault('warnings',[]).append('Multiple existing sound groups use this description; the new layer was kept separate.')
     mix=directory/(uid()+'.wav'); original=directory/(uid()+'.wav')
     export(proposed,source,mix,'wav',False)
     if rows: export(rows,source,original,'wav',False)
@@ -137,8 +149,10 @@ def apply(job):
                 # The snapshot is unchanged, including every existing edit.
                 db.execute('UPDATE stems SET path=?,name=?,label=?,duration=?,start_offset=?,volume=?,muted=?,mute_ranges=?,revision=revision+1 WHERE id=? AND project_id=?',
                            (item['path'],item['name'],item.get('label'),item['duration'],item['start_offset'],item['volume'],item['muted'],item['mute_ranges'],item['id'],pid))
-                for key in ('effect_group_id','effect_asset_id','effect_label'):
-                    if key in item: db.execute(f'UPDATE stems SET {key}=? WHERE id=? AND project_id=?',(item[key],item['id'],pid))
+                for key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label','sound_start','sound_end'):
+                    if key in item:
+                        value='COALESCE(?, '+key+')' if key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label') else '?'
+                        db.execute(f'UPDATE stems SET {key}={value} WHERE id=? AND project_id=?',(item[key],item['id'],pid))
                 if 'refinement' in item:  # Previews built before refinement existed leave it alone.
                     db.execute('UPDATE stems SET refinement=? WHERE id=? AND project_id=?',(item['refinement'],item['id'],pid))
             else:

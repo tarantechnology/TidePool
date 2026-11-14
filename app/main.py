@@ -109,7 +109,14 @@ def with_passes(opts, passes):
     """Forward passes only when asked; the audio service defaults to one."""
     return opts if passes is None else {**opts,'passes':passes}
 
+class ObjectSelection(BaseModel):
+    analysis_id: str = Field(min_length=1,max_length=100)
+    detection_id: str = Field(min_length=1,max_length=100)
+    track_id: int = Field(ge=0)
+    frame_index: int = Field(ge=0)
+
 class CandidateRequest(BaseModel):
+    object_selection: ObjectSelection | None = None
     processing_interval: Interval | None = None
     processing_time: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     stem_id: str | None=None
@@ -236,14 +243,21 @@ def get_visual(pid: str, authorization: str | None=Header(None)):
     if not p['visual']: raise HTTPException(404,'No visual analysis available')
     return json.loads(p['visual'])
 
+class ObjectAnalysisRequest(BaseModel):
+    concept: str = Field(default='dog',min_length=1,max_length=80)
+
 @app.post('/api/projects/{pid}/visual-analyze',status_code=202)
-def analyze_visual(pid: str, authorization: str | None=Header(None)):
+def analyze_visual(pid: str, body: ObjectAnalysisRequest = ObjectAnalysisRequest(), authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['original'] or not json.loads(p['metadata'])['has_video']: raise HTTPException(409,'Upload a video first')
     from .detector import status
     vision=status()
     if not vision['available']:
-        return JSONResponse({'detail':vision['reason'],'code':'vision_unavailable'},status_code=503)
+        return JSONResponse({'detail':vision['reason'],'code':'vision_unavailable'},status_code=502 if vision.get('retryable') else 503)
+    if vision.get('selection_only'):
+        if not body.concept.strip(): raise HTTPException(422,'Enter an object to find.')
+        job=start(pid,'vision',{'object_selection':True,'concept':body.concept.strip(), 'source_sha256':file_sha256(p['original'])})
+        return {'job_id':job,'status':'queued','prepared':False}
     prepare=False
     try: validate_timeline(p['original'], json.loads(p['metadata'])['frame_rate'])
     except UnfixableTimeline as exc: raise HTTPException(422,str(exc)) from exc
@@ -366,8 +380,25 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
 def create_candidate(pid: str, body: CandidateRequest, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
     if not p['audio']: raise HTTPException(409,'Upload media first')
+    object_context=None
+    if body.object_selection:
+        if body.visual_prompt: raise HTTPException(422,'Choose object context or audio visual conditioning, not both.')
+        from .object_selection import validate_context
+        try: object_context=validate_context(p,body.object_selection.model_dump())
+        except (ValueError,KeyError,TypeError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     refuse_during_refine(pid)
     with connect() as db: rows=db.execute('SELECT * FROM stems WHERE project_id=?',(pid,)).fetchall()
+    if (object_context and not body.stem_id and body.edit_scope.action in ('mute','lower')
+            and body.edit_scope.interval is None and not body.processing_interval and body.processing_time is None
+            and body.profile=='preview' and body.passes in (None,1) and not body.guidance.anchors):
+        matches=[r for r in rows if r['role']=='target' and (r['prompt'] or '').strip().casefold()==description(body.prompt).casefold()]
+        if len(matches)==1:
+            snapshot={'rows':[dict(r) for r in rows],'source':p['audio'],'source_sha256':file_sha256(p['audio']),
+                      'project_audio':p['audio'],'target_id':matches[0]['id'],'residual_id':None,
+                      'stem_hashes':{r['id']:file_sha256(r['path']) for r in rows}}
+            payload={'_candidate':snapshot,'_reuse_target_id':matches[0]['id'],'_object_context':object_context,
+                     'edit_scope':body.edit_scope.model_dump(),'prompts':[description(body.prompt)]}
+            return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
     targets=[r for r in rows if r['id']==body.stem_id and r['name'].lower()!='residual']
     residuals=[r for r in rows if r['name'].lower()=='residual']
     if body.stem_id and (len(rows)!=2 or len(targets)!=1 or len(residuals)!=1):
@@ -394,7 +425,7 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
              'profile':body.profile, 'options':{**with_passes(separation_options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},
-             '_candidate':snapshot, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
+             '_candidate':snapshot, '_object_context':object_context, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}

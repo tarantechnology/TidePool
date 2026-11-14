@@ -126,7 +126,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
   useEffect(() => () => { if(currentUrl) URL.revokeObjectURL(currentUrl) },[currentUrl])
-  useEffect(() => { if (selectedVisual) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual])
+  useEffect(() => { if (selectedVisual && capabilities?.visual !== false) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual, capabilities?.visual])
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
@@ -227,11 +227,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await loadVideo(cfg, info)
     setMessage('Uploaded. Pick a sound to separate.')
   })
-  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime) => {
+  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
     try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`) } catch { /* Ignore unavailable storage. */ }
-    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
+    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
@@ -309,7 +309,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try {
       await flush()
       setPrompt(description);setEditAction(action==='isolate'?'keep':action)
-      await previewSound(config,project,description,{action:action==='isolate'?'keep':action},chosen)
+      await previewSound(config,project,description,{action:action==='isolate'?'keep':action},capabilities?.visual ? chosen : {},null,false,capabilities?.visual ? anchors : [],1,null,null,capabilities?.visual ? undefined : chosen)
     } catch(e) { setError(e instanceof Error ? e.message : String(e)); throw e }
     finally { busyRef.current = false; setBusy(false) }
   }, separateVideo: async (video, description, remove) => {
@@ -570,8 +570,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <div className="space-y-3">
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
-            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">The current separator does not support visual object guidance.</p>}
-            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy || capabilities?.visual === false} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">Select an object to choose its sound. AudioSep separates the sound description.</p>}
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
                 : <p className="text-muted">{visual ? 'Click an object in the video, or describe' : 'Describe'} the sound in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}

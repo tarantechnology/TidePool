@@ -29,6 +29,10 @@ unsupported quality retries are rejected before starting a job.
 
 ## Processing ranges and newer editor features
 
+SAM 3.1 object selection can now launch the same AudioSep text-edit flow. See
+[Click the dog, mute its barking](object_selection_audiosep.md) for setup,
+measured inference results, caching, and the limits of this interaction.
+
 The upstream editor adds **Select audio range** and commands such as
 `Mute the dog barking at 8 seconds`. The app crops the selected audio with up to
 one second of context for inference, fades the removed target at the interval

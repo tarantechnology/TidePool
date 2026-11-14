@@ -22,9 +22,13 @@ def safe_path(pid, path):
 
 def build(project, payload, cid):
     pid=project['id']; snapshot=payload.pop('_candidate')
+    object_context=payload.pop('_object_context',None)
     if 'rows' not in snapshot: raise ValueError('Queued preview uses an older format; generate a new preview.')
     source=safe_path(pid,snapshot['source'])
     if file_sha256(source)!=snapshot['source_sha256']: raise ValueError('Source changed; generate another preview')
+    reuse=payload.pop('_reuse_target_id',None)
+    if reuse:
+        return reuse_target(project,payload,cid,snapshot,object_context,reuse)
     payload['request_id']=cid
     inference={}; directory=project_dir(pid)/'stems'
     interval=payload.pop('_processing_interval',None)
@@ -92,10 +96,31 @@ def build(project, payload, cid):
     return {'target':target,'residual':residual,'mix':{'path':str(mix)},'original':{'path':str(original)},
             'snapshot':snapshot,'proposed':proposed,'inference':inference,
             'provenance':{'source_sha256':snapshot['source_sha256'],'source_kind':'original' if snapshot['target_id'] or not rows else 'residual',
-                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':source_anchors,
+                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':source_anchors,'object_selection':object_context,
                           'visual_guidance':bool(payload.get('visual_prompt')),'edit_scope':payload.get('edit_scope'),
                           'profile':payload.get('profile','preview'),'processing_interval':interval,'processing_time':point,'localization':localization,'inference_interval':{'start':context_start,'end':context_end} if interval else None,'requested_options':payload['options'],
                           'passes':payload['options'].get('passes',1),'refinement':refinement}}
+
+
+def reuse_target(project,payload,cid,snapshot,context,target_id):
+    """Preview a cached layer edit through the same reversible history contract."""
+    rows=snapshot['rows'];pid=project['id'];source=safe_path(pid,snapshot['source'])
+    for row in rows:
+        if file_sha256(safe_path(pid,row['path']))!=snapshot['stem_hashes'][row['id']]:
+            raise ValueError('A source layer changed; preview the edit again.')
+    proposed=[edit_target(row,payload['edit_scope']) if row['id']==target_id else dict(row) for row in rows]
+    target=next(row for row in proposed if row['id']==target_id)
+    directory=project_dir(pid)/'stems'
+    mix=directory/(uid()+'.wav');original=directory/(uid()+'.wav')
+    export(proposed,source,mix,'wav',False);export(rows,source,original,'wav',False)
+    residual=next((row for row in rows if row['role']=='residual'),None)
+    return {'target':target,'mix':{'path':str(mix)},'original':{'path':str(original)},
+            **({'residual':residual} if residual else {}),'snapshot':snapshot,'proposed':proposed,
+            'inference':{'model':{'backend':'existing-stem'},'warnings':['Reused the existing sound layer; no new separation was run.']},
+            'provenance':{'kind':'separation','source_sha256':snapshot['source_sha256'],
+                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],
+                          'object_selection':context,'visual_guidance':False,'source_kind':'existing-layer',
+                          'reused_target_id':target_id,'edit_scope':payload['edit_scope']}}
 
 
 def completed_job(db,pid):

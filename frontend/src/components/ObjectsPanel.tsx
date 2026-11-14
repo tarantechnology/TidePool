@@ -41,6 +41,7 @@ interface Props {
 
 /** Detector status, Find objects, and the tracked objects it found. Keyed by project, so a new project starts clean. */
 export function ObjectsPanel({ config, projectId, vision, visual, selection, disabled, resumeJobId, canPrepare, onAnalyzed, onSelect, onSeek, onPrepared }: Props) {
+  const [concept, setConcept] = useState('dog')
   const [run, setRun] = useState<DetectionRun>(IDLE)
   const abort = useRef<AbortController | null>(null)
   const followed = useRef<string | null>(null)
@@ -79,7 +80,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
     let id = jobId
     if (!id) {
       update({ phase: 'queued', prepared })
-      const started = await startVisualAnalysis(config, projectId)
+      const started = await startVisualAnalysis(config, projectId, concept)
       id = started.jobId; prepared ||= started.prepared
     }
     const job = id
@@ -95,7 +96,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
     await onPrepared()
     signal.throwIfAborted()
     update({ phase: 'queued', prepared: true })
-    const started = await startVisualAnalysis(config, projectId)
+    const started = await startVisualAnalysis(config, projectId, concept)
     await followVisualJob((s) => getVisualJob(config, started.jobId, s), { prepared: true, signal, onUpdate: update })
     return false // already reloaded
   })
@@ -126,6 +127,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
         <span aria-hidden="true" className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot[status.tone]}`} />
         <span className="min-w-0 break-words">{status.text}</span>
       </p>
+      {vision?.selectionOnly && <label className="block">Object to find<input aria-label="Object to find" className="mt-1 w-full rounded border border-line bg-surface px-2 py-1" value={concept} maxLength={80} disabled={disabled || status.running} onChange={e=>setConcept(e.target.value)}/></label>}
       {status.running ? (
         <div className="flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-tint/10" role="progressbar" aria-label="Detection progress" aria-valuemin={0} aria-valuemax={100} {...(progress !== undefined ? { 'aria-valuenow': progress } : {})}>
@@ -135,7 +137,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
         </div>
       ) : (
         <button type="button" className="w-full rounded-lg border border-accent/40 bg-accent-soft px-3 py-1.5 font-medium text-accent transition-colors hover:border-accent/60 disabled:opacity-40" disabled={disabled || !status.canStart} onClick={() => void detect(null)}>
-          Find objects in video
+          {vision?.selectionOnly ? `Find ${concept.trim() || 'objects'} in video` : 'Find objects in video'}
         </button>
       )}
       {run.phase === 'failed' && run.status === 422 && !status.running && (canPrepare ? (
@@ -148,7 +150,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
       ))}
       {tracks.length > 0 && (
         <>
-          <p className="text-subtle">Pick one to hear just that sound.</p>
+          <p className="text-subtle">Pick an object, then choose its sound and an edit.</p>
           <ul aria-label="Detected objects" className="max-h-32 space-y-0.5 overflow-y-auto">
             {tracks.map((t) => {
               const selected = selection?.track_id === t.trackId

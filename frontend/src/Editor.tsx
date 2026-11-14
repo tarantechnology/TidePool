@@ -408,6 +408,7 @@ export default function Editor() {
               visual={visual}
               onSelection={setVisualSelection}
               selection={visualSelection}
+              onClearSelection={() => setVisualSelection(null)}
               seekTo={seekTo}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />

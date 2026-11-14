@@ -57,6 +57,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
 
     app = FastAPI(title="SoundCanvas Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
     app.state.settings, app.state.engine = settings, engine
+    from .objects import register
+    register(app, engine)
 
     @app.exception_handler(AudioServiceError)
     async def _service_error(_: Request, exc: AudioServiceError):

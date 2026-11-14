@@ -16,6 +16,9 @@ if [ "${1:-}" = stop ]; then
   pkill -f "sam_audio_service" ; pkill -f "uvicorn app.main:app" ; pkill -f "vite" ; echo "stopped"; exit 0
 fi
 MODE=${1:-remote}
+if [ "$MODE" = remote ] && [ "${AUDIO_BACKEND:-audiosep}" = audiosep ]; then
+  export VISION_SERVICE_URL="${VISION_SERVICE_URL:-http://127.0.0.1:8001}"
+fi
 BACKEND_PYTHON="${BACKEND_PYTHON:-$ROOT/.venv/bin/python}"
 if [ "$MODE" = sam ]; then
   PY="$ROOT/audio-service/.venv-sam/bin/python"

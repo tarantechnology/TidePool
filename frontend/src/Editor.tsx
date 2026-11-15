@@ -21,6 +21,7 @@ import { PHONE_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { DropLoader } from './components/DropLoader'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
+import { SequenceTimeline } from './components/SequenceTimeline'
 import { Transport } from './components/Transport'
 import { VideoPanel } from './components/VideoPanel'
 import { applyAction, initialTracks } from './edits'
@@ -32,6 +33,8 @@ import type { History } from './state/history'
 import { createEditorState, mergeKinds, setKindOverride } from './state/kinds'
 import type { EditorState } from './state/kinds'
 import type { EditAction, Stem, StemKind, TrackState } from './types'
+import type { SourceClip } from './state/clipSequence'
+import { lengthOf } from './state/timeline'
 
 type Status = 'loading' | 'ready' | 'error'
 
@@ -71,6 +74,10 @@ export default function Editor() {
   const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [working, setWorking] = useState<string | null>(null)
+  const [clipSequence, setClipSequence] = useState<{clips:SourceClip[];canUndo:boolean;canRedo:boolean}>({clips:[],canUndo:false,canRedo:false})
+  const [editDomain,setEditDomain]=useState<'clips'|'layers'>('layers')
+  const receiveClipSequence=useCallback((next:{clips:SourceClip[];canUndo:boolean;canRedo:boolean})=>{setClipSequence(next);if(next.canUndo||next.canRedo)setEditDomain('clips')},[])
+  useEffect(() => { engine?.setSequence(projectStems.projectId ? clipSequence.clips : []) }, [engine,projectStems.projectId,clipSequence.clips,baseStems])
   const videoUploadInProgress = useRef(false)
   const [videoAspect, setVideoAspect] = useState<number | null>(null)
   const isPhone = useMediaQuery(PHONE_QUERY)
@@ -266,6 +273,7 @@ export default function Editor() {
   }
 
   const dispatch = useCallback((action: EditAction, coalesceKey?: string) => {
+    setEditDomain('layers')
     const now = Date.now()
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
   }, [])
@@ -276,6 +284,7 @@ export default function Editor() {
   }, [])
 
   const setKind = useCallback((stemId: string, kind: StemKind) => {
+    setEditDomain('layers')
     setHistory((h) => commit(h, { ...h.present, kinds: setKindOverride(h.present.kinds, stemId, kind) }))
   }, [])
 
@@ -285,6 +294,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
+      if (plan.kind === 'media') return {message:plan.message,ok:true}
       if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'censorship' || plan.kind === 'fx' || plan.kind === 'duck' || plan.kind === 'loudness' || plan.kind === 'insert' || plan.kind === 'clip_edit') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
@@ -323,6 +333,7 @@ export default function Editor() {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
       if (isTextEntry(e.target as HTMLElement)) return
       e.preventDefault()
+      if(editDomain==='clips'){if(e.shiftKey)projectPanel.current?.redoClipEdit();else projectPanel.current?.undoClipEdit();return}
       setHistory((h) => {
         if (e.shiftKey) return canRedo(h) ? redo(h) : h
         return canUndo(h) ? undo(h) : h
@@ -330,9 +341,13 @@ export default function Editor() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [editDomain])
 
   const duration = engine?.duration ?? 0
+  const undoAvailable=editDomain==='clips'?clipSequence.canUndo:canUndo(history)
+  const redoAvailable=editDomain==='clips'?clipSequence.canRedo:canRedo(history)
+  const doUndo=()=>{if(editDomain==='clips')projectPanel.current?.undoClipEdit();else setHistory(h=>undo(h))}
+  const doRedo=()=>{if(editDomain==='clips')projectPanel.current?.redoClipEdit();else setHistory(h=>redo(h))}
   const hasLayers = stems.length > 0
   const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel)
 
@@ -361,7 +376,7 @@ export default function Editor() {
           <Logo iconOnly={isPhone} />
         </a>
         <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
-          <Transport engine={engine} playing={playing} duration={duration} />
+          <Transport engine={engine} playing={playing} duration={projectStems.projectId && clipSequence.clips.length ? lengthOf(clipSequence.clips) : duration} />
           {originalSrc && stemsLabel === 'Project stems' && (
             <div className="flex rounded-full max-md:hidden border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to">
               {([false, true] as const).map((orig) => (
@@ -380,10 +395,10 @@ export default function Editor() {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <input ref={picker} type="file" accept="audio/*" multiple hidden onChange={onPick} />
-          <IconButton label="Undo (⌘Z)" disabled={!canUndo(history)} onClick={() => setHistory((h) => undo(h))}>
+          <IconButton label="Undo (⌘Z)" disabled={!undoAvailable} onClick={doUndo}>
             <path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" />
           </IconButton>
-          <IconButton label="Redo (⇧⌘Z)" disabled={!canRedo(history)} onClick={() => setHistory((h) => redo(h))}>
+          <IconButton label="Redo (⇧⌘Z)" disabled={!redoAvailable} onClick={doRedo}>
             <path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />
           </IconButton>
           <span
@@ -441,7 +456,17 @@ export default function Editor() {
               )}
           <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
-              <Timeline
+              projectStems.projectId ? <SequenceTimeline
+                key={projectStems.projectId}
+                engine={engine} stems={stems} tracks={tracks} clips={clipSequence.clips}
+                onExport={() => void projectPanel.current?.exportTimeline()}
+                onChange={clips => projectPanel.current?.setTimelineClips(clips)}
+                onUndo={doUndo} onRedo={doRedo}
+                canUndo={undoAvailable} canRedo={redoAvailable}
+                onAction={dispatch} onActions={dispatchBatch} onKindChange={setKind}
+                onClipEdit={(id,operation,position)=>void projectPanel.current?.editClip(id,operation,position)}
+              /> : <Timeline
+                key={`${projectStems.projectId ?? 'local'}:${stems.map(s => s.id).join('|')}:${duration}`}
                 engine={engine}
                 stems={stems}
                 tracks={tracks}
@@ -452,6 +477,24 @@ export default function Editor() {
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
                 onRemoveFx={(stemId, chip) => { void projectPanel.current?.removeFx(stemId, chip.id, chip.label).catch(() => { /* The panel shows the error. */ }) }}
+                canTrim={Boolean(projectStems.projectId)}
+                exportClips={clipSequence.clips}
+                canUndoClip={clipSequence.canUndo}
+                canRedoClip={clipSequence.canRedo}
+                onUndoClip={() => projectPanel.current?.undoClipEdit()}
+                onRedoClip={() => projectPanel.current?.redoClipEdit()}
+                onCutRange={(start,end) => {
+                  if (!projectPanel.current) throw new Error('Project controls are not ready.')
+                  return projectPanel.current.cutRange(start,end)
+                }}
+                onSplitRange={(start,end) => {
+                  if (!projectPanel.current) throw new Error('Project controls are not ready.')
+                  return projectPanel.current.splitRange(start,end)
+                }}
+                onKeepRange={(start,end) => {
+                  if (!projectPanel.current) throw new Error('Project controls are not ready.')
+                  return projectPanel.current.keepRange(start,end)
+                }}
               />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
@@ -492,7 +535,7 @@ export default function Editor() {
               </button>
             )}
             <div id="steps-sheet" className={isPhone ? `flex min-h-0 flex-1 flex-col px-2 pb-2 ${sheetOpen ? '' : 'invisible'}` : 'contents'}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={onBusy} onStep={setStep} onError={onPanelError} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onClipSequence={receiveClipSequence} onBusy={onBusy} onStep={setStep} onError={onPanelError} />
             </div>
 
           </div>

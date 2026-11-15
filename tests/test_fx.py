@@ -172,7 +172,7 @@ def test_planner_schema_is_strict():
     from app.agent import SCHEMA, INSTRUCTIONS
     walk(SCHEMA)
     assert 'fx' in SCHEMA['required'] and {'fx', 'duck', 'loudness'} <= set(SCHEMA['properties']['kind']['enum'])
-    assert 'effects applied by this tool' not in INSTRUCTIONS and 'cannot be generated' in INSTRUCTIONS
+    assert 'effects applied by this tool' not in INSTRUCTIONS and 'Do not claim sound generation is unavailable' in INSTRUCTIONS and 'kind=insert' in INSTRUCTIONS
     json.dumps(SCHEMA)
 
 

@@ -1,5 +1,7 @@
 import { automationFrom, isAudible, stemEnd, stemStart, withMuteRanges } from '../edits'
 import type { Stem, TrackState } from '../types'
+import type { SourceClip } from '../state/clipSequence'
+import { lengthOf, timelinePosition } from '../state/timeline'
 
 // Per-stem graph:  source -> envelope (automation) -> fader (volume) -> gate (mute/solo) -> master
 // The timeline clock is derived from AudioContext time, so playback position
@@ -71,6 +73,24 @@ export class AudioEngine {
   /** Bumped by anything that cancels a play() still waiting on ctx.resume(). */
   private playRequest = 0
   duration = 0
+  private sequence:SourceClip[]=[]
+  private clipIndex=0
+  private boundaryTimer:ReturnType<typeof setTimeout>|null=null
+  get timelineDuration():number { return this.sequence.length ? lengthOf(this.sequence) : this.duration }
+  getTimelineTime():number { return this.sequence.length ? lengthOf(this.sequence.slice(0,this.clipIndex))+Math.max(0,this.getTime()-this.sequence[this.clipIndex].start) : this.getTime() }
+  setSequence(clips:SourceClip[]):void {
+    if(JSON.stringify(clips)===JSON.stringify(this.sequence))return
+    const time=this.getTimelineTime();this.pause();this.sequence=clips.map(c=>({...c}));this.clipIndex=0;this.seekTimeline(Math.min(time,this.timelineDuration))
+  }
+  seekTimeline(time:number):void {
+    if(!this.sequence.length){this.seek(time);return}
+    const position=timelinePosition(this.sequence,time);this.clipIndex=position.index;this.seek(position.source)
+  }
+  private advanceClip():void {
+    if(!this.playing)return
+    if(this.clipIndex+1>=this.sequence.length){this.finish();return}
+    this.stopSources();this.clipIndex++;this.startSources(this.sequence[this.clipIndex].start);this.applyTracks();this.emit('seek')
+  }
 
   constructor() {
     this.ctx = new AudioContext()
@@ -129,6 +149,7 @@ export class AudioEngine {
     this.tracks = []
     this.pausedAt = 0
     this.duration = 0
+    this.sequence=[];this.clipIndex=0
 
     for (const { stem, buffer } of loaded) {
       const envelope = this.ctx.createGain()
@@ -169,7 +190,7 @@ export class AudioEngine {
 
   getTime(): number {
     if (!this.playing) return this.pausedAt
-    return Math.min(this.duration, this.ctx.currentTime - this.startedAt)
+    return Math.min(this.sequence[this.clipIndex]?.end ?? this.duration, this.ctx.currentTime - this.startedAt)
   }
 
   async play(): Promise<void> {
@@ -177,7 +198,8 @@ export class AudioEngine {
     const id = ++this.playRequest
     await this.ctx.resume()
     if (id !== this.playRequest) return
-    const from = this.pausedAt >= this.duration ? 0 : this.pausedAt
+    if(this.getTimelineTime() >= this.timelineDuration-1e-6)this.seekTimeline(0)
+    const from = this.pausedAt
     this.startSources(from)
     this.playing = true
     this.applyTracks()
@@ -195,16 +217,20 @@ export class AudioEngine {
   }
 
   stop(): void {
-    this.seek(0)
     this.pause()
+    this.seekTimeline(0)
   }
 
   seek(t: number): void {
-    const target = Math.min(this.duration, Math.max(0, t))
+    let target = Math.min(this.duration, Math.max(0, t))
+    if(this.sequence.length){
+      const current=this.sequence[this.clipIndex]
+      if(target<current.start || target>current.end){const index=this.sequence.findIndex(c=>target>=c.start&&target<c.end);if(index>=0)this.clipIndex=index;else target=current.start}
+    }
     if (this.playing) {
       this.stopSources()
       // Past every stem nothing starts, so no source will ever end the playback.
-      if (!this.startSources(target)) this.finish()
+      if (!this.startSources(target) && !this.sequence.length) this.finish()
     } else {
       this.pausedAt = target
     }
@@ -230,6 +256,8 @@ export class AudioEngine {
   private startSources(from: number): boolean {
     const now = this.ctx.currentTime
     this.startedAt = now - from
+    const boundary=this.sequence[this.clipIndex]?.end
+    if(boundary !== undefined)this.boundaryTimer=setTimeout(()=>this.advanceClip(),Math.max(0,(boundary-from)*1000))
     let started = false
     for (const ch of this.channels.values()) {
       const start = sourceStart(from, stemStart(ch.stem), ch.buffer.duration)
@@ -238,7 +266,7 @@ export class AudioEngine {
       src.buffer = ch.buffer
       src.connect(ch.envelope)
       src.onended = () => this.handleEnded()
-      src.start(now + start.delay, start.bufferOffset)
+      if(boundary !== undefined){const available=Math.min(ch.buffer.duration-start.bufferOffset,boundary-from-start.delay);if(available<=0)continue;src.start(now+start.delay,start.bufferOffset,available)}else src.start(now + start.delay, start.bufferOffset)
       ch.source = src
       started = true
     }
@@ -246,6 +274,7 @@ export class AudioEngine {
   }
 
   private stopSources(): void {
+    if(this.boundaryTimer !== null){clearTimeout(this.boundaryTimer);this.boundaryTimer=null}
     for (const ch of this.channels.values()) {
       if (ch.source) {
         ch.source.onended = null
@@ -261,6 +290,7 @@ export class AudioEngine {
   }
 
   private handleEnded(): void {
+    if(this.sequence.length)return
     if (!this.playing || this.getTime() < this.duration - 0.05) return
     this.finish()
   }
@@ -268,7 +298,7 @@ export class AudioEngine {
   private finish(): void {
     this.stopSources()
     this.playing = false
-    this.pausedAt = this.duration
+    this.pausedAt = this.sequence[this.clipIndex]?.end ?? this.duration
     this.applyTracks()
     this.emit('pause')
   }

@@ -150,6 +150,11 @@ effect becomes a separate layer. Muting an effect layer later does not restore t
 original sound reduction; use Undo to restore the previous mix. See
 [repeated-event integration and model setup](INTEGRATION.md#experimental-repeated-event-discovery-and-editing).
 
+After **Find objects**, try **“Every time person 5 appears, play a gong sound”**, using the
+number shown in the object list. The preview places a sound at each detected
+appearance. Object tracking may miss or switch identities, and the current scan
+covers only the first 30 seconds, so check the placements before applying.
+
 Follow up with **“Replace all quacks with loud gongs”** to replace matching effect
 layers at their current positions, without another audio separation. The preview
 preserves existing layer edits and warns that original video audio was not searched.

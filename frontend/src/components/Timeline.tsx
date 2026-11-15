@@ -12,7 +12,7 @@ import { FEATURES } from '../features'
 import { groupActions, timelineRows } from '../state/effectGroups'
 
 const ACCENT = '#5b9be3'
-const COLS = 'grid grid-cols-[15rem_minmax(0,1fr)]'
+const COLS = 'grid grid-cols-[var(--hdr)_minmax(0,1fr)]'
 const LANE_MIN = 44
 const LANE_MAX = 260
 const clampLane = (h: number) => Math.min(LANE_MAX, Math.max(LANE_MIN, h))
@@ -181,18 +181,18 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
   }
 
   return (
-    <div ref={scroller} className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+    <div ref={scroller} className="flex min-h-0 flex-1 flex-col [--hdr:15rem] max-md:[--hdr:8.5rem] overflow-x-hidden overflow-y-auto">
       {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
         <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
-          <div className="flex items-center gap-2 border-r border-line px-4">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>
-            <label className="ml-auto flex items-center gap-1.5" title="Layer height">
+          <div className="flex items-center gap-2 border-r border-line px-4 max-md:px-2">
+            <span className="font-mono max-md:hidden text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>
+            <label className="ml-auto flex items-center gap-1.5 max-md:ml-0" title="Layer height">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-subtle" aria-hidden="true"><path d="M2 5h12M2 11h12" /></svg>
               <input type="range" aria-label="Layer height" min={LANE_MIN} max={LANE_MAX} step={2}
                 value={allHeight ?? fitHeight} onChange={(e) => { setLaneSizes({}); setAllHeight(Number(e.target.value)) }}
-                className="fader w-16" style={{ ['--pos' as string]: `${(((allHeight ?? fitHeight) - LANE_MIN) / (LANE_MAX - LANE_MIN)) * 100}%` } as CSSProperties} />
+                className="fader w-16 max-md:w-14" style={{ ['--pos' as string]: `${(((allHeight ?? fitHeight) - LANE_MIN) / (LANE_MAX - LANE_MIN)) * 100}%` } as CSSProperties} />
             </label>
             <button type="button" disabled={fitted} onClick={() => { setLaneSizes({}); setAllHeight(null) }}
               title="Fit every layer to the timeline's height"
@@ -317,7 +317,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
 
         {/* Scrub layer + playhead, aligned to the lane column (15rem header) */}
         <div
-          className="absolute top-0 right-0 bottom-0 left-60 cursor-col-resize touch-none"
+          className="absolute top-0 right-0 bottom-0 left-[var(--hdr)] cursor-col-resize touch-none"
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
             seekFrom(e)

@@ -7,7 +7,7 @@ the speakers in it and cuts it into "person 1", "person 2", ... by turns:
    loud parts, with short gaps filled and blips dropped).
 2. A speaker embedding (ECAPA-TDNN, ungated) for 1.5 s windows of speech every 0.25 s.
 3. Spectral clustering proposes 2 to 4 speakers; clusters whose average voices are alike
-   (cosine above AUDIO_SPEAKER_SAME) merge, and speakers with too little speech fold into the
+   merge (see ``_merge_close``: very alike always, fairly alike only at the same pitch), and speakers with too little speech fold into the
    closest one. One speaker left means no split, so a monologue stays one "dialogue" layer.
 4. Every 10 ms frame goes to the speaker its covering windows match best, smoothed so turns
    don't flicker; silence goes to the nearest speech. Turn changes crossfade over a few
@@ -60,7 +60,8 @@ class VoiceEncoder:
     once (about 80 MB) into ``AUDIO_SPEAKER_CACHE``. ``available`` is False without the
     ``speechbrain`` package, and Explode then keeps one dialogue layer."""
 
-    same = 0.70  # centroid cosine above which two clusters are one person (AUDIO_SPEAKER_SAME)
+    same = 0.82  # centroid cosine above which two clusters are one person (AUDIO_SPEAKER_SAME)
+    maybe = 0.60  # from here up to ``same``, one person only if the pitch matches (AUDIO_SPEAKER_MAYBE)
 
     def __init__(self, source: str | None = None, device: str | None = None):
         self.source = source or os.getenv("AUDIO_SPEAKER_MODEL", "speechbrain/spkrec-ecapa-voxceleb")
@@ -196,20 +197,77 @@ def _centroid_sims(emb: np.ndarray, labels: np.ndarray) -> tuple[list[int], np.n
     return ids, c @ c.T
 
 
-def _merge_close(emb: np.ndarray, labels: np.ndarray, same: float) -> np.ndarray:
-    """Merge clusters whose mean voices are more alike than ``same`` (cosine): the clustering
-    always proposes at least two speakers, and this is what says one person was talking."""
+def window_pitch(mono: np.ndarray, starts: list[int], win: int) -> np.ndarray:
+    """Median voice pitch (Hz) of each window, NaN when it has too few voiced frames.
+    Autocorrelation over 40 ms frames every 20 ms, 70-450 Hz, voiced when the normalised
+    peak is above 0.5. Only the window's middle second counts, where its embedding is."""
+    frame, hop = 640, 320
+    lo, hi = RATE // 450, RATE // 70
+    n = (len(mono) - frame) // hop + 1
+    if n <= 0:
+        return np.full(len(starts), np.nan)
+    # Do not materialize every 40 ms frame and FFT for the full recording at
+    # once: long uploads can otherwise consume hundreds of MB of temporary RAM.
+    lag = np.empty(n, dtype=np.int32)
+    peak = np.empty(n, dtype=np.float64)
+    energy = np.empty(n, dtype=np.float64)
+    offsets = np.arange(frame)[None, :]
+    for start in range(0, n, 512):
+        end = min(n, start + 512)
+        idx = offsets + hop * np.arange(start, end)[:, None]
+        x = mono[idx].astype(np.float64)
+        x -= x.mean(1, keepdims=True)
+        energy[start:end] = np.mean(x * x, axis=1)
+        spec = np.fft.rfft(x, 2 * frame, axis=1)
+        ac = np.fft.irfft(np.abs(spec) ** 2, axis=1)[:, :frame]
+        ac /= ac[:, :1] + 1e-12
+        local_lag = lo + ac[:, lo:hi].argmax(1)
+        lag[start:end] = local_lag
+        peak[start:end] = ac[np.arange(end-start), local_lag]
+    voiced = (peak > 0.5) & (energy > np.percentile(energy, 50) * 0.1)
+    f0 = np.where(voiced, RATE / lag, np.nan)
+    out = []
+    for s in starts:
+        a, b = (s * HOP + win * HOP // 6) // hop, (s * HOP + win * HOP * 5 // 6) // hop
+        seg = f0[a:b]
+        seg = seg[~np.isnan(seg)]
+        out.append(float(np.median(seg)) if len(seg) >= 5 else np.nan)
+    return np.array(out)
+
+
+def _cluster_pitch(pitch: np.ndarray, labels: np.ndarray, k: int) -> float:
+    p = pitch[(labels == k) & ~np.isnan(pitch)]
+    return float(np.median(p)) if len(p) >= 3 else float("nan")
+
+
+def _merge_close(emb: np.ndarray, labels: np.ndarray, same: float, maybe: float | None = None,
+                 pitch: np.ndarray | None = None, max_ratio: float = 1.25) -> np.ndarray:
+    """Heuristically merge similar clusters; the clustering proposes at least two.
+
+    Merge when their average voices are very alike (cosine >= ``same``),
+    or fairly alike (>= ``maybe``) and at the same pitch (medians within ``max_ratio``, about
+    four semitones). Measured on the box with ECAPA on Demucs dialogue: one man over music
+    0.78-0.82; a man and a woman shouting in the rain 0.63-0.72; other different people
+    0.08-0.58. Pitch helped distinguish the first two examples but does not establish
+    identity. The most alike eligible pair merges first, then everything is measured again."""
     labels = labels.copy()
+    maybe = same if maybe is None else maybe
     while True:
         ids, sim = _centroid_sims(emb, labels)
         if len(ids) < 2:
             return labels
         np.fill_diagonal(sim, -1)
-        i, j = np.unravel_index(np.argmax(sim), sim.shape)
-        log.debug("speaker centroid similarity %.3f", sim[i, j])
-        if sim[i, j] < same:
+        f0 = [_cluster_pitch(pitch, labels, k) if pitch is not None else float("nan") for k in ids]
+        best = None
+        for i, j in sorted(((i, j) for i in range(len(ids)) for j in range(i + 1, len(ids))), key=lambda p: -sim[p]):
+            ratio = max(f0[i], f0[j]) / min(f0[i], f0[j]) if not (math.isnan(f0[i]) or math.isnan(f0[j])) else float("inf")
+            log.debug("speakers %d-%d cosine %.3f pitch %.0f/%.0f Hz", i, j, sim[i, j], f0[i], f0[j])
+            if sim[i, j] >= same or (sim[i, j] >= maybe and ratio <= max_ratio):
+                best = (i, j)
+                break
+        if best is None:
             return labels
-        labels[labels == ids[j]] = ids[i]
+        labels[labels == ids[best[1]]] = ids[best[0]]
 
 
 def _smooth_labels(labels: np.ndarray, speakers: int, width: int) -> np.ndarray:
@@ -224,7 +282,8 @@ def split_speakers(dialogue: np.ndarray, sample_rate: int, encoder: VoiceEncoder
                    threshold: float | None = None, max_speakers: int | None = None,
                    min_share: float | None = None, min_seconds: float | None = None) -> SpeakerSplit:
     """Split ``dialogue`` (channels, frames) by speaker. One layer back means one speaker."""
-    threshold = threshold if threshold is not None else _env("AUDIO_SPEAKER_SAME", getattr(encoder, "same", 0.70))
+    threshold = threshold if threshold is not None else _env("AUDIO_SPEAKER_SAME", getattr(encoder, "same", 0.82))
+    maybe = _env("AUDIO_SPEAKER_MAYBE", getattr(encoder, "maybe", threshold))
     max_speakers = int(max_speakers if max_speakers is not None else _env("AUDIO_SPEAKER_MAX", 4))
     min_share = min_share if min_share is not None else _env("AUDIO_SPEAKER_MIN_SHARE", 0.08)
     min_seconds = min_seconds if min_seconds is not None else _env("AUDIO_SPEAKER_MIN_SECONDS", 2.0)
@@ -248,7 +307,8 @@ def split_speakers(dialogue: np.ndarray, sample_rate: int, encoder: VoiceEncoder
     windows = np.stack([padded[s * HOP:(s + win) * HOP] for s in starts])
     emb = encoder.embed(windows)
     labels = _cluster(emb, max_speakers)
-    labels = _merge_close(emb, labels, threshold)
+    pitch = window_pitch(padded, starts, win)
+    labels = _merge_close(emb, labels, threshold, maybe, pitch, _env("AUDIO_SPEAKER_PITCH_RATIO", 1.25))
 
     # Fold speakers with too little speech into their closest neighbour.
     window_s = WINDOW_HOP_S

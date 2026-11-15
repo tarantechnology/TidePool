@@ -38,7 +38,7 @@ remote launcher enables the prepared SAM runtime when these paths exist:
 - `AUDIO_OBJECT_PYTHON`: `/workspace/venvs/soundcanvas-vision/bin/python`
 - `AUDIO_OBJECT_CHECKPOINT`: the cached official SAM 3.1 multiplex checkpoint
   at revision `daa63191845a41281374e725f4c9e51c7a824460`
-- `AUDIO_OBJECT_SOURCE_ROOT`: the SoundCanvas source checkout
+- `AUDIO_OBJECT_SOURCE_ROOT`: the TidePool source checkout
 - `AUDIO_OBJECT_CACHE`: `/workspace/cache/soundcanvas-objects` by default
 - `AUDIO_OBJECT_DISCOVERY_MODEL`: `/workspace/checkpoints/yolo26n-seg.pt`
   (explicit cached segmentation checkpoint for automatic discovery)

@@ -1,6 +1,6 @@
-# SoundCanvas editor
+# TidePool editor
 
-The interactive editor for SoundCanvas: a multitrack timeline, gain automation and prompt-driven edits in the browser. It runs with synthetic mock stems and no backend. Built with Vite, React, TypeScript and Tailwind.
+The interactive editor for TidePool: a multitrack timeline, gain automation and prompt-driven edits in the browser. It runs with synthetic mock stems and no backend. Built with Vite, React, TypeScript and Tailwind.
 
 ## Run
 

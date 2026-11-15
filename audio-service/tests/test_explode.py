@@ -159,3 +159,49 @@ def test_explode_keeps_dialogue_when_speakers_fail_or_one_person():
     assert [l.name for l in out.layers] == ['dialogue'] and any('one layer' in w for w in out.warnings)
     out = explode(mix, 48000, ['people talking'], _fake_separate([]), lambda a: a * 0.5, speakers=lambda d: [d])
     assert [l.name for l in out.layers] == ['dialogue'] and not out.warnings
+
+
+def _clusters_with(cos, n=20):
+    """Two clusters of unit embeddings whose centroids have cosine ``cos``."""
+    a = np.array([1.0, 0.0, 0.0])
+    b = np.array([cos, np.sqrt(1 - cos ** 2), 0.0])
+    emb = np.array([a] * n + [b] * n, dtype=np.float32)
+    return emb, np.array([0] * n + [1] * n)
+
+
+def test_merge_uses_pitch_between_maybe_and_same():
+    from sam_audio_service.speakers import _merge_close
+    emb, labels = _clusters_with(0.72)
+    man_woman = np.array([140.0] * 20 + [290.0] * 20)
+    one_man = np.array([140.0] * 20 + [150.0] * 20)
+    # A man and a woman, fairly alike voices: two people.
+    assert len(np.unique(_merge_close(emb, labels, 0.82, 0.60, man_woman))) == 2
+    # One man, fairly alike: one person.
+    assert len(np.unique(_merge_close(emb, labels, 0.82, 0.60, one_man))) == 1
+    # Very alike merges whatever the pitch; unlike never merges.
+    emb_hi, _ = _clusters_with(0.85)
+    assert len(np.unique(_merge_close(emb_hi, labels, 0.82, 0.60, man_woman))) == 1
+    emb_lo, _ = _clusters_with(0.4)
+    assert len(np.unique(_merge_close(emb_lo, labels, 0.82, 0.60, one_man))) == 2
+    # No pitch (unvoiced): only the strict line applies.
+    assert len(np.unique(_merge_close(emb, labels, 0.82, 0.60, np.full(40, np.nan)))) == 2
+
+
+def test_window_pitch_reads_a_voice():
+    from sam_audio_service.speakers import window_pitch
+    sr = 16000
+    t = np.arange(sr * 3) / sr
+    for hz in (110, 260):
+        x = sum(np.sin(2 * np.pi * hz * k * t) / k for k in range(1, 6)).astype(np.float32)
+        assert abs(window_pitch(x, [0], 150)[0] - hz) < 0.05 * hz
+
+
+def test_window_pitch_handles_windows_across_batches_and_silence():
+    from sam_audio_service.speakers import window_pitch
+    sr = 16000
+    t = np.arange(sr * 16) / sr
+    x = np.sin(2 * np.pi * 220 * t).astype(np.float32)
+    x[sr * 13:] = 0
+    pitch = window_pitch(x, [0, 600, 1000, 1350], 150)
+    assert np.allclose(pitch[:3], 220, rtol=0.05)
+    assert np.isnan(pitch[3])

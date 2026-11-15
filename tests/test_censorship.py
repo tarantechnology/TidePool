@@ -57,6 +57,37 @@ def test_no_matches_does_not_modify_project(client,tmp_path,monkeypatch):
     assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
 
 
+def test_separation_after_censoring_preserves_beeps_and_mutes(client,tmp_path,monkeypatch):
+    import app.censorship as c
+    monkeypatch.setattr(c,'available',lambda: True)
+    monkeypatch.setattr(c,'transcribe',lambda path,duration: ([{'word':'shit','start':.3,'end':.5}], 'en'))
+    pid,h=uploaded(client,tmp_path)
+    cid=client.post(f'/api/projects/{pid}/censorship-preview',headers=h).json()['candidate_id']
+    assert wait(client,cid,h)['status']=='completed'
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    original=next(s for s in before if s['name']=='Original audio')
+    beep=next(s for s in before if s['name']=='Censor beeps')
+    response=client.post(f'/api/projects/{pid}/candidates',headers=h,json={
+        'prompt':'background sound effects','edit_scope':{'action':'mute'},
+        'processing_interval':{'start':.1,'end':.9}})
+    assert response.status_code==202,response.text
+    split=wait(client,response.json()['candidate_id'],h)
+    assert split['status']=='completed',split
+    assert split['provenance']['source_layer_id']==original['id']
+    assert client.post(f"/api/candidates/{split['id']}/apply",headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert {k:v for k,v in next(s for s in after if s['id']==beep['id']).items() if k!='revision'}=={k:v for k,v in beep.items() if k!='revision'}
+    assert next(s for s in after if s['id']==original['id'])['mute_ranges']==original['mute_ranges']
+    assert next(s for s in after if s['id']==original['id'])['role']=='residual'
+    followup=client.post(f'/api/projects/{pid}/candidates',headers=h,json={'prompt':'music'})
+    assert followup.status_code==202,followup.text
+    assert wait(client,followup.json()['candidate_id'],h)['status']=='completed'
+    assert client.post(f"/api/candidates/{split['id']}/undo",headers=h).status_code==200
+    restored=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [{k:v for k,v in s.items() if k!='revision'} for s in restored]==[{k:v for k,v in s.items() if k!='revision'} for s in before]
+
+
 def test_existing_layer_edits_and_stale_preview(client,tmp_path,monkeypatch):
     import app.censorship as c
     monkeypatch.setattr(c,'available',lambda: True)

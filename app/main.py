@@ -450,10 +450,19 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
     if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
     targets=[r for r in rows if r['id']==body.stem_id and r['name'].lower()!='residual']
     residuals=[r for r in rows if r['name'].lower()=='residual']
+    # Creative edits can add effect layers to an otherwise untouched original
+    # without creating a separation residual. Split that original as a selected
+    # layer, preserving its mute ranges and the independently editable effects.
+    promote_original=False
+    if not body.stem_id and not selected and not residuals and not body.visual_prompt and not object_context:
+        originals=[r for r in rows if r['name'].casefold()=='original audio' and r['path']==p['audio'] and r['role'] is None]
+        if len(originals)==1 and all(r['id']==originals[0]['id'] or r['role']=='effect' for r in rows):
+            selected=originals[0]
+            promote_original=True
     if body.stem_id and (len(rows)!=2 or len(targets)!=1 or len(residuals)!=1):
         raise HTTPException(409,'Replacing an older target in a multitrack project requires its earlier source snapshot. Preview a new target from the current residual instead.')
     if not body.stem_id and not selected and rows and len(residuals)!=1:
-        raise HTTPException(409,'A new target requires exactly one current residual.')
+        raise HTTPException(409,'Choose the layer to search in before separating another sound.')
     if not selected and any(r['start_offset'] != 0 for r in targets+residuals):
         raise HTTPException(409,'Preview requires the source layers to start at zero.')
     source=selected['path'] if selected else (p['audio'] if body.stem_id or not rows else residuals[0]['path'])
@@ -472,6 +481,7 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
     snapshot={'rows':[dict(r) for r in rows], 'source':source,
               'source_sha256':file_sha256(source), 'project_audio':p['audio'], 'target_id':body.stem_id,
               'residual_id':selected['id'] if selected else (residuals[0]['id'] if residuals else None),
+              'promote_original':promote_original,
               **({'source_layer_id':selected['id'],'source_offset':source_offset} if selected else {})}
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),

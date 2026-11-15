@@ -101,28 +101,63 @@ def validate_generate(plan: dict, duration: float) -> dict:
     return out
 
 
+def _reference_upload(path, rate: int = 16000):
+    """Mono, low-rate FLAC of the mix: enough for loudness/ducking/length once the analysis is cached."""
+    import tempfile
+    from contextlib import contextmanager
+    from .core import run
+
+    @contextmanager
+    def ctx():
+        handle, name = tempfile.mkstemp(suffix='.flac'); os.close(handle)
+        out = Path(name)
+        try:
+            run('ffmpeg', '-v', 'error', '-y', '-i', str(path), '-vn', '-ac', '1', '-ar', str(rate), '-c:a', 'flac', '-compression_level', '1', str(out))
+            with open(out, 'rb') as f:
+                yield ('reference.flac', f, 'audio/flac')
+        finally:
+            out.unlink(missing_ok=True)
+    return ctx()
+
+
 def request_generate_part(mix_path: str | Path, stems: dict[str, str | Path], plan: dict, *, analysis: dict | None = None,
-                          seed: int = 0, timeout: float = 600.0) -> dict:
-    """Call the audio service. ``stems`` maps names (vocals/drums/bass/other/...) to the project's stem files."""
+                          seed: int = 0, timeout: float = 600.0, output_sample_rate: int | None = None) -> dict:
+    """Call the audio service. ``stems`` maps names (vocals/drums/bass/other/...) to the project's stem files.
+
+    With a cached ``analysis`` only a mono 16 kHz FLAC reference of the mix is uploaded (no stems) and the
+    service renders at ``output_sample_rate``; the part comes back as 16-bit FLAC either way."""
     url = urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL', ''))
     if not url.netloc:
         raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
-    meta = dict(plan, seed=seed)
+    meta = dict(plan, seed=seed, output_format='flac', include_analysis=analysis is None)
     if analysis is not None:
         meta['analysis'] = analysis
+        if output_sample_rate:
+            meta['output_sample_rate'] = int(output_sample_rate)
     # Same lossless FLAC upload as separation (app/media.py service_upload): far smaller through the tunnel.
     from contextlib import ExitStack
     from .media import service_upload
     with ExitStack() as stack:
-        name, f, ctype = stack.enter_context(service_upload(mix_path))
-        files = [('audio', ('mix' + Path(name).suffix, f, ctype))]
-        for stem, path in stems.items():
-            name, f, ctype = stack.enter_context(service_upload(path))
-            files.append(('stem_' + re.sub(r'[^a-z0-9_]', '_', stem.lower()), (Path(path).stem + Path(name).suffix, f, ctype)))
+        if analysis is not None and output_sample_rate:
+            name, f, ctype = stack.enter_context(_reference_upload(mix_path))
+            files = [('audio', (name, f, ctype))]
+        else:
+            name, f, ctype = stack.enter_context(service_upload(mix_path))
+            files = [('audio', ('mix' + Path(name).suffix, f, ctype))]
+            for stem, path in stems.items():
+                name, f, ctype = stack.enter_context(service_upload(path))
+                files.append(('stem_' + re.sub(r'[^a-z0-9_]', '_', stem.lower()), (Path(path).stem + Path(name).suffix, f, ctype)))
         response = httpx.post(urlunsplit((url.scheme, url.netloc, '/v1/generate-part', '', '')), files=files,
                               data={'metadata': json.dumps(meta)}, timeout=timeout)
     response.raise_for_status()
     return response.json()
+
+
+def analysis_key(snapshot: dict, rows: list[dict], stem_ids: list[str]) -> str:
+    """Cache key for a project's music analysis: the source audio + the exact stem files it used."""
+    import hashlib
+    parts = [snapshot['source_sha256']] + sorted(f"{sid}:{snapshot['stem_hashes'][sid]}" for sid in stem_ids)
+    return hashlib.sha256('|'.join(parts).encode()).hexdigest()[:32]
 
 
 CANONICAL = ('vocals', 'drums', 'bass', 'other', 'guitar', 'piano')
@@ -138,22 +173,38 @@ def _stem_name(row: dict) -> str | None:
     return None
 
 
-def generate_layer(pid: str, original, rows: list[dict], plan: dict, seed: int, new_file):
+def generate_layer(pid: str, original, rows: list[dict], plan: dict, seed: int, new_file, snapshot: dict | None = None):
     """Ask the audio service for a part that fits ``original`` (the current mix) and the project's stems.
-    Returns (layer row, service result, stems used, midi path or None). Files come from ``new_file``."""
+    Returns (layer row, service result, stems used, midi path or None). Files come from ``new_file``.
+    With a ``snapshot`` (source + stem hashes) the music analysis is cached per project: later asks reuse it and
+    upload only a small mono reference; ``result['analysis_cached']`` says whether it was reused."""
     import base64
 
     from .candidates import safe_path
-    from .core import probe, uid
-    stems = {}
+    from .core import probe, project_dir, run, uid
+    stems, stem_ids = {}, []
     for row in rows:
         name = _stem_name(row)
         if name and name not in stems and not row.get('muted'):
-            stems[name] = safe_path(pid, row['path'])
-    result = request_generate_part(original, stems, plan, seed=seed)
+            stems[name] = safe_path(pid, row['path']); stem_ids.append(row['id'])
+    cache = analysis = None
+    if snapshot and snapshot.get('source_sha256') and snapshot.get('stem_hashes') is not None:
+        cache_dir = project_dir(pid) / 'analysis'; cache_dir.mkdir(parents=True, exist_ok=True)
+        cache = cache_dir / (analysis_key(snapshot, rows, stem_ids) + '.json')
+        if cache.exists():
+            try: analysis = json.loads(cache.read_text())
+            except (OSError, ValueError): analysis = None
+    before = probe(original)
+    result = request_generate_part(original, stems, plan, seed=seed, analysis=analysis, output_sample_rate=before['sample_rate'])
+    if cache is not None and analysis is None and isinstance(result.get('analysis'), dict):
+        tmp = cache.with_suffix(f'.{uid()}.tmp'); tmp.write_text(json.dumps(result['analysis'])); tmp.replace(cache)
+    result['analysis_cached'] = analysis is not None
     part = new_file()
-    part.write_bytes(base64.b64decode(result['audio']['audio_base64']))
-    before, after = probe(original), probe(part)
+    encoded = new_file('.' + ('flac' if 'flac' in str(result['audio'].get('format', '')) else 'wav'))
+    encoded.write_bytes(base64.b64decode(result['audio']['audio_base64']))
+    run('ffmpeg', '-v', 'error', '-y', '-i', str(encoded), '-ar', str(before['sample_rate']), '-ac', str(before['channels']), '-c:a', 'pcm_f32le', str(part))
+    encoded.unlink(missing_ok=True)
+    after = probe(part)
     if abs(before['duration'] - after['duration']) > 0.05:
         raise ValueError('The generated part does not match the song length.')
     info = result['part']
@@ -172,7 +223,7 @@ def build(project: dict, payload: dict, candidate_id: str) -> dict:
     import shutil
 
     from .candidates import revisions, safe_path
-    from .core import probe, project_dir, uid
+    from .core import probe, project_dir, run, uid
     from .media import export
     from .visual import file_sha256
 
@@ -191,7 +242,7 @@ def build(project: dict, payload: dict, candidate_id: str) -> dict:
         original = new_file()
         if rows: export(rows, source, original, 'wav', False)
         else: shutil.copyfile(source, original)
-        layer, result, stems, midi_path = generate_layer(pid, original, rows, payload['plan'], int(payload.get('seed') or 0), new_file)
+        layer, result, stems, midi_path = generate_layer(pid, original, rows, payload['plan'], int(payload.get('seed') or 0), new_file, snapshot)
         info = result['part']; before = probe(original)
         base_rows = rows or [{'id': uid(), 'project_id': pid, 'name': 'Original audio', 'path': str(source), 'duration': before['duration'], 'start_offset': 0,
                               'volume': 1, 'muted': 0, 'solo': 0, 'automation': '[]', 'mute_ranges': '[]', 'revision': 0}]
@@ -204,7 +255,7 @@ def build(project: dict, payload: dict, candidate_id: str) -> dict:
                 'provenance': {'kind': 'generate', 'plan': payload['plan'], 'part': info, 'engine': result.get('engine'), 'renderer': result.get('renderer'),
                                'windows': result.get('windows'), 'checks': result.get('checks'), 'mix_report': result.get('mix'),
                                'midi_path': str(midi_path) if midi_path else None, 'layer_id': layer['id'],
-                               'stems_used': sorted(stems), 'stem_revisions': revisions(rows), 'source_sha256': snapshot['source_sha256']}}
+                               'stems_used': sorted(stems), 'analysis_cached': bool(result.get('analysis_cached')), 'stem_revisions': revisions(rows), 'source_sha256': snapshot['source_sha256']}}
     except Exception:
         for path in created: path.unlink(missing_ok=True)
         raise

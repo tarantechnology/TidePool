@@ -20,6 +20,11 @@ import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
 import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createGeneratePreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, createSfxPreview, adjustReplacementPreview, createEffectsPreview, createFxPreview, createMultiPreview, fxRequest, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
+import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
+import { mediaCommand } from '../mediaCommand'
+import { lengthOf, sliceTimeline } from '../state/timeline'
+import { cutSelection, splitSelection } from '../state/clipSequence'
+import type { SourceClip } from '../state/clipSequence'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -54,6 +59,8 @@ interface Props {
   /** Select an object from the object list, the same way a click on the video does. */
   onSelectVisual: (selection: VisualSelection) => void
   onSeek: (seconds: number) => void
+  getPlayhead: () => number
+  onClipSequence: (state:{clips:SourceClip[]; canUndo:boolean; canRedo:boolean}) => void
   /** The detections the editor is showing, for the object list. */
   visual: VisualMetadata | null
   /** What the panel is busy with, for the timeline's working state; null when idle. */
@@ -68,17 +75,23 @@ export interface ProjectPanelHandle {
   separateVideo: (file: File, description: string, remove: boolean) => Promise<void>
   uploadMedia: (file:File) => Promise<void>
   visualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
-  planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
+  planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan | {kind:'media'; message:string}>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
   /** Preview a layer without one of its applied effects (a chip on its track). */
   removeFx: (stemId: string, chipId: string, label: string) => Promise<void>
+  keepRange: (start:number, end:number) => string
+  splitRange: (start:number, end:number) => string
+  cutRange: (start:number, end:number) => string
+  undoClipEdit: () => void
+  redoClipEdit: () => void
+  setTimelineClips: (clips:SourceClip[]) => void
+  exportTimeline: () => Promise<void>
   editClip: (stemId:string,operation:'move'|'delete',startOffset?:number)=>Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, onBusy, onStep, onError}, ref) {
-
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, getPlayhead, onClipSequence, visual, onBusy, onStep, onError}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -93,6 +106,40 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [rangeEnd, setRangeEnd] = useState('')
   const [jobId, setJobId] = useState('')
   const [format, setFormat] = useState<'mp4'|'wav'|'mp3'>('mp4')
+  const [trimStart,setTrimStart] = useState('0')
+  const [trimEnd,setTrimEnd] = useState('')
+  const [clipHistory,setClipHistory] = useState(() => createHistory<{start:number;end:number}[]>([]))
+  const [clipClipboard,setClipClipboard] = useState<{start:number;end:number}|null>(null)
+  const [selectedClip,setSelectedClip] = useState<number|null>(null)
+  const clips = clipHistory.present
+  useEffect(() => {
+    const end=trimEnd.trim()?Number(trimEnd):project?.metadata?.duration, start=Number(trimStart)
+    const visible=clips.length ? clips : end !== undefined && Number.isFinite(start) && Number.isFinite(end) && end>start && (start>0 || trimEnd.trim()) ? [{start,end}] : project?.metadata?.duration ? [{start:0,end:project.metadata.duration}] : []
+    onClipSequence({clips:visible,canUndo:canUndo(clipHistory),canRedo:canRedo(clipHistory)})
+  }, [clipHistory,clips,onClipSequence,trimStart,trimEnd,project?.metadata?.duration])
+  const changeClips = (next: {start:number;end:number}[]) => setClipHistory(h => commit(h,next))
+  useEffect(() => {
+    if (!project?.metadata) return
+    try { localStorage.setItem(`tidepool-timeline:${baseUrl}:${project.project_id}`,JSON.stringify({clips,trimStart,trimEnd})) } catch { /* Editing still works without browser storage. */ }
+  }, [clips,trimStart,trimEnd,baseUrl,project?.project_id,project?.metadata])
+  const restoreTimeline = (info:ProjectInfo) => {
+    let saved:SourceClip[]=[]; let start='0',end=''
+    try {
+      const value=JSON.parse(localStorage.getItem(`tidepool-timeline:${baseUrl}:${info.project_id}`)||'null')
+      const duration=info.metadata?.duration||0
+      if(value && Array.isArray(value.clips) && value.clips.length<=100 && value.clips.every((c:SourceClip)=>Number.isFinite(c.start)&&Number.isFinite(c.end)&&c.start>=0&&c.end>c.start&&c.end<=duration+1e-6)) {
+        saved=value.clips
+        if(typeof value.trimStart==='string' && typeof value.trimEnd==='string' && Number.isFinite(Number(value.trimStart)) && Number(value.trimStart)>=0 && (!value.trimEnd || Number(value.trimEnd)>Number(value.trimStart)&&Number(value.trimEnd)<=duration)) {start=value.trimStart;end=value.trimEnd}
+      }
+    } catch { /* Ignore invalid or unavailable saved data. */ }
+    setClipHistory(createHistory(saved));setTrimStart(start);setTrimEnd(end)
+  }
+  const effectiveClips = (duration:number):SourceClip[] => clips.length ? clips : effectiveTrim(trimStart,trimEnd,duration)
+  const effectiveTrim = (trimStart:string,trimEnd:string,duration:number):SourceClip[] => {
+    const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : duration
+    if (!trimStart.trim() || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end || end > duration + 1e-6) throw new Error('Choose a valid trim range before editing clips.')
+    return start === 0 && !trimEnd.trim() ? [] : [{start,end}]
+  }
   const [command, setCommand] = useState('')
   const [retryPrompt,setRetryPrompt]=useState('')
   const [retryStems,setRetryStems]=useState<SavedStem[]>([])
@@ -157,6 +204,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [message, setMessage] = useState('')
   // A manual open/close lasts until the flow moves on (a new project, preview or apply).
   const [manualStep, setManualStep] = useState<{key:string;id:StepId|'none'}|null>(null)
+  const flowKey = `${project?.project_id ?? ''}|${candidateId}|${jobId}`
+  const openStep = manualStep?.key === flowKey ? manualStep.id : null
+  const setOpenStep = (next: StepId | 'none' | ((prev: StepId | 'none' | null) => StepId | 'none')) => setManualStep({key:flowKey,id:typeof next === 'function' ? next(openStep) : next})
   const [error, setError] = useState('')
   // The router's answer for this upload, and which separator the last split used.
   const [suggestion, setSuggestion] = useState<{projectId:string;text:string}|null>(null)
@@ -255,6 +305,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await flush()
     const cfg = {baseUrl, token:credential.trim()}
     const info = await getProject(cfg, id.trim())
+    restoreTimeline(info); setClipClipboard(null); setSelectedClip(null)
     attachedVideo.current = null; setFile(null)
     setUndoId(info.latest_undoable_candidate_id || ''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
 
@@ -301,6 +352,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const created = await createProject(baseUrl)
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
+    // Same render as setProject, so the save effect never writes this reset under the previous project.
+    setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
     setMockStems(null);setJobId(''); setUndoId('');setRouting(null);setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
 
@@ -475,7 +528,51 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const applied=await applyCandidate(config,id);await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
     setJobId(applied.job_id);setUndoId(id);setProject(await getProject(config,project.project_id));setMessage(operation==='move'?'Sound moved.':'Sound removed.')
   }
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, removeFx, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), visualAction: async (chosen, description, action) => {
+  const finishExport = async (id: string, extension: string, cfg: BackendConfig = config) => {
+    for (;;) {
+      const info=await getExport(cfg,id)
+      if (info.status === 'failed') throw new Error(info.error || 'Export failed')
+      if (info.status === 'completed') {
+        if (!info.download_url) throw new Error('Export has no download URL')
+        await downloadExport(cfg,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
+      }
+      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
+    }
+  }
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, removeFx, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), exportTimeline: () => run(async () => {
+    if (!project?.metadata) throw new Error('Upload media first.')
+    await flush()
+    const sequence=effectiveClips(project.metadata.duration)
+    const id=await startExport(config,project.project_id,format,undefined,sequence.length?sequence:undefined)
+    await finishExport(id,format)
+  }), setTimelineClips: next => {
+    const duration=project?.metadata?.duration
+    if (!duration || !next.length || next.length>100 || next.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end<=c.start||c.end>duration+1e-6)) throw new Error('Invalid timeline clips.')
+    changeClips(next);setSelectedClip(null)
+  }, undoClipEdit: () => {setClipHistory(h => undo(h)); setSelectedClip(null)}, redoClipEdit: () => {setClipHistory(h => redo(h)); setSelectedClip(null)}, cutRange: (start,end) => {
+    if (!project?.metadata) throw new Error('Upload media before cutting.')
+    const duration=project.metadata.duration
+    const next=cutSelection(effectiveClips(duration),duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
+    changeClips(next);setSelectedClip(null);setOpenStep('export')
+    const message=`Cut ${start.toFixed(2)}–${end.toFixed(2)} seconds from the whole video. The remaining clips join on export. Use Undo clip edit to restore it.`
+    setMessage(message);return message
+  }, splitRange: (start,end) => {
+    if (!project?.metadata) throw new Error('Upload media before splitting.')
+    const duration=project.metadata.duration
+    const result=splitSelection(effectiveClips(duration),duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
+    changeClips(result.clips);setSelectedClip(result.selected);setOpenStep('export')
+    const message='Selection split into a clip. Use the clip list to move, copy or delete it in the exported video.'
+    setMessage(message);return message
+  }, keepRange: (start,end) => {
+    if (!project?.metadata) throw new Error('Upload media before trimming.')
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) throw new Error('Select a range within the uploaded media.')
+    start=Number(start.toFixed(3)); end=Math.min(Number(end.toFixed(3)),project.metadata.duration)
+    if (end <= start) throw new Error('Select a range within the uploaded media.')
+    setTrimStart(String(start)); setTrimEnd(String(end)); setOpenStep('export')
+    if (clips.length) { changeClips([]); setSelectedClip(null) }
+    const message=`Keeping ${start.toFixed(2)}–${end.toFixed(2)} seconds for export.${clips.length ? ' The clip list was cleared; use Undo clip edit to restore it.' : ''}`
+    setMessage(message); return message
+  }, visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
     if (busyRef.current) throw new Error('A project operation is already running.')
@@ -494,7 +591,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       const created=await createProject(baseUrl)
       if (!created.access_token) throw new Error('Project token was not returned.')
       const cfg={baseUrl,token:created.access_token}
-      setProject(created); setToken(cfg.token); rememberProject(created.project_id, cfg.token);
+      setProject(created); setClipHistory(createHistory([]));setTrimStart('0');setTrimEnd(''); setToken(cfg.token); rememberProject(created.project_id, cfg.token);
       setJobId(''); setSettingsStems([]); setMessages([]); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
       await uploadProject(cfg,created.project_id,video)
       attachedVideo.current=video
@@ -509,12 +606,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try {
       await flush()
       let current=project, currentToken=token, currentJob=jobId
+      // Clip and trim state in this closure belongs to the project that was open when the command started.
+      let currentClips=clips, currentTrimStart=trimStart, currentTrimEnd=trimEnd
       if (video && attachedVideo.current !== video) {
         const created=await createProject(baseUrl)
         if (!created.access_token) throw new Error('Project token was not returned.')
         currentToken=created.access_token
         const cfg={baseUrl,token:currentToken}
-        setProject(created); setToken(currentToken); rememberProject(created.project_id, currentToken);
+        setProject(created); setClipHistory(createHistory([]));setTrimStart('0');setTrimEnd(''); currentClips=[]; currentTrimStart='0'; currentTrimEnd=''; setToken(currentToken); rememberProject(created.project_id, currentToken);
         setJobId(''); currentJob=''; setSettingsStems([]); setMessages([])
         onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
         setMessage('Uploading video…')
@@ -523,6 +622,34 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       }
       if (!current || !currentToken) throw new Error('Upload a video or song first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
+      const media=mediaCommand(text)
+      if (media) {
+        if (media.kind === 'invalid') throw new Error(media.message)
+        const selectedFormat=(media.kind === 'trim' ? media.exportFormat : media.format) ?? format
+        if (selectedFormat === 'mp4' && !current.metadata?.has_video) throw new Error('This project has no video. Export as WAV or MP3 instead.')
+        if (media.kind === 'trim') {
+          if (!current.metadata) throw new Error('Upload media first.')
+          const base=currentClips.length ? currentClips : effectiveTrim(currentTrimStart,currentTrimEnd,current.metadata.duration), sequence=base.length?base:[{start:0,end:current.metadata.duration}]
+          if (media.end > lengthOf(sequence)+1e-6) throw new Error('That range extends beyond the edited timeline.')
+          const trimmed=sliceTimeline(sequence,media.start,media.end)
+          changeClips(trimmed);setSelectedClip(null)
+          if (media.exportFormat) setFormat(media.exportFormat)
+          const description=`Keeping timeline ${media.start}–${media.end} seconds. Undo restores the previous edit.`
+          if (!media.download) { setMessage(description); return {kind:'media',message:description} }
+          setMessage('Rendering your export…')
+          const id=await startExport(cfg,current.project_id,selectedFormat,undefined,trimmed)
+          await finishExport(id,selectedFormat,cfg)
+          return {kind:'media',message:`Exported ${media.start}–${media.end} seconds as ${selectedFormat.toUpperCase()}.`}
+        }
+        const start=Number(currentTrimStart), end=currentTrimEnd.trim() ? Number(currentTrimEnd) : current.metadata?.duration
+        if (!currentClips.length && (!currentTrimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (current.metadata?.duration || 0) + 1e-6)) throw new Error('Choose a valid trim range within the media duration.')
+        if (media.format) setFormat(media.format)
+        setMessage('Rendering your export…')
+        const trim=currentClips.length || end === undefined || (start === 0 && !currentTrimEnd.trim()) ? undefined : {start,end}
+        const id=await startExport(cfg,current.project_id,selectedFormat,trim,currentClips.length ? currentClips : undefined)
+        await finishExport(id,selectedFormat,cfg)
+        return {kind:'media',message:`Exported ${selectedFormat.toUpperCase()}.`}
+      }
       const hasStems=Boolean(currentJob)
       const plannerInput={prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}
       // Library sound effects ("vine boom when he says 'what'") come before "add X at 0:12" replacements; replace/swap and
@@ -602,7 +729,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const replacementText=route.replacement
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
-        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,/\badd\b/i.test(replacementText) ? undefined : sourceLayerId || undefined)
+        const isAddition=/\b(?:add|insert|place|generate|put|trigger|cue|overlay)\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
+        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,isAddition ? undefined : sourceLayerId || undefined)
         try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
         try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
           if (error instanceof Error && /example timestamp/i.test(error.message)) pendingReplacement.current=replacementText
@@ -634,6 +762,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (result.kind==='multi' && result.steps?.length) {
         await previewMulti(cfg,current,result.steps,text)
         return {...result,message:`Preview ready: ${result.steps.length} edits. Compare, untick any you don't want, then apply.`}
+      }
+      if (result.kind==='sound_effect') {
+        setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effect');setMessage('Planning the sound effect…')
+        const id=await createAutomaticReplacement(cfg,current.project_id,text)
+        await waitCandidate(cfg,current.project_id,id)
+        return {kind:'replacement',description:null,remove:false,actions:[],message:'Sound effect preview ready. Compare before applying.'}
       }
       if(result.kind==='clip_edit') {
         const edit=result.clip_edit
@@ -710,21 +844,13 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     }
     await loadVideo(config,info); onVisual(null); onClearSelection(); setSelection(null)
   }
-  const finishExport = async (id: string, extension: string) => {
-    for (;;) {
-      const info=await getExport(config,id)
-      if (info.status === 'failed') throw new Error(info.error || 'Export failed')
-      if (info.status === 'completed') {
-        if (!info.download_url) throw new Error('Export has no download URL')
-        await downloadExport(config,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
-      }
-      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
-    }
-  }
   const exportFile = () => run(async () => {
     if (!project) return
     await flush()
-    const id = await startExport(config,project.project_id,format)
+    const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : project.metadata?.duration
+    if (!clips.length && (!trimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (project.metadata?.duration || 0) + 1e-6)) throw new Error('Choose a valid trim range within the media duration.')
+    const trim = clips.length || end === undefined || (start === 0 && !trimEnd.trim()) ? undefined : {start,end}
+    const id = await startExport(config,project.project_id,format,trim,clips.length ? clips : undefined)
     await finishExport(id, format)
   })
   const readJson = async (input: File): Promise<unknown> => {
@@ -816,10 +942,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   // Where the user is in Upload, Pick a sound, Preview and apply, Export.
   const current: StepId = !ready ? 'upload' : candidateId || undoId ? 'preview' : jobId ? 'export' : 'sound'
   useEffect(() => { onStep?.(STEP_INFO[current]) }, [current, onStep])
-
-  const flowKey = `${project?.project_id ?? ''}|${candidateId}|${jobId}`
-  const openStep = manualStep?.key === flowKey ? manualStep.id : null
-  const setOpenStep = (next: StepId | 'none' | ((prev: StepId | 'none' | null) => StepId | 'none')) => setManualStep({key:flowKey,id:typeof next === 'function' ? next(openStep) : next})
   const open = (id: StepId) => openStep === id || (openStep === null && current === id)
   const toggle = (id: StepId) => setOpenStep(prev => (prev === id || (prev === null && current === id)) ? 'none' : id)
   const status = (id: StepId): StepStatus => {
@@ -950,8 +1072,27 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           </div>
         </Step>
 
-        <Step n={4} title="Export" tag={FEATURES.export} status={status('export')} open={open('export') && Boolean(jobId)} onToggle={() => jobId && toggle('export')}>
-          {project && <div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy || !jobId} onClick={exportFile}>Export</button></div>}
+        <Step n={4} title="Trim and export" tag={FEATURES.export} status={status('export')} open={open('export') && Boolean(project?.metadata)} onToggle={() => project?.metadata && toggle('export')}>
+          {project?.metadata && <div className="space-y-2"><p className="text-muted">Choose the portion to keep. The original stays intact.</p><div className="flex gap-2"><label className="flex-1">Start (seconds)<input className={field} aria-label="Trim start" type="number" min="0" max={durationSeconds} step="0.01" value={trimStart} onChange={e=>setTrimStart(e.target.value)}/></label><label className="flex-1">End (seconds)<input className={field} aria-label="Trim end" type="number" min="0" max={durationSeconds} step="0.01" placeholder={durationSeconds?.toFixed(2)} value={trimEnd} onChange={e=>setTrimEnd(e.target.value)}/></label></div><div className="flex flex-wrap gap-1"><button type="button" className={secondary} onClick={()=>setTrimStart(getPlayhead().toFixed(2))}>Set start at playhead</button><button type="button" className={secondary} onClick={()=>setTrimEnd(getPlayhead().toFixed(2))}>Set end at playhead</button><button type="button" className={secondary} onClick={()=>{setTrimStart('0');setTrimEnd('')}}>Reset trim</button></div><div className="flex gap-2"><select className={field} aria-label="Export format" value={format} onChange={e=>setFormat(e.target.value as typeof format)}><option value="mp4" disabled={!project.metadata?.has_video}>MP4 video</option><option value="wav">WAV audio</option><option value="mp3">MP3 audio</option></select><button className={button} disabled={busy} onClick={exportFile}>Export</button></div></div>}
+          {project?.metadata && <div className="mt-3 space-y-2 border-t border-line pt-3 text-xs">
+            <p className="font-medium">Arrange clips for export</p>
+            <p className="text-muted">Add the range above, then copy, paste, split, delete or reorder clips. The player still shows the original timeline; these edits appear in the exported file.</p>
+            <button type="button" className={secondary} disabled={clips.length >= 100} onClick={() => {
+              const start = Number(trimStart), end = trimEnd.trim() ? Number(trimEnd) : project.metadata!.duration
+              if (!trimStart.trim() || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end || end > project.metadata!.duration + 1e-6) { setMessage('Choose a valid range before adding a clip.'); return }
+              changeClips([...clips, {start,end}]); setSelectedClip(clips.length)
+            }}>Add range as clip</button>
+            {clips.length > 0 && <ol aria-label="Export clips" className="space-y-1">{clips.map((clip,i) => <li key={i}><button type="button" aria-pressed={selectedClip === i} onClick={() => setSelectedClip(i)} className={`w-full rounded border px-2 py-1 text-left ${selectedClip === i ? 'border-accent bg-accent-soft' : 'border-line'}`}>{i+1}. {clip.start.toFixed(2)}–{clip.end.toFixed(2)}s</button></li>)}</ol>}
+            <div className="flex flex-wrap gap-1">
+              <button type="button" className={secondary} disabled={selectedClip === null || !clips[selectedClip]} onClick={() => { if (selectedClip !== null && clips[selectedClip]) setClipClipboard({...clips[selectedClip]}) }}>Copy clip</button>
+              <button type="button" className={secondary} disabled={!clipClipboard || clips.length >= 100} onClick={() => { if (!clipClipboard) return; const at = selectedClip !== null && clips[selectedClip] ? selectedClip + 1 : clips.length; const next = [...clips]; next.splice(at,0,{...clipClipboard}); changeClips(next); setSelectedClip(at) }}>Paste clip</button>
+              <button type="button" className={secondary} disabled={selectedClip === null || !clips[selectedClip]} onClick={() => { if (selectedClip === null || !clips[selectedClip]) return; changeClips(clips.filter((_,i) => i !== selectedClip)); setSelectedClip(null) }}>Delete clip</button>
+              <button type="button" className={secondary} disabled={selectedClip === null || !clips[selectedClip] || clips.length >= 100} onClick={() => { if (selectedClip === null || !clips[selectedClip]) return; const clip=clips[selectedClip], t=getPlayhead(); if (t <= clip.start || t >= clip.end) { setMessage('Move the source playhead inside the selected clip to split it.'); return } const next=[...clips]; next.splice(selectedClip,1,{start:clip.start,end:t},{start:t,end:clip.end}); changeClips(next) }}>Split at playhead</button>
+              {([-1,1] as const).map(delta => <button type="button" key={delta} className={secondary} disabled={selectedClip === null || !clips[selectedClip] || selectedClip + delta < 0 || selectedClip + delta >= clips.length} onClick={() => { if (selectedClip === null) return; const next=[...clips], target=selectedClip+delta; [next[selectedClip],next[target]]=[next[target],next[selectedClip]]; changeClips(next); setSelectedClip(target) }}>{delta < 0 ? 'Move earlier' : 'Move later'}</button>)}
+            </div>
+            <div className="flex flex-wrap gap-1"><button type="button" className={secondary} disabled={!canUndo(clipHistory)} onClick={() => {setClipHistory(h => undo(h)); setSelectedClip(null)}}>Undo clip edit</button><button type="button" className={secondary} disabled={!canRedo(clipHistory)} onClick={() => {setClipHistory(h => redo(h)); setSelectedClip(null)}}>Redo clip edit</button><button type="button" className={secondary} disabled={!clips.length} onClick={() => {changeClips([]); setSelectedClip(null)}}>Clear clips</button></div>
+            <p className="text-muted">{clips.length > 0 ? `Export uses the ${clips.length} listed clip${clips.length === 1 ? '' : 's'} in order. Clear clips to export only the trim range above.` : 'No clips listed: export uses the trim range above.'}</p>
+          </div>}
         </Step>
       </ol>
     </div>

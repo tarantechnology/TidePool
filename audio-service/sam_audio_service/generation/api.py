@@ -76,7 +76,9 @@ class GenerateMetadata(BaseModel):
     humanize: bool = True
     analysis: dict[str, Any] | None = None
     return_mode: str = Field(default="base64", pattern="^(base64|file)$")
-    output_format: str = Field(default="pcm_f32le", pattern="^(pcm_f32le|pcm_s16le)$")
+    output_format: str = Field(default="pcm_f32le", pattern="^(pcm_f32le|pcm_s16le|flac)$")
+    # Render at this rate when the upload is only a low-rate reference (cached analysis, no stems).
+    output_sample_rate: int | None = Field(default=None, ge=8000, le=192000)
     include_analysis: bool = True
     request_id: str | None = None
 
@@ -92,6 +94,14 @@ class RefBody(BaseModel):
     model_config = ConfigDict(extra="allow")
     audio_ref: str | None = None
     stems: dict[str, str] | None = None
+
+
+def _flac(samples: np.ndarray, sr: int, ffmpeg: str = "ffmpeg") -> bytes:
+    """16-bit FLAC of the part: a generated layer is mostly silence/sparse, so this is a fraction of a WAV."""
+    import subprocess
+    proc = subprocess.run([ffmpeg, "-v", "error", "-f", "wav", "-i", "pipe:0", "-c:a", "flac", "-compression_level", "2", "-f", "flac", "pipe:1"],
+                          input=encode_wav_pcm16(samples, sr), capture_output=True, check=True, timeout=300)
+    return proc.stdout
 
 
 def register(app: FastAPI, settings, generator: Generator) -> None:
@@ -188,24 +198,36 @@ def register(app: FastAPI, settings, generator: Generator) -> None:
         tmp, meta, mix, stems = await _inputs(request, GenerateMetadata)
         try:
             mix_arr, sr, stem_arr = _align(mix, stems)
+            if meta.output_sample_rate and meta.output_sample_rate != sr and mix_arr is not None:
+                from . import dsp
+                mix_arr = await run_in_threadpool(dsp.resample, mix_arr, sr, meta.output_sample_rate)
+                stem_arr = {k: dsp.resample(v, sr, meta.output_sample_rate) for k, v in stem_arr.items()}
+                sr = meta.output_sample_rate
+            if mix_arr is not None and mix_arr.shape[0] == 1:
+                mix_arr = np.repeat(mix_arr, 2, axis=0)
             req = PartRequest(instrument=meta.instrument, prompt=meta.prompt, role=meta.role, style=meta.style, sections=meta.sections,
                               interval=(meta.interval.start, meta.interval.end) if meta.interval else None, density=meta.density, engine=meta.engine,
                               seed=meta.seed, level_db=meta.level_db, duck_db=meta.duck_db, humanize=meta.humanize, analysis=meta.analysis)
             res = await run_in_threadpool(generator.generate, mix_arr, sr, stem_arr, req)
             request_id = meta.request_id or uuid.uuid4().hex
-            wav = (encode_wav_float32 if meta.output_format == "pcm_f32le" else encode_wav_pcm16)(res.audio, res.sample_rate)
-            audio: dict[str, Any] = {"format": "wav/" + meta.output_format, "sample_rate": res.sample_rate, "channels": int(res.audio.shape[0]),
+            if meta.output_format == "flac":
+                wav = await run_in_threadpool(_flac, res.audio, res.sample_rate, settings.ffmpeg)
+                fmt = "flac/s16"
+            else:
+                wav = (encode_wav_float32 if meta.output_format == "pcm_f32le" else encode_wav_pcm16)(res.audio, res.sample_rate)
+                fmt = "wav/" + meta.output_format
+            audio: dict[str, Any] = {"format": fmt, "sample_rate": res.sample_rate, "channels": int(res.audio.shape[0]),
                                      "sample_count": int(res.audio.shape[1]), "duration": round(res.audio.shape[1] / res.sample_rate, 6), "start_time": 0.0}
             if meta.return_mode == "file":
                 out_dir = Path(settings.output_root) / request_id
                 try:
                     out_dir.mkdir(parents=True, exist_ok=True)
-                    (out_dir / "part.wav").write_bytes(wav)
+                    (out_dir / ("part.flac" if fmt.startswith("flac") else "part.wav")).write_bytes(wav)
                     if res.midi:
                         (out_dir / "part.mid").write_bytes(res.midi)
                 except OSError as exc:
                     raise StorageFailure(f"could not write part: {exc}") from exc
-                audio["audio_ref"] = to_file_ref(out_dir / "part.wav")
+                audio["audio_ref"] = to_file_ref(out_dir / ("part.flac" if fmt.startswith("flac") else "part.wav"))
             else:
                 audio["audio_base64"] = base64.b64encode(wav).decode("ascii")
             spec = res.spec

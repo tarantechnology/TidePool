@@ -82,6 +82,11 @@ describe('chatRoute: censorship and layer scope come first', () => {
       expect(chatRoute(ask, stems, 'replace the dog bark with a meow').censorship, ask).toBe(true)
     }
   })
+  it('a generate ask never pre-empts an object-appearance placement', () => {
+    for (const ask of ['add a gong every time we see person 5', 'add a drum hit when car 2 appears']) {
+      const r = chatRoute(ask, stems); expect(r.generate, ask).toBe(false); expect(r.replacement, ask).toBe(ask)
+    }
+  })
   it('a generate ask never pre-empts censorship', () => {
     for (const ask of ['add violins and bleep the swearing', 'censor the cuss words then add a piano part']) {
       const r = chatRoute(ask, stems); expect(r.censorship, ask).toBe(true); expect(r.generate, ask).toBe(false)
@@ -112,5 +117,11 @@ describe('chatRoute: censorship and layer scope come first', () => {
   it('pitch asks without an amount are effects', () => {
     const r = chatRoute('make the vocals higher pitch', stems)
     expect(r.fx?.kind).toBe('fx'); expect(r.sfx).toBe(false); expect(r.replacement).toBeNull()
+  })
+  it("object-appearance sound asks go to main's generation flow, not a library insert or effect", () => {
+    for (const ask of ['Add a gong every time we see person 5', 'Every time person 5 appears, play a gong sound.', 'play a whoosh whenever car 2 appears']) {
+      const r = chatRoute(ask, stems)
+      expect(r.replacement, ask).toBe(ask); expect(r.sfx, ask).toBe(false); expect(r.fx, ask).toBeNull()
+    }
   })
 })

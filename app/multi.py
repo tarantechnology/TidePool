@@ -318,7 +318,7 @@ def build(project, payload, cid):
             tasks[('layer', row_id)] = (owners[row_id], lambda r=by_id[row_id], it=items: timed('layer:' + r['id'], F.render_layer, r, records[r['id']], it, new_file))
         for i, step in enumerate(steps):
             if step['kind'] == 'generate':
-                tasks[('generate', i)] = ([i], lambda s=step, i=i: timed(f'generate:{i}', generate_layer, pid, original, snapshot['rows'], s['spec'], 0, new_file))
+                tasks[('generate', i)] = ([i], lambda s=step, i=i: timed(f'generate:{i}', generate_layer, pid, original, snapshot['rows'], s['spec'], 0, new_file, snapshot))
         if inserts:
             anchors = Anchors(pid, source, snapshot['rows'], duration, payload.get('_features'))
             tasks[('insert', 0)] = (insert_steps, lambda: timed('insert', place, inserts, anchors))

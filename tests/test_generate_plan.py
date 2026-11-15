@@ -133,3 +133,7 @@ def test_agent_route_precedence_insert_then_generate(client, tmp_path, monkeypat
     # Censorship comes first: a generate ask never pre-empts the profanity beep flow.
     for prompt in ("add violins and bleep the swearing", "censor the cuss words then add a piano part"):
         plan = ask(prompt); assert plan['kind'] == 'clarify' and ('censorship' in plan['message'] or 'profanity' in plan['message']), prompt
+    # Main's object-appearance placements and stale-editor guard: generate never pre-empts an appearance ask,
+    # and an instrument part runs before the refresh guard.
+    assert ask("add a gong every time we see person 5")['kind'] != 'generate'
+    assert ask("add a piano part")['kind'] == 'generate'

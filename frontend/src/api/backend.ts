@@ -436,8 +436,8 @@ export async function getRoute(config: BackendConfig, projectId: string, signal?
   const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/route`, {}, signal, 120_000)
   return toRouting(await res.json())
 }
-export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4'})})
+export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3', trim?: {start:number;end:number}, clips?: {start:number;end:number}[]): Promise<string> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(trim ? {trim} : {}),...(clips ? {clips} : {})})})
   return ((await res.json()) as {export_id:string}).export_id
 }
 export async function getExport(config: BackendConfig, exportId: string, signal?: AbortSignal): Promise<ExportInfo> {
@@ -497,7 +497,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'fx'|'duck'|'loudness'|'insert'|'clip_edit'|'generate'|'multi'|'clarify'; fx?:FxPlan|null; generate?:GeneratePlan|null; clip_edit?:{stem_id:string;operation:'move';start_offset:number}; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'fx'|'duck'|'loudness'|'insert'|'sound_effect'|'clip_edit'|'generate'|'multi'|'clarify'; fx?:FxPlan|null; generate?:GeneratePlan|null; clip_edit?:{stem_id:string;operation:'move';start_offset:number}; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
   /** kind 'insert': library sound effects to place as new layers. */
   inserts?:SfxInsert[]|null
   /** kind 'multi': several edits from one prompt, previewed (and applied/undone) together. */

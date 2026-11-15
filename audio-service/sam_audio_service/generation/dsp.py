@@ -16,18 +16,53 @@ def as_mono(x: np.ndarray) -> np.ndarray:
     return x.mean(axis=0) if x.ndim == 2 else x
 
 
+def _smooth(m: int) -> int:
+    """Smallest integer >= m whose only prime factors are 2, 3 and 5 (fast FFT sizes)."""
+    best = 1 << max(0, int(np.ceil(np.log2(max(m, 1)))))
+    p5 = 1
+    while p5 < best:
+        p35 = p5
+        while p35 < best:
+            p = p35
+            while p < m:
+                p *= 2
+            best = min(best, p)
+            p35 *= 3
+        p5 *= 5
+    return best
+
+
+def fast_len(n: int) -> int:
+    return _smooth(n)
+
+
 def resample(x: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
-    """Band-limited FFT resample along the last axis (fine for analysis and for whole stems)."""
+    """Band-limited resample along the last axis. soxr when installed; else an FFT resample whose
+    sizes are padded to fast (2/3/5-smooth) lengths: a 4-min song at an awkward length took ~3 s
+    per call with plain numpy FFTs, ~0.2 s padded."""
     if sr_in == sr_out:
         return np.asarray(x, dtype=np.float32)
     x = np.asarray(x, dtype=np.float32)
     n_in = x.shape[-1]
     n_out = int(round(n_in * sr_out / sr_in))
-    spec = np.fft.rfft(x, axis=-1)
-    keep = min(spec.shape[-1], n_out // 2 + 1)
-    out_spec = np.zeros(x.shape[:-1] + (n_out // 2 + 1,), dtype=np.complex64)
+    try:
+        import soxr
+
+        flat = x.reshape(-1, n_in)
+        out = np.stack([soxr.resample(c, sr_in, sr_out, quality="HQ") for c in flat])
+        out = out[:, :n_out] if out.shape[1] >= n_out else np.pad(out, ((0, 0), (0, n_out - out.shape[1])))
+        return out.reshape(x.shape[:-1] + (n_out,)).astype(np.float32)
+    except ImportError:
+        pass
+    g = int(np.gcd(int(sr_in), int(sr_out)))
+    a, b = int(sr_in) // g, int(sr_out) // g
+    m = _smooth(-(-n_in // a))
+    n_pad, n_pad_out = m * a, m * b
+    spec = np.fft.rfft(x, n=n_pad, axis=-1)
+    keep = min(spec.shape[-1], n_pad_out // 2 + 1)
+    out_spec = np.zeros(x.shape[:-1] + (n_pad_out // 2 + 1,), dtype=np.complex64)
     out_spec[..., :keep] = spec[..., :keep]
-    return (np.fft.irfft(out_spec, n=n_out, axis=-1) * (n_out / n_in)).astype(np.float32)
+    return (np.fft.irfft(out_spec, n=n_pad_out, axis=-1)[..., :n_out] * (n_pad_out / n_pad)).astype(np.float32)
 
 
 def frames(x: np.ndarray, n_fft: int, hop: int) -> np.ndarray:
@@ -88,7 +123,7 @@ def onset_envelope(x: np.ndarray, sr: int, hop: int = 512, n_fft: int = 1024, fm
 
 def fft_convolve(x: np.ndarray, h: np.ndarray) -> np.ndarray:
     n = len(x) + len(h) - 1
-    size = 1 << int(np.ceil(np.log2(max(n, 2))))
+    size = fast_len(max(n, 2))
     return np.fft.irfft(np.fft.rfft(x, size) * np.fft.rfft(h, size), size)[:n].astype(np.float32)
 
 
@@ -96,9 +131,10 @@ def fft_eq(x: np.ndarray, sr: int, gain_fn) -> np.ndarray:
     """Zero-phase static EQ: multiply the spectrum by gain_fn(freqs) (linear gain)."""
     x = np.asarray(x, dtype=np.float32)
     n = x.shape[-1]
-    spec = np.fft.rfft(x, axis=-1)
-    g = gain_fn(np.fft.rfftfreq(n, 1 / sr)).astype(np.float32)
-    return np.fft.irfft(spec * g, n=n, axis=-1).astype(np.float32)
+    size = fast_len(n + 2048)  # zero-padded to a fast FFT size (also avoids wrap-around at the ends)
+    spec = np.fft.rfft(x, n=size, axis=-1)
+    g = gain_fn(np.fft.rfftfreq(size, 1 / sr)).astype(np.float32)
+    return np.fft.irfft(spec * g, n=size, axis=-1)[..., :n].astype(np.float32)
 
 
 def highpass_gain(f: np.ndarray, fc: float, order: int = 2) -> np.ndarray:

@@ -96,13 +96,14 @@ class BasicPitchTranscriber:
     def transcribe(self, mono: np.ndarray, sr: int) -> list[Note]:
         from ..audio_io import encode_wav_float32
 
-        with self._lock:
-            from basic_pitch import ICASSP_2022_MODEL_PATH
-            from basic_pitch.inference import Model, predict
+        from basic_pitch import ICASSP_2022_MODEL_PATH
+        from basic_pitch.inference import Model, predict
 
+        with self._lock:  # only model creation is serialised; ONNX sessions run concurrently
             if self._model is None:
                 onnx = Path(str(ICASSP_2022_MODEL_PATH)).with_suffix(".onnx")
                 self._model = Model(onnx if onnx.exists() else ICASSP_2022_MODEL_PATH)
+        if True:
             with tempfile.TemporaryDirectory(prefix="gen-bp-") as tmp:
                 wav = Path(tmp) / "x.wav"
                 wav.write_bytes(encode_wav_float32(np.asarray(mono, dtype=np.float32)[None, :], sr))

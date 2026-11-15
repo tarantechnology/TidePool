@@ -79,3 +79,22 @@ def test_upload_falls_back_to_the_original_when_ffmpeg_cannot_encode(tmp_path):
     junk = tmp_path / 'junk.wav'; junk.write_bytes(b'not audio')
     with service_upload(junk) as (name, f, ctype):
         assert (name, ctype, f.read()) == ('audio.wav', 'audio/wav', b'not audio')
+
+
+def float_wav(tmp_path, peak):
+    import numpy as np
+    raw = tmp_path / f'raw{peak}.f32'; wav = tmp_path / f'peak{peak}.wav'
+    raw.write_bytes((peak * np.sin(2 * np.pi * 440 * np.arange(24000) / 48000)).astype('<f4').tobytes())
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', '48000', '-ac', '1', '-i', str(raw), '-c:a', 'pcm_f32le', str(wav)], check=True)
+    return wav
+
+
+def test_upload_sends_the_float_wav_when_the_source_peaks_above_full_scale(tmp_path):
+    from app.media import service_upload, source_peak
+    hot = float_wav(tmp_path, 1.4)
+    assert source_peak(hot) == pytest.approx(1.4, abs=1e-3)
+    with service_upload(hot) as (name, f, ctype):
+        assert (name, ctype) == ('audio.wav', 'audio/wav') and f.read() == hot.read_bytes()  # FLAC would clip 1.40 to 1.00
+    safe = float_wav(tmp_path, 0.9)
+    with service_upload(safe) as (name, f, ctype):
+        assert (name, ctype, f.read()[:4]) == ('audio.flac', 'audio/flac', b'fLaC')

@@ -45,9 +45,17 @@ def synth_ir(sr: int, rt60: float, predelay_ms: float = 18.0, seed: int = 7) -> 
     return ir / (np.sqrt(np.sum(ir ** 2, axis=1, keepdims=True)) + 1e-9)
 
 
-def _vocal_presence(vocals: np.ndarray | None, sr: int, n: int, hop: int) -> np.ndarray | None:
+def _activity_presence(intervals, sr: int, n: int, hop: int) -> np.ndarray:
+    frames = n // hop + 2
+    pres = np.zeros(frames, np.float32)
+    for a, b in intervals:
+        pres[int(a * sr / hop):int(b * sr / hop) + 1] = 1.0
+    return dsp.attack_release(pres, sr / hop, 0.03, 0.3)
+
+
+def _vocal_presence(vocals: np.ndarray | None, sr: int, n: int, hop: int, activity=None) -> np.ndarray | None:
     if vocals is None:
-        return None
+        return _activity_presence(activity, sr, n, hop) if activity else None
     env = dsp.rms_envelope(vocals, sr, hop_s=hop / sr, win_s=0.04)
     edb = 20 * np.log10(env + 1e-9)
     top = np.percentile(edb, 98)
@@ -75,7 +83,7 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
         part = dsp.fft_eq(part, sr, lambda f: dsp.highpass_gain(f, hpf, 2) * dsp.lowpass_gain(f, 15000, 1))
     # 2. dynamic EQ carve around the vocal
     hop, n_fft = 512, 2048
-    pres = _vocal_presence(vocals, sr, n, hop)
+    pres = _vocal_presence(vocals, sr, n, hop, analysis.get("vocal_activity"))
     if pres is not None and carve_db > 0 and role != "bassline":
         freqs = np.fft.rfftfreq(n_fft, 1 / sr)
         band = np.exp(-0.5 * (np.log2(np.maximum(freqs, 1) / 2800) / 0.7) ** 2)  # centred 2.8 kHz, ~1.6 oct wide
@@ -115,16 +123,19 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
         s, e = int(a * sr), min(n, int((b + 1.2) * sr))
         mask[s:e] = 1
     fade = int(0.05 * sr)
-    mask = np.convolve(mask, np.ones(fade) / fade, mode="same").astype(np.float32)
+    c = np.concatenate([[0.0], np.cumsum(mask, dtype=np.float64)])  # O(n) moving average (np.convolve was O(n*fade))
+    half = fade // 2
+    idx = np.arange(n)
+    mask = ((c[np.minimum(n, idx + fade - half)] - c[np.maximum(0, idx - half)]) / fade).astype(np.float32)
     part = part * mask
     # 4. loudness relative to the song
     song_lufs = dsp.loudness_lufs(song, sr)
     part_lufs = dsp.loudness_lufs(part, sr)
     offset = ROLE_LEVEL_LU.get(role, -8.0) - (3.0 if role == "bassline" and has_bass_stem else 0.0) + level_db
     target = song_lufs + offset
-    if vocals is not None and role != "bassline":
+    vocal_lufs = dsp.loudness_lufs(vocals, sr) if vocals is not None else ((analysis.get("levels") or {}).get("vocals_lufs") or -70.0)
+    if role != "bassline":
         # Sit ~3 dB behind the vocal (pads a bit further back), never louder than the role target.
-        vocal_lufs = dsp.loudness_lufs(vocals, sr)
         if vocal_lufs > -60:
             target = min(target, vocal_lufs - (5.0 if role == "pad" else 3.0) + level_db)
     gain_db = float(np.clip(target - part_lufs, -40, 30)) if part_lufs > -69 else 0.0

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fxCommand } from './fxCommand'
+import { fxCommand, pitchShift } from './fxCommand'
 import type { FxStem } from './fxCommand'
 import { fxRequest, toFxChips, toStem } from './api/backend'
 import { requestsSoundReplacement } from './agent/replacementIntent'
@@ -170,5 +170,33 @@ describe('effect requests and chips', () => {
     const stem = toStem({ id: 's', name: 'Vocals', duration: 1, audio_url: '/x', fx: { items: [{ id: 'a', label: 'Echo', preset: 'echo', scope: 'mix', speed: null }] } }, 'blob:x')
     expect(stem.fx?.map(c => c.label)).toEqual(['Echo'])
     expect(toStem({ id: 's', name: 'Vocals', duration: 1, audio_url: '/x', fx: null }, 'blob:x').fx).toBeUndefined()
+  })
+})
+
+describe('pitch defaults', () => {
+  const stemsP = [{ id: 'v', label: 'Vocals' }, { id: 'b', label: 'Bass' }, { id: 'o', label: 'Other' }]
+  it('higher/lower without an amount is ±3, "a lot" ±7, "a little" ±1; explicit amounts win', () => {
+    expect(pitchShift('make the vocals higher pitch')).toBe(3)
+    expect(pitchShift('lower the pitch of the bass')).toBe(-3)
+    expect(pitchShift('make the vocals way higher pitched')).toBe(7)
+    expect(pitchShift('lower the pitch a lot')).toBe(-7)
+    expect(pitchShift('raise the pitch slightly')).toBe(1)
+    expect(pitchShift('lower the pitch a little')).toBe(-1)
+    expect(pitchShift('raise the pitch by 5 semitones')).toBe(5)
+    expect(pitchShift('pitch the vocals down 2 semitones')).toBe(-2)
+    expect(pitchShift('make the vocals louder')).toBeNull()
+  })
+  it('builds a pitch chain on the named layer', () => {
+    const up = fxCommand('make the vocals higher pitch', stemsP)
+    expect(up?.kind).toBe('fx')
+    if (up?.kind === 'fx') { expect(up.fx.targets).toEqual(['v']); expect(up.fx.chain).toEqual([{ type: 'pitch', params: { semitones: 3 } }]) }
+    const down = fxCommand('lower the pitch of the bass', stemsP)
+    if (down?.kind !== 'fx') throw new Error('expected fx')
+    expect(down.fx.targets).toEqual(['b']); expect(down.fx.chain).toEqual([{ type: 'pitch', params: { semitones: -3 } }])
+  })
+  it('pronouns never substring-match a label ("her" is not "Other")', () => {
+    const r = fxCommand('add reverb to her', [{ id: 'v', label: 'Vocals' }, { id: 'o', label: 'Other' }])
+    if (r?.kind !== 'fx') throw new Error('expected fx')
+    expect(r.fx.targets).toEqual(['v'])
   })
 })

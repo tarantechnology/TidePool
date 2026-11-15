@@ -91,6 +91,25 @@ function findPreset(text: string, anywhere: boolean): string | null {
   return null
 }
 
+/**
+ * Semitones for a pitch ask. An explicit amount wins ("pitch the vocals up 2 semitones"); without one,
+ * "higher"/"raise the pitch" is +3 and "lower" is -3, "a lot"/"way higher" ±7, "a little"/"slightly" ±1.
+ * Null when the text is not a pitch ask or has no direction. "More"/"less" then tweaks it.
+ */
+export function pitchShift(text: string): number | null {
+  const t = text.toLowerCase()
+  if (!/\bpitch(?:ed)?\b/.test(t)) return null
+  const up = /\b(?:higher|high|up|raise[ds]?|raising|increase[ds]?|boost)\b/.test(t)
+  const down = /\b(?:lower|low|down|drop|decrease[ds]?|reduce[ds]?|deeper)\b/.test(t)
+  if (up === down) return null
+  const sign = up ? 1 : -1
+  const amount = /(\d+(?:\.\d+)?)\s*(?:semitones?|half[- ]steps?|steps?|st)\b/.exec(t)
+  if (amount) return sign * Number(amount[1])
+  if (/\b(?:a lot|lots|way|much|really|super|very|tons?)\b/.test(t)) return sign * 7
+  if (/\b(?:a (?:little|bit|touch|tad)|slightly|little|bit|tad)\b/.test(t)) return sign * 1
+  return sign * 3
+}
+
 /** Asks that belong to sound replacement or separation, never to the effect parser. ("Add a monster roar at 12"
  * falls out because "monster" names a sound there; "add reverb to the vocals at 0:12" is still an effect.) */
 const REPLACEMENT_ASK = /\b(?:replace|replacing|swap|substitute)\b|\binstead of\b/
@@ -111,6 +130,8 @@ const LAYERS: Array<[RegExp, RegExp]> = [
 ]
 const WHOLE = /\b(?:whole|entire|everything|all of it|the mix|full mix|the song|this song|the track|this track|the audio|the clip|the video|whole thing)\b/
 const VOICE = /speech|dialog|voice|narrat|speak|talk|vocal|sing|person/
+
+const PRONOUN = /^(?:him|her|them|it)$/
 
 function haystack(stem: FxStem): string {
   return [stem.label, ...(stem.tags ?? [])].join(' ').toLowerCase()
@@ -147,8 +168,11 @@ function targets(text: string, stems: FxStem[], ignore: RegExp | null): Targets 
   for (const [words, pattern] of named) {
     const name = word(words).replace(/s$/, '')
     // A layer whose own name matches beats one that only matches by a tag or a broader word.
-    const exact = stems.filter(s => s.label.toLowerCase().includes(name))
-    const tagged = stems.filter(s => (s.tags ?? []).some(t => t.toLowerCase().replace(/s$/, '') === name))
+    // Pronouns ("make her louder") only ever match by role, never as a substring of a label ("Other").
+    const pronoun = PRONOUN.test(name)
+    const whole = new RegExp(String.raw`\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:s|es)?\b`)
+    const exact = pronoun ? [] : stems.filter(s => whole.test(s.label.toLowerCase()))
+    const tagged = pronoun ? [] : stems.filter(s => (s.tags ?? []).some(t => t.toLowerCase().replace(/s$/, '') === name))
     let matched = exact.length ? exact : tagged.length ? tagged : stems.filter(s => pattern.test(haystack(s)))
     if (!matched.length && words === MUSIC_WORDS) matched = stems.filter(s => !VOICE.test(haystack(s)))
     matched.forEach(s => ids.add(s.id))
@@ -221,13 +245,13 @@ export function fxCommand(raw: string, stems: FxStem[] = []): FxCommand | null {
   const preset = findPreset(text, false)
   const presetWords = preset ? PRESETS.find(([, name]) => name === preset)![0] : null
 
-  const semitones = /\bpitch(?:ed)?\s+(?:(?:it|the \w+|them)\s+)?(up|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*(?:semitones?|steps?|half[- ]steps?)/.exec(text)
+  const semitones = pitchShift(text)
   const echoTime = /\b(\d+(?:\.\d+)?)\s*(ms|milliseconds?)\b/.exec(text) ?? /\b(\d+(?:\.\d+)?)\s*(s|seconds?)\s+(?:echo|delay)\b/.exec(text)
   if (!preset && !semitones) return null
   const chosen = pickTargets(text, stems, presetWords)
   if (!Array.isArray(chosen)) return chosen
   const chain: FxPlan['chain'] = []
-  if (semitones) chain.push({ type: 'pitch', params: { semitones: (semitones[1] === 'down' ? -1 : 1) * Number(semitones[2]) } })
+  if (semitones) chain.push({ type: 'pitch', params: { semitones } })
   const usePreset = semitones && (preset === 'deep_voice') ? null : preset
   if (usePreset === 'echo' && echoTime) {
     chain.push({ type: 'delay', params: { time: Number(echoTime[1]) * (echoTime[2].startsWith('m') ? 1 : 1000) } })

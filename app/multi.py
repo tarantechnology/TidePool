@@ -210,6 +210,32 @@ def is_compound(prompt):
     return len(split_clauses(prompt)) >= 2
 
 
+_LAYER_SEPARATION = re.compile(r'^\s*(?:(?:please|can you|could you|would you|also|then|just|now|and)\s+)*(?:remove|mute|isolate|separate|extract|split|take\s+out)\b', re.I)
+
+
+def single_flow_clause(prompt):
+    """A clarify message when a compound ask contains a clause that must run on its own: profanity bleeping
+    (the censorship preview) or a separation scoped to one named layer ("isolate the dog in the Music layer").
+    None otherwise. Mirrors frontend/src/agent/multiCommand.ts singleFlowClause."""
+    from .sfx_plan import requests_censorship
+    from .layer_scope import extract_layer_scope
+    clauses = split_clauses(prompt)
+    if len(clauses) < 2:
+        return None
+    for i, clause in enumerate(clauses, 1):
+        name = f'Edit {i} ("{clause}")'
+        if requests_censorship(clause):
+            return f'{name} bleeps profanity and has to be done on its own. Ask for it separately, then the rest.'
+        if _LAYER_SEPARATION.search(clause):
+            try: layer = extract_layer_scope(clause)[1]
+            except ValueError: layer = True
+            if layer:
+                return f'{name} separates from one layer and has to be done on its own. Ask for it separately, then the rest.'
+    if requests_censorship(prompt):
+        return 'Bleeping profanity has to be done on its own. Ask for it separately, then the rest.'
+    return None
+
+
 # ---------------------------------------------------------------- execution spec (multi-preview route)
 
 def edit_rows(rows, actions):

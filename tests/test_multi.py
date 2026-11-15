@@ -236,3 +236,28 @@ def test_agent_route_sends_compound_asks_to_the_planner(client, tmp_path, monkey
     assert plan['steps'][1]['inserts'][0]['sfx_id'] == 'vine_boom'
     job = wait(client, '/api/candidates/' + multi_preview(client, pid, h, plan['steps']).json()['candidate_id'], h)
     assert job['status'] == 'completed', job
+
+
+@pytest.mark.parametrize('prompt, needle', [
+    ('bleep the swearing and add reverb to the music', 'Edit 1'),
+    ('add reverb to the music, then censor the cuss words', 'Edit 2'),
+    ('isolate the dog in the Music layer and add a piano part', 'Edit 1'),
+    ('add a vine boom at 1s and remove the cough from the Speech track', 'Edit 2'),
+])
+def test_compound_asks_with_censorship_or_layer_scope_stay_single_flow(prompt, needle):
+    message = multi.single_flow_clause(prompt)
+    assert message and needle in message and 'separately' in message, (prompt, message)
+
+
+def test_single_flow_clause_leaves_ordinary_asks_alone():
+    for prompt in ('bleep the swearing', 'isolate the dog in the Music layer', 'add reverb on the Music track and put a vine boom at 1s',
+                   'add reverb to the music and put a vine boom at 1s'):
+        assert multi.single_flow_clause(prompt) is None, prompt
+
+
+def test_agent_route_clarifies_compound_censorship_before_the_planner(client, tmp_path, monkeypatch):
+    pid, h = upload(client, tmp_path)
+    fake_planner(monkeypatch, plan_of([step('fx', 'Church on music', fx={'targets': ['x'], 'preset': 'church'})]))
+    for prompt in ('bleep the swearing and add violins', 'isolate the dog in the Music layer and add a piano part'):
+        plan = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': prompt, 'stems': [], 'tracks': [], 'duration': 2}).json()
+        assert plan['kind'] == 'clarify' and 'separately' in plan['message'], (prompt, plan)

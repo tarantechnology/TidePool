@@ -110,19 +110,17 @@ def request_generate_part(mix_path: str | Path, stems: dict[str, str | Path], pl
     meta = dict(plan, seed=seed)
     if analysis is not None:
         meta['analysis'] = analysis
-    handles = []
-    try:
-        files = []
-        f = open(mix_path, 'rb'); handles.append(f)
-        files.append(('audio', ('mix.wav', f, 'audio/wav')))
-        for name, path in stems.items():
-            f = open(path, 'rb'); handles.append(f)
-            files.append(('stem_' + re.sub(r'[^a-z0-9_]', '_', name.lower()), (Path(path).name, f, 'audio/wav')))
+    # Same lossless FLAC upload as separation (app/media.py service_upload): far smaller through the tunnel.
+    from contextlib import ExitStack
+    from .media import service_upload
+    with ExitStack() as stack:
+        name, f, ctype = stack.enter_context(service_upload(mix_path))
+        files = [('audio', ('mix' + Path(name).suffix, f, ctype))]
+        for stem, path in stems.items():
+            name, f, ctype = stack.enter_context(service_upload(path))
+            files.append(('stem_' + re.sub(r'[^a-z0-9_]', '_', stem.lower()), (Path(path).stem + Path(name).suffix, f, ctype)))
         response = httpx.post(urlunsplit((url.scheme, url.netloc, '/v1/generate-part', '', '')), files=files,
                               data={'metadata': json.dumps(meta)}, timeout=timeout)
-    finally:
-        for f in handles:
-            f.close()
     response.raise_for_status()
     return response.json()
 

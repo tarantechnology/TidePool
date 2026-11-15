@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentPlan } from '../api/backend'
-import { isCompound, localMultiPlan, splitClauses } from './multiCommand'
+import { isCompound, localMultiPlan, singleFlowClause, splitClauses } from './multiCommand'
 
 const STEMS = [
   { id: 'v1', label: 'Vocals' }, { id: 'd1', label: 'Drums' }, { id: 'b1', label: 'Bass' }, { id: 'g1', label: 'Guitar' },
@@ -77,5 +77,28 @@ describe('localMultiPlan', () => {
     expect((await localMultiPlan(many, STEMS, async () => null)).message).toMatch(/split the request/)
     const parts = ['violins', 'piano', 'a choir', 'a flute'].map((x) => `add ${x}`).join(' and ')
     expect((await localMultiPlan(parts, STEMS, async () => generatePlan)).message).toMatch(/up to 3 new parts/)
+  })
+})
+
+describe('singleFlowClause: censorship and layer-scoped asks are never swallowed by a multi plan', () => {
+  it('a compound prompt containing one is a clarify asking to do it separately', () => {
+    for (const [ask, edit] of [
+      ['bleep the swearing and add reverb to the vocals', 'Edit 1'],
+      ['add reverb to the vocals, then censor the cuss words', 'Edit 2'],
+      ['isolate the dog in the Music layer and add a piano part', 'Edit 1'],
+      ['add a vine boom at 0:12 and remove the cough from the Vocals track', 'Edit 2'],
+    ]) {
+      const plan = singleFlowClause(ask, STEMS)
+      expect(plan?.kind, ask).toBe('clarify'); expect(plan?.message, ask).toMatch(new RegExp(`${edit} .*separately`))
+    }
+  })
+  it('leaves single asks and ordinary compound asks alone', () => {
+    for (const ask of ['bleep the swearing', 'isolate the dog in the Music layer', 'add reverb on the Vocals track and put a vine boom at 0:12'])
+      expect(singleFlowClause(ask, STEMS), ask).toBeNull()
+  })
+  it('localMultiPlan asks before planning any clause', async () => {
+    const planClause = vi.fn(async () => null)
+    expect((await localMultiPlan('isolate the dog in the Music layer and add a piano part', STEMS, planClause)).kind).toBe('clarify')
+    expect(planClause).not.toHaveBeenCalled()
   })
 })

@@ -1,6 +1,7 @@
 import type { AgentPlan, MultiStep } from '../api/backend'
 import type { FxStem } from '../fxCommand'
 import { chatRoute } from './chatRoute'
+import { requestsCensorship } from './censorshipIntent'
 
 /**
  * Several edits in one prompt ("add reverb to the vocals, make the drums sound like a phone and put a vine boom
@@ -39,6 +40,24 @@ function clarify(message: string): AgentPlan {
   return { kind: 'clarify', description: null, remove: false, actions: [], message }
 }
 
+/**
+ * Censorship ("bleep the swearing") and layer-scoped separations ("isolate the dog in the Music layer") stay
+ * single-flow: a compound prompt containing one is a clarify asking to do it separately (app/multi.py single_flow_clause).
+ */
+export function singleFlowClause(text: string, stems: FxStem[] = []): AgentPlan | null {
+  const clauses = splitClauses(text)
+  if (clauses.length < 2) return null
+  for (const [i, clause] of clauses.entries()) {
+    const name = `Edit ${i + 1} ("${clause}")`
+    if (requestsCensorship(clause)) return clarify(`${name} bleeps profanity and has to be done on its own. Ask for it separately, then the rest.`)
+    let layer = false
+    try { layer = !!chatRoute(clause, stems).layer } catch { layer = true }
+    if (layer) return clarify(`${name} separates from one layer and has to be done on its own. Ask for it separately, then the rest.`)
+  }
+  if (requestsCensorship(text)) return clarify('Bleeping profanity has to be done on its own. Ask for it separately, then the rest.')
+  return null
+}
+
 const STEP_KINDS = new Set(['fx', 'duck', 'loudness', 'insert', 'generate', 'edit'])
 
 /**
@@ -49,6 +68,8 @@ const STEP_KINDS = new Set(['fx', 'duck', 'loudness', 'insert', 'generate', 'edi
 export async function localMultiPlan(text: string, stems: FxStem[], planClause: (clause: string) => Promise<AgentPlan | null>): Promise<AgentPlan> {
   const clauses = splitClauses(text)
   if (clauses.length > MAX_STEPS) return clarify(`That is a lot of edits at once. I can do up to ${MAX_STEPS} per message; please split the request.`)
+  const single = singleFlowClause(text, stems)
+  if (single) return single
   const steps: MultiStep[] = []
   for (const [i, clause] of clauses.entries()) {
     const name = `Edit ${i + 1} ("${clause}")`

@@ -141,7 +141,8 @@ def test_backend_visual_masks_and_export(backend_client, tmp_path, monkeypatch):
     source_audio = decode(data=(core.project_dir(pid)/'extracted/audio.wav').read_bytes())
     stems = [decode(data=client.get(s['audio_url'],headers=h).content).samples for s in result['stems']]
     assert all(s.shape == source_audio.samples.shape for s in stems)
-    np.testing.assert_allclose(sum(stems), source_audio.samples, atol=1e-7)
+    # The backend uploads FLAC (24-bit) and asks for 16-bit stems: the sum matches to a 16-bit step, not float precision.
+    np.testing.assert_allclose(sum(stems), source_audio.samples, atol=2/32768)
     assert not stems[0][:,:9600].any() and not stems[0][:,38400:].any()
     stem=result['stems'][0]
     assert client.patch(f"/api/projects/{pid}/stems/{stem['id']}",headers=h,json={'volume':.5}).status_code==200

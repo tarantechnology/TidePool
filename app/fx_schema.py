@@ -266,6 +266,9 @@ FX_INSTRUCTIONS = (
     'Presets slowed_reverb, slowed, nightcore and sped_up change the speed and length of the whole song and need targets ["mix"]; never use them on one layer. '
     'Use fx.chain (effect types with params; unused params null, units ms/s/Hz/dB, amounts 0..1) only for requests no preset covers, '
     'for example "echo with 500 ms delay" or "pitch the vocals up 3 semitones"; a chain may extend a preset. Never write filter strings. '
+    'A pitch change with no amount ("make the vocals higher pitch", "lower the pitch of the bass") never needs a clarify: use a pitch chain '
+    'with semitones +3 for higher and -3 for lower, +/-7 for "a lot"/"way higher", +/-1 for "a little"/"slightly"; an explicit amount wins; '
+    'the user can then say "more" or "less". '
     'fx.interval only for an explicit user-supplied time range; never infer one. '
     'fx.adjust="more" or "less" tweaks the most recent effect ("more", "a bit wetter", "too much", "subtler"), with preset and chain null '
     'unless the user names the effect; adjust="remove" removes the named or most recent effect from the targets ("remove the reverb from the vocals", "take the effects off"). '
@@ -276,6 +279,22 @@ FX_INSTRUCTIONS = (
     'and Apple, -23 for broadcast, or the stated number. For kind fx, duck and loudness actions must be empty. For every other kind fx is null. '
     'Effects cannot add new sounds; requests for new sound effects (a vine boom, a laugh track) are not effects: clarify.'
 )
+
+
+def pitch_shift(text):
+    """Semitones for a pitch ask, mirroring the editor's fxCommand.pitchShift: an explicit amount wins; otherwise
+    higher/raise +3, lower -3, "a lot"/"way" +/-7, "a little"/"slightly" +/-1. None when not a pitch ask with a direction."""
+    t = str(text or '').lower()
+    if not re.search(r'\bpitch(?:ed)?\b', t): return None
+    up = bool(re.search(r'\b(?:higher|high|up|raise[ds]?|raising|increase[ds]?|boost)\b', t))
+    down = bool(re.search(r'\b(?:lower|low|down|drop|decrease[ds]?|reduce[ds]?|deeper)\b', t))
+    if up == down: return None
+    sign = 1.0 if up else -1.0
+    amount = re.search(r'(\d+(?:\.\d+)?)\s*(?:semitones?|half[- ]steps?|steps?|st)\b', t)
+    if amount: return sign * float(amount.group(1))
+    if re.search(r'\b(?:a lot|lots|way|much|really|super|very|tons?)\b', t): return sign * 7
+    if re.search(r'\b(?:a (?:little|bit|touch|tad)|slightly|little|bit|tad)\b', t): return sign * 1
+    return sign * 3
 
 
 def validate_plan(kind, plan, stems, duration, prompt):
@@ -313,6 +332,13 @@ def validate_plan(kind, plan, stems, duration, prompt):
     out['preset'] = preset
     if adjust: return out
     chain = plan.get('chain')
+    default_pitch = pitch_shift(prompt)
+    if default_pitch is not None and isinstance(chain, list):
+        # A pitch effect the planner left without an amount gets the default for the asked direction.
+        chain = [{**e, 'params': {**(e.get('params') or {}), 'semitones': default_pitch}}
+                 if isinstance(e, dict) and e.get('type') == 'pitch' and not (e.get('params') or {}).get('semitones') else e for e in chain]
+    if chain is None and preset is None and default_pitch is not None:
+        chain = [{'type': 'pitch', 'params': {'semitones': default_pitch}}]
     if chain is not None: out['chain'] = clamp_chain(chain)
     out['speed'] = clamp_speed(plan.get('speed'))
     interval = plan.get('interval')

@@ -439,7 +439,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'sound_effect'|'censorship'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>

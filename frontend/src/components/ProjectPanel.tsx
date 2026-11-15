@@ -479,7 +479,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (replacement) {
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
-        const isAddition=/\badd\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
+        const isAddition=/\b(?:add|insert|place|generate|put|trigger|cue|overlay)\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
         const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,isAddition ? undefined : sourceLayerId || undefined)
         try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
         try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
@@ -507,6 +507,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       let result:AgentPlan=directTimestamp && local ? {kind:'separate',description:local.description,remove:local.remove,edit_scope:local.editScope || {action:local.remove?'mute':'keep'},processing_time:local.processingTime,actions:[],message:''} : directCinematic || directCreative ? {kind:'director',description:null,remove:false,actions:[],message:''} : await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{
         if(music)return {kind:'separate',description:music.description,remove:music.remove,separation_mode:'music_stems',stems:music.stems,...(music.remove?{edit_scope:{action:'mute'}}:{}),use_visual:false,actions:[],message:''}
         if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
+      if (result.kind==='sound_effect') {
+        setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effect');setMessage('Planning the sound effect…')
+        const id=await createAutomaticReplacement(cfg,current.project_id,text)
+        await waitCandidate(cfg,current.project_id,id)
+        return {kind:'replacement',description:null,remove:false,actions:[],message:'Sound effect preview ready. Compare before applying.'}
+      }
       if(result.kind==='clip_edit') {
         const edit=result.clip_edit
         if(!edit || edit.operation!=='move' || !stems.some(s=>s.id===edit.stem_id && s.effectGroupId) || !Number.isFinite(edit.start_offset) || edit.start_offset<0)throw new Error('The clip edit could not be verified.')

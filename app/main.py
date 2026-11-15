@@ -600,7 +600,7 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
     if not os.getenv('SOUNDCANVAS_SFX_CLI','').strip(): raise HTTPException(503,'Sound generation is unavailable; use an uploaded effect instead.')
     refuse_during_refine(pid)
     from .candidates import safe_path
-    from .replacement import parse_replacement
+    from .replacement import parse_replacement,is_profanity_source
     from .effect_followup import matching_effects
     from .layer_scope import extract_layer_scope,resolve_layer
     try:
@@ -622,7 +622,7 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         if selected and plan.get('mode')=='add':raise HTTPException(422,'A source layer is only used when replacing a sound.')
         if selected and plan.get('time') is not None and not selected['start_offset']<=plan['time']<selected['start_offset']+selected['duration']:raise HTTPException(422,'The timestamp is outside the selected source layer.')
         known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
-        if plan.get('mode')!='add' and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
+        if plan.get('mode')!='add' and not is_profanity_source(plan['source']) and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows},**visual_snapshot}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None,'_resolved_plan':plan}),'status':'queued'}

@@ -92,7 +92,9 @@ def build(project, payload, candidate_id):
     solo = any(r['solo'] for r in rows)
     active = [r for r in rows if not r['muted'] and r['volume'] > 0 and (not solo or r['solo'])]
     voices = [r for r in active if r.get('role') == 'target' and re.search(r'\b(voice|vocals|vocal|speech|speaking|dialogue|dialog|narration|speaker)\b', ' '.join(str(r.get(k) or '') for k in ('name', 'label', 'prompt')), re.I)]
-    selected = voices if len(voices) == 1 else active
+    requested=payload.get('source_stem_id')
+    selected = [r for r in active if r['id']==requested] if requested else (voices if len(voices) == 1 else active)
+    if requested and not selected: raise ValueError('The selected speech layer is unavailable or inaudible.')
     if rows and not selected: raise ValueError('There are no audible layers to transcribe.')
     directory = project_dir(pid) / 'stems'; directory.mkdir(parents=True, exist_ok=True)
     original = directory / (uid()+'.wav'); input_audio = directory / (uid()+'.wav'); mix = directory / (uid()+'.wav'); tone = directory / (uid()+'.wav')
@@ -126,7 +128,7 @@ def build(project, payload, candidate_id):
         proposed.append(dict(id=uid(), project_id=pid, name='Censor beeps', label='Censor beeps', role='effect', path=str(tone), duration=duration, start_offset=0, volume=1, muted=0, solo=int(solo), automation='[]', mute_ranges='[]', revision=0))
         export(proposed, source, mix, 'wav', False)
         warning = 'Speech was transcribed locally. Word timings and profanity detection can miss or mishear words; review the preview before applying.'
-        scope_warning = 'Other layers may still contain the same speech.' if len(voices)==1 else 'All audible layers are muted during each beep, so background sounds and other speakers may also be affected.'
+        scope_warning = 'Other layers may still contain the same speech.' if requested or len(voices)==1 else 'All audible layers are muted during each beep, so background sounds and other speakers may also be affected.'
         return {'target':{'path':str(tone)},'mix':{'path':str(mix)},'original':{'path':str(original)},'snapshot':snapshot,'proposed':proposed,
                 'inference':{'model':{'backend':'faster-whisper','is_mock':False},'warnings':[warning,scope_warning]},
                 'provenance':{'kind':'censorship','matches':flagged,'language':language,'intervals':[{'start':a,'end':b} for a,b in intervals], 'stem_revisions':revisions(rows),'source_sha256':snapshot['source_sha256']}}

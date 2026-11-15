@@ -1,4 +1,4 @@
-import { clamp, MAX_GAIN } from '../edits'
+import { clamp, FOLLOW_MAX_GAIN } from '../edits'
 import type { Keyframe } from '../types'
 
 // Loudness analysis for intensity-driven automation. Everything here measures
@@ -124,7 +124,7 @@ export interface IntensityOptions {
 export function intensityToKeyframes(env: Float32Array, hopSec: number, opts: IntensityOptions = {}): Keyframe[] {
   const {
     minValue = 1,
-    maxValue = MAX_GAIN,
+    maxValue = FOLLOW_MAX_GAIN,
     lowThreshold = DEFAULT_LOW_THRESHOLD,
     highThreshold = DEFAULT_HIGH_THRESHOLD,
     maxKeyframes = DEFAULT_MAX_KEYFRAMES,

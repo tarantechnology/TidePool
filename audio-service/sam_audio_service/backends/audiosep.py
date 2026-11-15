@@ -34,6 +34,7 @@ class AudioSepBackend(Backend):
     supports_spans = False
     supports_span_prediction = False
     supports_independent_candidates = False
+    supports_tagging = True
     sample_rate = 48_000
 
     def __init__(self, root: str, model_id: str, device: str = 'auto') -> None:
@@ -94,6 +95,35 @@ class AudioSepBackend(Backend):
             output = torchaudio.functional.resample(output, 32_000, self.sample_rate).float().cpu().numpy()
         output = np.pad(output, (0, max(0, len(mixture) - len(output))))[:len(mixture)]
         return BackendResult(target=output.astype(np.float32))
+
+    def tag(self, windows: list[np.ndarray], labels: list[str]) -> tuple[np.ndarray, float]:
+        """Zero-shot tagging with AudioSep's own CLAP query encoder: audio and text share one space."""
+        if not self.loaded:
+            raise RuntimeError('AudioSep is not loaded')
+        import torch
+        import torchaudio
+        encoder = self.model.query_encoder
+        audio_rows, text_rows = [], []
+        with torch.inference_mode():
+            for start in range(0, len(windows), 8):
+                batch = torch.as_tensor(np.stack(windows[start:start + 8]).astype(np.float32))
+                # The encoder takes 32 kHz and resamples to CLAP's 48 kHz itself.
+                batch = torchaudio.functional.resample(batch, self.sample_rate, 32_000).to(self.device)
+                audio_rows.append(encoder.get_query_embed(modality='audio', audio=batch, device=self.device).float())
+            for start in range(0, len(labels), 16):
+                text_rows.append(encoder.get_query_embed(modality='text', text=labels[start:start + 16], device=self.device).float())
+            audio = torch.nn.functional.normalize(torch.cat(audio_rows).to(self.device), dim=-1)
+            text = torch.nn.functional.normalize(torch.cat(text_rows).to(self.device), dim=-1)
+            sims = (audio @ text.T).cpu().numpy()
+        scale = 30.0
+        clap = getattr(encoder, 'model', None)
+        logit = getattr(clap, 'logit_scale_a', None)
+        if logit is not None:
+            try:
+                scale = float(min(100.0, max(10.0, float(logit.exp()))))
+            except (TypeError, ValueError, RuntimeError):
+                pass
+        return sims, scale
 
     def unload(self) -> None:
         self.model = None

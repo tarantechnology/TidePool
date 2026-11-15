@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent, PointerEvent } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
-import { isAudible, MAX_GAIN, MAX_KEYFRAMES, spliceAutomation, stemStart } from '../edits'
+import { gainToPos, isAudible, MAX_KEYFRAMES, posToGain, spliceAutomation, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
 import type { EditAction, FxChip, Keyframe, Stem, StemKind, TrackState } from '../types'
@@ -34,6 +34,14 @@ interface Props {
   syncing: boolean
   /** Preview a layer without one of its applied effects. Absent: chips are shown read-only. */
   onRemoveFx?: (stemId: string, chip: FxChip) => void
+  /** Rename a layer; absent when layers are not project stems. */
+  onRename?: (stemId: string, name: string) => Promise<void>
+  onDelete?: (stemId: string, fold: boolean) => Promise<void>
+  residualLabel?: string | null
+  /** The residual itself can't be deleted. */
+  residualId?: string | null
+  /** Shown in place of the Tide chart label, e.g. the Tide chart / Mixer switch. */
+  header?: ReactNode
   canTrim: boolean
   onKeepRange: (start:number, end:number) => string
   onSplitRange: (start:number, end:number) => string
@@ -89,7 +97,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
       className="absolute z-20 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none items-center justify-center active:cursor-grabbing"
       style={{
         left: `${(keyframe.t / duration) * 100}%`,
-        top: `${(1 - keyframe.value / MAX_GAIN) * 100}%`,
+        top: `${(1 - gainToPos(keyframe.value)) * 100}%`,
       }}
       onPointerDown={(e) => {
         e.stopPropagation()
@@ -120,7 +128,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip, onRemoveFx }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, onRename, onDelete, residualLabel = null, residualId = null, header, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip, onRemoveFx }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [selecting, setSelecting] = useState(false)
@@ -282,7 +290,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
         {/* Ruler */}
         <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
           <div className="flex items-center gap-2 border-r border-line px-4 max-md:px-2">
-            <span className="font-mono max-md:hidden text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>
+            {header ?? <span className="font-mono max-md:hidden text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>}
             <label className="ml-auto flex items-center gap-1.5 max-md:ml-0" title="Layer height">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-subtle" aria-hidden="true"><path d="M2 5h12M2 11h12" /></svg>
               <input type="range" aria-label="Layer height" min={LANE_MIN} max={LANE_MAX} step={2}
@@ -324,7 +332,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                 <div className="flex items-center gap-1"><button type="button" className="text-accent" aria-label={`${expanded.has(row.id)?'Collapse':'Expand'} ${row.label}`} aria-expanded={expanded.has(row.id)} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(row.id))next.delete(row.id);else next.add(row.id);return next})}>{expanded.has(row.id)?'▾':'▸'}</button><span className="min-w-0 flex-1 truncate text-sm font-medium">{row.label} · {row.stems.length}</span>
                   <button type="button" aria-label={`${muted?'Unmute':'Mute'} all ${row.label}`} aria-pressed={muted} className="rounded border border-line px-1 text-xs" onClick={()=>onActions(groupActions(tracks,ids,{type:'mute',value:!muted}))}>M</button>
                   <button type="button" aria-label={`${solo?'Unsolo':'Solo'} all ${row.label}`} aria-pressed={solo} className="rounded border border-line px-1 text-xs" onClick={()=>onActions(groupActions(tracks,ids,{type:'solo',value:!solo}))}>S</button></div>
-                <label className="flex items-center gap-2 text-xs text-muted">Volume<input aria-label={`${row.label} group volume`} className="fader min-w-0 flex-1" type="range" min={0} max={MAX_GAIN} step={.01} value={gain} onChange={e=>onActions(groupActions(tracks,ids,{type:'gain',value:Number(e.target.value)}),`group-gain:${row.id}`)}/></label>
+                <label className="flex items-center gap-2 text-xs text-muted">Volume<input aria-label={`${row.label} group volume`} className="fader min-w-0 flex-1" type="range" min={0} max={1} step={0.001} value={gainToPos(gain)} onChange={e=>onActions(groupActions(tracks,ids,{type:'gain',value:posToGain(Number(e.target.value))}),`group-gain:${row.id}`)}/></label>
               </div>
               <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">{row.stems.map(stem=>{const peaks=engine.getPeaks(stem.id),track=tracks.find(t=>t.stemId===stem.id);if(!peaks||!track)return null;const interval=stem.soundInterval;const clipPath=interval && stem.duration>0 ? `inset(0 ${Math.max(0,100-100*interval.end/stem.duration)}% 0 ${Math.max(0,100*interval.start/stem.duration)}%)` : undefined;return <div key={stem.id} className="absolute inset-y-0" style={{left:`${(stemStart(stem)/duration)*100}%`,width:`${(stem.duration/duration)*100}%`,clipPath}}><Waveform peaks={peaks} color={ACCENT} dimmed={!isAudible(tracks,track)}/></div>})}</div>
             </div>
@@ -348,6 +356,10 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                 audible={audible}
                 onAction={onAction}
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
+                onRename={onRename ? (name) => onRename(stem.id, name) : undefined}
+                onDelete={onDelete ? (fold) => onDelete(stem.id, fold) : undefined}
+                residualLabel={residualLabel}
+                residualId={residualId}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
                 onRemoveFx={onRemoveFx ? (chip) => onRemoveFx(stem.id, chip) : undefined}
@@ -386,7 +398,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                   <>
                     <div
                       className="absolute right-0 left-0 border-t border-dashed border-tint/20"
-                      style={{ top: `${(1 - 1 / MAX_GAIN) * 100}%` }}
+                      style={{ top: `${(1 - gainToPos(1)) * 100}%` }}
                     />
                     <svg
                       className="pointer-events-none absolute inset-0 h-full w-full"
@@ -399,7 +411,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                         strokeWidth={1.5}
                         vectorEffect="non-scaling-stroke"
                         points={track.automation
-                          .map((k) => `${(k.t / duration) * 100},${(1 - k.value / MAX_GAIN) * 100}`)
+                          .map((k) => `${(k.t / duration) * 100},${(1 - gainToPos(k.value)) * 100}`)
                           .join(' ')}
                       />
                     </svg>

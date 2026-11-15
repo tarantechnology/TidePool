@@ -47,6 +47,11 @@ music = [
     # PANNs Cnn14, the default router classifier (AUDIO_ROUTER_CLASSIFIER=panns); 0.1.1 tested.
     "panns-inference>=0.1.1",
 ]
+# Explode's speaker split (dialogue -> person 1, person 2, ...): ECAPA-TDNN speaker embeddings
+# from speechbrain/spkrec-ecapa-voxceleb (public, ungated; downloads once on first use).
+speakers = [
+    "speechbrain>=1.0",
+]
 # AUDIO_STEM_SPLITTER=chain additionally runs a RoFormer vocal model through audio-separator.
 music-chain = [
     "audio-separator>=0.17",

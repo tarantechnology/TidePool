@@ -189,7 +189,7 @@ input[type="range"].fader::-moz-range-thumb {
   .shimmer, .rise-in { animation: none; }
 }
 
-/* Tidepool entrance: rings spread, the name surfaces, then the water opens from the click point. */
+/* TidePool entrance: rings spread, the name surfaces, then the water opens from the click point. */
 @property --tp-r {
   syntax: "<length>";
   inherits: false;
@@ -294,4 +294,58 @@ input[type="range"].fader::-moz-range-thumb {
 @keyframes tp-fade { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .tp-dialog[open], .tp-dialog[open]::backdrop, .tp-dialog[open] .tp-feature { animation: none; }
+}
+
+/* The Mixer's tall faders: the same fader, stood upright (bottom is silent). */
+input[type="range"].mixer-fader {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: 100%;
+  min-height: 96px;
+}
+input[type="range"].mixer-fader::-webkit-slider-runnable-track {
+  width: 6px;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(
+    to top,
+    var(--fill, #2270c8) 0 var(--pos, 50%),
+    rgb(29 90 158 / 0.14) var(--pos, 50%) 100%
+  );
+}
+input[type="range"].mixer-fader::-webkit-slider-thumb {
+  width: 22px;
+  height: 22px;
+  margin-top: 0;
+  margin-left: -8px;
+}
+input[type="range"].mixer-fader::-moz-range-track {
+  width: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to top,
+    var(--fill, #2270c8) 0 var(--pos, 50%),
+    rgb(29 90 158 / 0.14) var(--pos, 50%) 100%
+  );
+}
+input[type="range"].mixer-fader::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+}
+
+/* Moon pull: a rule's moments on the motif strip glow while the playhead is inside them. */
+.motif-mark {
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.7) inset;
+}
+.motif-live {
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.9) inset, 0 0 12px 2px var(--motif);
+  animation: motif-pulse 0.9s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+}
+@keyframes motif-pulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.25); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .motif-live { animation: none; }
 }

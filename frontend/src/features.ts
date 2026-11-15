@@ -1,8 +1,8 @@
 /**
- * Tidepool's feature names, each something you'd find in or near a tidepool:
+ * TidePool's feature names, each something you'd find in or near a tidepool:
  * Whirlpool separates, Ripple selects by sight, Current takes commands,
  * Reflection compares, Deep dive retries for quality, Undertow pulls out more,
- * Tide chart is the timeline, Outflow exports.
+ * Tide chart is the timeline, Outflow exports, Moon pull keeps a sound's meaning for the whole clip.
  */
 export const FEATURES = {
   separate: 'Whirlpool',
@@ -13,6 +13,7 @@ export const FEATURES = {
   refine: 'Undertow',
   timeline: 'Tide chart',
   export: 'Outflow',
+  symbolism: 'Moon pull',
 } as const
 
 /** What each feature does, in the order a first-time user meets them. Shown in the landing page's Features dialog. */
@@ -24,5 +25,6 @@ export const FEATURE_GUIDE: Array<{ name: string; what: string }> = [
   { name: FEATURES.quality, what: 'A slower, more careful separation pass for when the first result is not clean enough.' },
   { name: FEATURES.refine, what: 'Pulls out more of a sound that the first pass only made quieter.' },
   { name: FEATURES.timeline, what: 'Every layer on one timeline: mute, solo, set volume and draw volume changes over time.' },
+  { name: FEATURES.symbolism, what: 'Give a sound a meaning and it keeps it for the whole clip, like thunder that answers every lie. Rules come from lines of dialogue, moments you mark, or when a layer gets loud.' },
   { name: FEATURES.export, what: 'Download the result as an MP4 with your new audio, or as WAV or MP3.' },
 ]

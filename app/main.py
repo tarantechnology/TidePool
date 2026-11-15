@@ -25,7 +25,7 @@ async def lifespan(app):
     init(); stop.clear(); thread=threading.Thread(target=loop,daemon=True); thread.start()
     yield
     stop.set(); thread.join(timeout=2)
-app=FastAPI(title='SoundCanvas API',lifespan=lifespan)
+app=FastAPI(title='TidePool API',lifespan=lifespan)
 _preview_lock = threading.Lock()
 
 def build_preview(pid, original):

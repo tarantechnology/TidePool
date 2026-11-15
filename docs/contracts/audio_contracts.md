@@ -1,4 +1,4 @@
-# SoundCanvas audio contracts (Person 1 proposal)
+# TidePool audio contracts (Person 1 proposal)
 
 **Issue #4 implementation update (2026-11-07):** the project backend now supplies
 trusted source media and stored detections for validated selections, preserves

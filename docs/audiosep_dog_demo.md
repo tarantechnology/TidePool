@@ -6,7 +6,7 @@ mixture audio only. No masks, frames, anchors, or reference stems condition it.
 
 ## Reproduce
 
-Start from SoundCanvas commit `8a5cb33`. These scripts run from a feature branch
+Start from TidePool commit `8a5cb33`. These scripts run from a feature branch
 and write all media outside Git. Render the authored dialogue on CPU with the Apache-2.0 Kokoro model using
 `scripts/synthesize_demo_dialogue.py` (isolated `kokoro-onnx` environment; explicit
 ONNX model and voices paths). Then prepare the controlled input:
@@ -82,7 +82,7 @@ python scripts/report_audiosep_dog_demo.py \
 ```
 
 The runner requires real CUDA, acquires the existing exclusive experiment GPU
-lease, loads the real adapter, and calls SoundCanvas's `Engine.separate` with one
+lease, loads the real adapter, and calls TidePool's `Engine.separate` with one
 pass, no chunking, no refinement, and float32. The existing `app.media.export`
 mutes the target and keeps the mixture-derived residual. There is no oracle
 processing, reference-based cleanup, or model-specific level normalization.

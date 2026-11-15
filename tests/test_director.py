@@ -32,8 +32,9 @@ def test_director_raises_detected_event_and_keeps_surroundings(client,tmp_path,m
     def detected(*args,**kwargs):return {'sources':[{'label':'boing','prompt':'boing','intervals':[{'start':1,'end':1.5}],'interval_scores':[.9],'score':.9}]}
     def separate(source,directory,payload,report=None):
         target=directory/(uid()+'.wav');residual=directory/(uid()+'.wav')
-        run('ffmpeg','-v','error','-y','-i',str(source),'-af','volume=0.25','-c:a','pcm_f32le',str(target))
-        run('ffmpeg','-v','error','-y','-i',str(source),'-af','volume=0.75','-c:a','pcm_f32le',str(residual))
+        # Like a real separation, the event layer only holds the event, so the raise makes room only around it.
+        run('ffmpeg','-v','error','-y','-i',str(source),'-af',"volume='0.25*between(t,1,1.5)':eval=frame",'-c:a','pcm_f32le',str(target))
+        run('ffmpeg','-v','error','-y','-i',str(source),'-af',"volume='1-0.25*between(t,1,1.5)':eval=frame",'-c:a','pcm_f32le',str(residual))
         if report is not None:report.update(model={'backend':'fake','is_mock':True},warnings=['Mock model'])
         return [{'name':'boing','path':target},{'name':'residual','path':residual}]
     monkeypatch.setattr(discovery,'discover',detected);monkeypatch.setattr(candidates,'separate',separate)
@@ -49,7 +50,7 @@ def test_director_raises_detected_event_and_keeps_surroundings(client,tmp_path,m
     a=tmp_path/'before.wav';b=tmp_path/'after.wav';a.write_bytes(client.get(job['original_url'],headers=h).content);b.write_bytes(client.get(job['mix_url'],headers=h).content)
     before,sr=read_wav(a);after,_=read_wav(b)
     assert np.array_equal(before[:int(.8*sr)],after[:int(.8*sr)])
-    assert np.array_equal(before[int(1.7*sr):],after[int(1.7*sr):])
+    assert np.array_equal(before[int(2.1*sr):],after[int(2.1*sr):])   # the rest gets its room back 500 ms after the event
     assert np.max(np.abs(before[int(.9*sr):int(1.6*sr)]-after[int(.9*sr):int(1.6*sr)]))>0.001
     assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
     rows=client.get(f'/api/projects/{pid}/stems',headers=h).json()

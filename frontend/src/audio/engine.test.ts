@@ -11,7 +11,13 @@ class FakeParam {
   cancelScheduledValues() {
     this.events = []
   }
-  setTargetAtTime() {}
+  setTargetAtTime(value: number, time: number) {
+    this.events.push(['target', value, time])
+  }
+  setValueCurveAtTime(values: Float32Array, time: number, duration: number) {
+    this.curves.push({ values: Array.from(values), time, duration })
+  }
+  curves: Array<{ values: number[]; time: number; duration: number }> = []
   setValueAtTime(value: number, time: number) {
     this.events.push(['set', value, time])
   }
@@ -70,8 +76,8 @@ class FakeContext {
   async decodeAudioData(bytes: ArrayBuffer) {
     const seconds = new Float32Array(bytes)[0]
     if (seconds === 0) throw new Error('decode failed')
-    const data = new Float32Array(seconds * 100)
-    return { duration: seconds, sampleRate: 100, length: data.length, getChannelData: () => data }
+    const data = new Float32Array(seconds * 100).fill(0.1)
+    return { duration: seconds, sampleRate: 100, numberOfChannels: 1, length: data.length, getChannelData: () => data }
   }
   resume = () => made.resume()
   async close() {}
@@ -313,7 +319,7 @@ describe('AudioEngine', () => {
     const sources = () => made.sources.filter((s) => s.started && !s.stopped)
     const envelopeEvents = (stemIndex: number) =>
       // Gains in creation order after master: envelope, fader, gate per stem.
-      made.gains.slice(-6)[stemIndex * 3].gain.events
+      made.gains.slice(-8)[stemIndex * 4].gain.events.filter((e) => e[0] !== 'target')
 
     beforeEach(async () => {
       await engine.replaceStems([placed('a', 5, { startOffset: 2 }), placed('b', 3, {})])
@@ -383,11 +389,47 @@ describe('AudioEngine', () => {
       await engine.replaceStems([placed('a', 10, { muteRanges: [[2, 3]] })])
       engine.setTracks([track('a')])
       engine.seek(2.5)
-      expect(made.gains.slice(-3)[0].gain.events).toEqual([['set', 0, 0]])
+      expect(made.gains.slice(-4)[0].gain.events.filter((e) => e[0] !== 'target')).toEqual([['set', 0, 0]])
     })
 
     it('gives analysis the offset', () => {
       expect(engine.getSamples('a')?.startOffset).toBe(2)
+    })
+  })
+
+  describe('making room for a boosted layer', () => {
+    // Per stem the engine makes envelope, fader, room, gate, in that order. Every fake stem is a steady tone.
+    const room = (stemIndex: number, count: number) => made.gains.slice(-4 * count)[stemIndex * 4 + 2].gain
+    const lastTarget = (p: FakeParam) => p.events.filter((e) => e[0] === 'target').at(-1)?.[1]
+
+    it('turns the other layers down by the boosted layer\'s level while it sounds', async () => {
+      await engine.replaceStems([stem('a', 4), stem('b', 4), stem('c', 4)])
+      engine.seek(1)
+      engine.setTracks([{ ...track('a'), gain: 4 }, track('b'), track('c')])
+      expect(lastTarget(room(0, 3))).toBe(1)
+      expect(lastTarget(room(1, 3))).toBeCloseTo(0.25)
+      expect(lastTarget(room(2, 3))).toBeCloseTo(0.25)
+    })
+
+    it('leaves the mix alone at or below 100%, and ignores a muted boost', async () => {
+      await engine.replaceStems([stem('a', 4), stem('b', 4)])
+      engine.seek(1)
+      engine.setTracks([{ ...track('a'), gain: 1 }, track('b')])
+      expect(lastTarget(room(1, 2))).toBe(1)
+      engine.setTracks([{ ...track('a'), gain: 5, muted: true }, track('b')])
+      expect(lastTarget(room(1, 2))).toBe(1)
+    })
+
+    it('follows a boosted layer\'s volume curve while playing', async () => {
+      await engine.replaceStems([stem('a', 4), stem('b', 4)])
+      engine.setTracks([{ ...track('a'), automation: [{ t: 0, value: 1 }, { t: 2, value: 4 }] }, track('b')])
+      await engine.play()
+      const curve = room(1, 2).curves.at(-1)!
+      expect(curve.duration).toBeCloseTo(4)
+      expect(curve.values[10]).toBeCloseTo(1 / (1 + 3 * 0.05), 2)
+      expect(curve.values[200]).toBeCloseTo(0.25)
+      expect(curve.values.at(-2)).toBeCloseTo(0.25)
+      expect(curve.values.at(-1)).toBe(1) // the booster has ended
     })
   })
 

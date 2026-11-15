@@ -54,6 +54,12 @@ def test_spoken_spellings_match(heard, asked, ok):
     assert [w['word'] for w in find(words, {'profanity': False, 'words': [asked]})] == ([heard] if ok else [])
 
 
+def test_a_short_word_after_the_name_is_not_marked():
+    words = [{'word': w, 'start': i * .5, 'end': i * .5 + .4} for i, w in enumerate('Muhammad is a Mohamed and Mac Levin was MacLevin'.split())]
+    assert [w['word'] for w in find(words, {'profanity': False, 'words': ['mohammed']})] == ['Muhammad', 'Mohamed']
+    assert [w['word'] for w in find(words, {'profanity': False, 'words': ['mclovin']})] == ['Mac', 'Levin', 'MacLevin']
+
+
 def test_blend_many_only_changes_the_windows():
     from app.fx import blend_many, layer_intervals
     sr = 1000; dry = np.zeros((3000, 1), np.float32); wet = np.ones((3000, 1), np.float32)

@@ -174,7 +174,9 @@ def find(words, on_words):
                 for j in range(n): hits[i + j] = True
         if n == 1:  # "McLovin" heard as "Mc Lovin": two transcript words that join into the asked word.
             for i in range(len(keys) - 1):
-                if keys[i] and keys[i + 1] and same(keys[i] + keys[i + 1], parts[0]): hits[i] = hits[i + 1] = True
+                # Only a real split: neither half is the word on its own ("Muhammad is" must not mark "is").
+                a, b = keys[i], keys[i + 1]
+                if a and b and not same(a, parts[0]) and not same(b, parts[0]) and same(a + b, parts[0]): hits[i] = hits[i + 1] = True
     return [w for w, h in zip(words, hits) if h]
 
 

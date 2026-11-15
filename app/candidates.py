@@ -184,8 +184,14 @@ def apply(job):
                 expected = snapshot.get('stem_hashes', {}).get(item['id'])
                 if expected and file_sha256(safe_path(pid, item['path'])) != expected: raise ValueError('A source layer changed')
         except (OSError,ValueError) as exc: raise HTTPException(409,'Preview media changed or is unavailable; regenerate it.') from exc
-        project=db.execute('SELECT audio FROM projects WHERE id=?',(pid,)).fetchone()
+        project=db.execute('SELECT audio,original,visual FROM projects WHERE id=?',(pid,)).fetchone()
         if project['audio']!=snapshot.get('project_audio',project['audio']): raise HTTPException(409,'Project media changed since preview; regenerate it.')
+        if snapshot.get('visual_analysis_id'):
+            try:
+                visual=json.loads(project['visual'] or '{}')
+                if visual.get('analysis_id')!=snapshot['visual_analysis_id'] or file_sha256(project['original'])!=snapshot['visual_source_sha256']:
+                    raise ValueError('Object analysis changed')
+            except (ValueError,OSError,TypeError) as exc: raise HTTPException(409,'Object analysis changed; generate a new preview.') from exc
         old=revisions(current)
         remove_ids=data.get('remove_ids',[])
         if remove_ids:

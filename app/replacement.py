@@ -349,6 +349,12 @@ def parse_replacement(text,duration):
     example=re.search(r'\s*[;,]\s*(?:use|using)\s+(?:the|that)\s+sound\s+((?:at|around|near)\s+\d+(?:\.\d+)?\s*(?:seconds?|secs?|s))\s+as\s+(?:an?\s+)?example[.!?]?\s*$',text,re.I)
     if example:
         text=text[:example.start()].rstrip()+' '+example.group(1)
+    visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:we\s+)?see\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)[.!?]?',text,re.I)
+    if visible:
+        effect,label,track_id=visible.group(1).strip(),visible.group(2).strip().lower(),int(visible.group(3))
+        if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')
+        effect_request(effect)
+        return {'source':'','effect':effect,'time':None,'mode':'add','object_label':label,'object_track_id':track_id}
     spoken=re.fullmatch(r'''(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:after|when|whenever)\s+(?:(?:the|every|each)\s+)?(?:word\s+)?["“']?([\w]+(?:['’][\w]+)*)["”']?(?:\s+(?:is|was|has\s+been)\s+(?:said|spoken|mentioned))?[.!?]?''',text,re.I)
     if spoken:
         effect,word=spoken.group(1).strip(),spoken.group(2).strip()
@@ -415,7 +421,18 @@ def auto_build(project,payload,cid):
     search_duration=probe(detection_source)['duration'] if selected_layer else duration
     local_time=plan['time']-source_offset if plan['time'] is not None else None
     if local_time is not None and not 0<=local_time<search_duration:raise ValueError('The timestamp is outside the selected source layer.')
-    if plan.get('spoken_word'):
+    if plan.get('object_track_id') is not None:
+        from .object_selection import appearances
+        set_stage(cid,'finding',15)
+        found=appearances(project,plan['object_track_id'],plan['object_label'])
+        if found['analysis_id']!=snapshot.get('visual_analysis_id') or found['source_sha256']!=snapshot.get('visual_source_sha256'):
+            raise ValueError('Object analysis changed; find objects and preview again.')
+        intervals=[{'start':t,'end':min(duration,t+.01)} for t in found['starts'] if t<duration]
+        if not intervals:raise ValueError('No appearances were found inside the audio timeline.')
+        detection_meta={'method':'visual-track','analysis_id':found['analysis_id'],'label':found['label'],'track_id':found['track_id'],'processed_duration':found['processed_duration']}
+        note=f"Found {len(intervals)} appearance(s) of {found['label']} #{found['track_id']}. Tracking can miss appearances or switch identities; review each placement."
+        if found['processed_duration']+0.1<duration: note+=f" Only the first {found['processed_duration']:.1f} seconds were analyzed."
+    elif plan.get('spoken_word'):
         from .censorship import transcribe, MAX_DURATION
         import re
         if duration>MAX_DURATION: raise ValueError('Word timing is limited to 10 minutes per preview.')
@@ -480,7 +497,7 @@ def auto_build(project,payload,cid):
     asset=prepare_effect(project,{'prompt':plan['effect']})
     set_stage(cid,'separating',60)
     output=build(project,{'_candidate':snapshot,'asset_id':asset['asset_id'],'asset_sha256':file_sha256(asset_path(pid,asset['asset_id'])),
-                          'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints,'source_stem_id':payload.get('source_stem_id'),'alignment':'onset' if plan.get('spoken_word') else 'peak'},cid)
+                          'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints,'source_stem_id':payload.get('source_stem_id'),'alignment':'onset' if plan.get('spoken_word') or plan.get('object_track_id') is not None else 'peak'},cid)
     output['inference']['warnings'].insert(0,note)
     if resolver_unavailable:
         output['inference']['warnings'].append('Could not check for a similarly named effect layer; searched the residual audio instead.')

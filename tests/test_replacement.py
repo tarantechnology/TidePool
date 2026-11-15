@@ -112,6 +112,7 @@ def test_parse_replacement_and_vague_requests():
     assert parse_replacement('add a quack at 4 seconds',10)=={'source':'','effect':'quack','time':4,'mode':'add'}
     assert parse_replacement('Add a gong sound after the word "quant" has been said.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','spoken_word':'quant'}
     assert parse_replacement('add a gong whenever the word quant is said',10)=={'source':'','effect':'gong','time':None,'mode':'add','spoken_word':'quant'}
+    assert parse_replacement('Add a gong every time we see person 5',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
     assert parse_replacement('replace the punch at 4 seconds with a quack',10)=={'source':'punch','effect':'quack','time':4}
     assert parse_replacement('Replace all knife chopping sounds with a quack; use the sound at 4 seconds as an example',10)=={'source':'knife chopping sounds','effect':'quack','time':4,'all_occurrences':True}
     assert parse_replacement('replace every punch with a gong, using that sound around 3.5s as an example.',10)=={'source':'punch','effect':'gong','time':3.5,'all_occurrences':True}
@@ -146,6 +147,41 @@ def test_add_generated_sound_after_spoken_word(client,tmp_path,monkeypatch):
     failed=wait(client,missing.json()['candidate_id'],h)
     assert failed['status']=='failed' and "couldn't find" in failed['error']
     assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
+
+
+def test_add_effect_at_tracked_object_appearances_and_reject_stale_analysis(client,tmp_path,monkeypatch):
+    import json
+    from app.core import connect
+    from app.visual import file_sha256
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Add a gong every time we see person 5'}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json=body).status_code==422
+    with connect() as db:
+        original=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original']
+        frames=[{'timestamp_seconds':t,'objects':[{'track_id':5,'label':'person','mask':{'encoding':'rle'}}]} for t in (.2,.3,.4,2.2,2.3,2.4,3.5)]
+        visual={'selection_only':True,'video_id':pid,'analysis_id':'analysis-a','original_source_sha256':file_sha256(original),'fps':10,'processed_duration_seconds':4,'discovery_mode':'automatic','frames':frames}
+        db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    wrong=client.post(url,headers=h,json={'request':'Add a gong whenever we see dog 5'})
+    assert wrong.status_code==422 and 'labeled person' in wrong.text
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['peak_times']==pytest.approx([.2,2.2])
+    assert job['provenance']['alignment']=='onset' and job['provenance']['detection']['track_id']==5
+    assert any('first 4.0 seconds' in w and 'Tracking' in w for w in job['inference']['warnings'])
+    with connect() as db:
+        visual['analysis_id']='analysis-b';db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==409
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];assert wait(client,cid,h)['status']=='completed'
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    effects=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='effect']
+    assert len(effects)==2 and effects[0]['effect_group_id']==effects[1]['effect_group_id']
+    assert client.post(f'/api/candidates/{cid}/undo',headers=h).status_code==200
 
 
 def test_automatic_replacement_finds_generates_and_previews(client,tmp_path,monkeypatch):

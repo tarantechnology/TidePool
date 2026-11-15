@@ -599,11 +599,16 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
         if body.source_stem_id and selected and selected['id']!=body.source_stem_id:raise HTTPException(422,'The named layer and selected layer do not match.')
         plan=parse_replacement(request,probe(source)['duration'])
+        visual_snapshot={}
+        if plan.get('object_track_id') is not None:
+            from .object_selection import appearances
+            found=appearances(p,plan['object_track_id'],plan['object_label'])
+            visual_snapshot={'visual_analysis_id':found['analysis_id'],'visual_source_sha256':found['source_sha256']}
         if selected and plan.get('mode')=='add':raise HTTPException(422,'A source layer is only used when replacing a sound.')
         if selected and plan.get('time') is not None and not selected['start_offset']<=plan['time']<selected['start_offset']+selected['duration']:raise HTTPException(422,'The timestamp is outside the selected source layer.')
         known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
         if plan.get('mode')!='add' and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
-        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows},**visual_snapshot}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None}),'status':'queued'}
 

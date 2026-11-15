@@ -2,6 +2,7 @@
 MIDI and the two HTTP endpoints. CPU only; the synthetic song has known tempo/key/chords."""
 import base64
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -364,3 +365,34 @@ def test_generator_amt_engine_with_fake_model(song, analysis):
     starts = [n.start for n in res.notes]
     assert all(min(abs(s - b) for b in analysis["beats"]) < 1e-6 for s in starts[:8])  # snapped to the grid
     assert res.engine["name"] == "amt" and res.engine["commercial_use"] is True and res.midi
+
+
+@pytest.mark.parametrize("rid", ["../escaped", "/abs/path", "a/b", "..", "."])
+def test_generate_part_rejects_unsafe_request_id(gen_client, song, analysis, settings, rid):
+    meta = {"instrument": "violins", "analysis": analysis, "return_mode": "file", "request_id": rid}
+    r = gen_client.post("/v1/generate-part", files=_files(song), data={"metadata": json.dumps(meta)})
+    assert r.status_code in (400, 422), r.text
+    assert not (Path(settings.output_root).resolve().parent / "escaped").exists()
+    r = gen_client.post("/v1/analyze-music", files=_files(song), data={"metadata": json.dumps({"melody": False, "request_id": rid})})
+    assert r.status_code in (400, 422) or rid in ("..", ".")  # analyze writes nothing; the pattern alone guards it
+
+
+def test_generate_part_file_mode_safe_request_id(gen_client, song, analysis, settings):
+    meta = {"instrument": "violins", "analysis": analysis, "return_mode": "file", "request_id": "req-1.ok"}
+    r = gen_client.post("/v1/generate-part", files=_files(song), data={"metadata": json.dumps(meta)})
+    assert r.status_code == 200, r.text
+    assert (Path(settings.output_root).resolve() / "req-1.ok" / "part.wav").exists()
+
+
+@pytest.mark.parametrize("bad", [{"tempo": 120}, {"duration": "x", "tempo": 120}, {"duration": 10, "tempo": 120, "chords": "C"},
+                                 {"duration": 10, "tempo": 120, "sections": [1, 2]}])
+def test_generate_part_malformed_analysis_is_400(gen_client, song, bad):
+    r = gen_client.post("/v1/generate-part", files=_files(song), data={"metadata": json.dumps({"instrument": "violins", "analysis": bad})})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "INVALID_REQUEST", r.text
+
+
+def test_generate_part_enforces_max_seconds_with_supplied_analysis(song, analysis, settings):
+    g = Generator(GenSettings(samples_dir=None, amt_model="off", max_seconds=1.0), analyzer=MusicAnalyzer(), load_models=False)
+    with TestClient(create_app(settings, generator=g)) as c:
+        r = c.post("/v1/generate-part", files=_files(song), data={"metadata": json.dumps({"instrument": "violins", "analysis": analysis})})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "UNSUPPORTED_OPERATION", r.text

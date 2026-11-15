@@ -33,6 +33,8 @@ from ..media import resolve_ref, to_file_ref
 from .engine import ENGINES, Generator, PartRequest
 
 MAX_STEMS = 12
+# Same constraint as contracts.SeparateMetadata.request_id: a single safe path segment under output_root.
+REQUEST_ID_PATTERN = r"^[A-Za-z0-9._-]+$"
 
 
 def plain(obj: Any) -> Any:
@@ -57,7 +59,7 @@ class Interval(BaseModel):
 class AnalyzeMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
     melody: bool = True
-    request_id: str | None = None
+    request_id: str | None = Field(default=None, max_length=128, pattern=REQUEST_ID_PATTERN)
 
 
 class GenerateMetadata(BaseModel):
@@ -81,7 +83,7 @@ class GenerateMetadata(BaseModel):
     output_sample_rate: int | None = Field(default=None, ge=8000, le=192000)
     include_analysis: bool = True
     audio_checks: bool = False
-    request_id: str | None = None
+    request_id: str | None = Field(default=None, max_length=128, pattern=REQUEST_ID_PATTERN)
 
     @field_validator("engine")
     @classmethod
@@ -221,7 +223,10 @@ def register(app: FastAPI, settings, generator: Generator) -> None:
             audio: dict[str, Any] = {"format": fmt, "sample_rate": res.sample_rate, "channels": int(res.audio.shape[0]),
                                      "sample_count": int(res.audio.shape[1]), "duration": round(res.audio.shape[1] / res.sample_rate, 6), "start_time": 0.0}
             if meta.return_mode == "file":
-                out_dir = Path(settings.output_root) / request_id
+                root = Path(settings.output_root).resolve()
+                out_dir = (root / request_id).resolve()
+                if out_dir.parent != root:
+                    raise InvalidRequest("request_id must be a single path segment")
                 try:
                     out_dir.mkdir(parents=True, exist_ok=True)
                     (out_dir / ("part.flac" if fmt.startswith("flac") else "part.wav")).write_bytes(wav)

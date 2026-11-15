@@ -73,6 +73,30 @@ class PartResult:
     elapsed: dict[str, float] = field(default_factory=dict)
 
 
+def _checked_analysis(analysis: Any) -> dict[str, Any]:
+    """A client-supplied (cached) analysis must have the shape the composer reads; reject it as a 400 otherwise."""
+    def bad(msg: str):
+        raise InvalidRequest(f"invalid analysis: {msg}")
+    if not isinstance(analysis, dict):
+        bad("must be an object")
+    for key in ("duration", "tempo"):
+        v = analysis.get(key)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or v <= 0:
+            bad(f"{key} must be a positive number")
+    for key in ("beats", "downbeats", "chords", "sections", "melody_midi", "warnings"):
+        if analysis.get(key) is not None and not isinstance(analysis[key], list):
+            bad(f"{key} must be a list")
+    for c in analysis.get("chords") or []:
+        if not isinstance(c, dict) or not isinstance(c.get("start"), (int, float)) or not isinstance(c.get("end"), (int, float)):
+            bad("chords must be [{start, end, chord}]")
+    for sec in analysis.get("sections") or []:
+        if not isinstance(sec, dict) or not isinstance(sec.get("start"), (int, float)) or not isinstance(sec.get("end"), (int, float)):
+            bad("sections must be [{start, end, ...}]")
+    if analysis.get("key") is not None and not isinstance(analysis["key"], dict):
+        bad("key must be an object")
+    return analysis
+
+
 def _windows(analysis: dict[str, Any], sections, interval, prompt: str | None) -> tuple[list[tuple[float, float]], list[str]]:
     dur = float(analysis["duration"])
     secs = analysis.get("sections") or []
@@ -194,7 +218,9 @@ class Generator:
             mix = sum(np.pad(np.atleast_2d(v), ((0, 0), (0, n - v.shape[-1]))) for v in stems.values())
         mix = np.atleast_2d(mix).astype(np.float32)
         n_out = mix.shape[-1]
-        analysis = req.analysis or self.analyze(mix, sr, stems)
+        if n_out / sr > self.settings.max_seconds:  # also when the client supplies a cached analysis
+            raise UnsupportedOperation("audio too long for part generation", details={"max_seconds": self.settings.max_seconds})
+        analysis = _checked_analysis(req.analysis) if req.analysis else self.analyze(mix, sr, stems)
         elapsed["analysis"] = round(time.perf_counter() - t_start, 3)
         spec = resolve(req.instrument, req.role, req.prompt, req.density, req.style)
         windows, warnings = _windows(analysis, req.sections, req.interval, req.prompt)

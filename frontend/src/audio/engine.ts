@@ -96,7 +96,18 @@ export class AudioEngine {
     this.ctx = new AudioContext()
     this.master = this.ctx.createGain()
     this.master.gain.value = 0.7
-    this.master.connect(this.ctx.destination)
+    // Layers go up to 500%, so a brick-wall limiter keeps the mix from clipping
+    // (the server export applies the same idea with FFmpeg's alimiter).
+    if (typeof this.ctx.createDynamicsCompressor === 'function') {
+      const limiter = this.ctx.createDynamicsCompressor()
+      limiter.threshold.value = -1
+      limiter.knee.value = 0
+      limiter.ratio.value = 20
+      limiter.attack.value = 0.003
+      limiter.release.value = 0.1
+      this.master.connect(limiter)
+      limiter.connect(this.ctx.destination)
+    } else this.master.connect(this.ctx.destination)
   }
 
   /** Used for A/B playback; does not change or save layer edits. */

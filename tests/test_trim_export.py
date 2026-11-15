@@ -1,5 +1,6 @@
 import json
 import subprocess
+import pytest
 from test_app import client, wait
 
 
@@ -48,6 +49,24 @@ def test_trim_respects_muted_layers(client,tmp_path):
     out=tmp_path/'silent.wav';out.write_bytes(client.get(job['download_url'],headers=h).content)
     samples=np.frombuffer(subprocess.check_output(['ffmpeg','-v','error','-i',str(out),'-f','f32le','-']),dtype='<f4')
     assert len(samples)>0 and np.max(np.abs(samples))==0
+
+
+@pytest.mark.parametrize('selection',[{'trim':{'start':.5,'end':1.5}}, {'clips':[{'start':1,'end':2},{'start':0,'end':1}]}])
+def test_rotated_export_keeps_selected_video_and_audio(client,tmp_path,selection):
+    clip=tmp_path/'wide.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=s=96x64:r=10:d=3',
+                    '-f','lavfi','-i','sine=frequency=440:duration=3','-c:v','libx264','-c:a','aac',str(clip)],check=True)
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    with clip.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('clip.mp4',f)}).status_code==200
+    r=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'mp4','include_video':True,'rotation':90,**selection})
+    assert r.status_code==202,r.text
+    job=wait(client,'/api/exports/'+r.json()['export_id'],h);assert job['status']=='completed',job
+    out=tmp_path/'rotated.mp4';out.write_bytes(client.get(job['download_url'],headers=h).content)
+    info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(out)]))
+    video=next(s for s in info['streams'] if s['codec_type']=='video');audio=next(s for s in info['streams'] if s['codec_type']=='audio')
+    expected=1 if 'trim' in selection else 2
+    assert (video['width'],video['height'])==(64,96)
+    assert abs(float(video['duration'])-expected)<.12 and abs(float(audio['duration'])-expected)<.12
 
 
 def test_clip_sequence_reorders_and_repeats_audio_and_video(client,tmp_path):

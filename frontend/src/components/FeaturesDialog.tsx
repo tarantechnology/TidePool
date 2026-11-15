@@ -22,7 +22,7 @@ export function FeaturesDialog({ open, onClose }: { open: boolean; onClose: () =
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="features-title" className="font-display text-2xl font-bold tracking-[-0.02em]">What's in the pool</h2>
-            <p className="mt-1 text-sm text-muted">Each part of Tidepool is named after something you'd find by the water.</p>
+            <p className="mt-1 text-sm text-muted">Each part of TidePool is named after something you'd find by the water.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="-mt-1 -mr-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>

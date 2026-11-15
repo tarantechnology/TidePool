@@ -80,7 +80,7 @@ def main() -> None:
         for eng in engines:
             try:
                 t = time.perf_counter()
-                res = gen.generate(mix, sr, stems, PartRequest(prompt=ask, engine=eng, analysis=analysis, seed=i))
+                res = gen.generate(mix, sr, stems, PartRequest(prompt=ask, engine=eng, analysis=analysis, seed=i, audio_checks=True))
                 took = time.perf_counter() - t
             except Exception as exc:  # noqa: BLE001
                 print(f"[{eng}] {ask}: FAILED {type(exc).__name__}: {exc}")

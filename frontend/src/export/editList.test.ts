@@ -44,7 +44,7 @@ describe('parseEditList', () => {
   it.each([
     ['empty stemId', { stemId: '' }],
     ['numeric stemId', { stemId: 1 }],
-    ['gain too high', { gain: 3 }],
+    ['gain too high', { gain: 6 }],
     ['negative gain', { gain: -1 }],
     ['non-finite gain', { gain: Infinity }],
     ['string muted', { muted: 'no' }],

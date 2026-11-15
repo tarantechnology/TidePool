@@ -3,6 +3,8 @@ import type { SyncTarget } from '../api/backend'
 import { StemSyncRunner } from '../api/stemSync'
 import type { TrackState } from '../types'
 
+export type StemExclusive = (id: string, work: (revision: number | undefined) => Promise<number | undefined>) => Promise<void>
+
 /**
  * Keeps the backend up to date with tracks. Returns the error to show, or '',
  * and flush, which resolves once queued edits have landed.
@@ -12,7 +14,7 @@ export function useStemSync(
   target: SyncTarget | null,
   tracks: TrackState[],
   onLateError: (message: string) => void,
-): { syncError: string; flush: () => Promise<void> } {
+): { syncError: string; flush: () => Promise<void>; exclusive: StemExclusive } {
   const [error, setError] = useState('')
   const runner = useRef<StemSyncRunner | null>(null)
 
@@ -31,5 +33,7 @@ export function useStemSync(
 
   const flush = useCallback(() => runner.current?.flush() ?? Promise.resolve(), [])
 
-  return { syncError: error, flush }
+  const exclusive = useCallback<StemExclusive>((id, work) => runner.current ? runner.current.exclusive(id, work) : work(undefined).then(() => {}), [])
+
+  return { syncError: error, flush, exclusive }
 }

@@ -1,4 +1,4 @@
-/** Tidepool: a drop and the rings it sends out. */
+/** TidePool: a drop and the rings it sends out. */
 export function Logo({ className = '', iconOnly = false }: { className?: string; iconOnly?: boolean }) {
   return (
     <span className={`inline-flex items-center gap-2 ${className}`}>
@@ -7,7 +7,7 @@ export function Logo({ className = '', iconOnly = false }: { className?: string;
         <circle cx="12" cy="12" r="6.25" stroke="#2270c8" strokeOpacity="0.6" strokeWidth="1.5" />
         <circle cx="12" cy="12" r="2.6" fill="#2270c8" />
       </svg>
-      {iconOnly ? <span className="sr-only">Tidepool</span> : <span className="font-display text-[17px] font-bold tracking-[-0.02em]">Tidepool</span>}
+      {iconOnly ? <span className="sr-only">TidePool</span> : <span className="font-display text-[17px] font-bold tracking-[-0.02em]">TidePool</span>}
     </span>
   )
 }

@@ -18,6 +18,10 @@ import numpy as np
 
 from . import dsp
 
+from concurrent.futures import ThreadPoolExecutor
+
+_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gen-mix")  # numpy FFTs release the GIL
+
 ROLE_LEVEL_LU = {"pad": -9.0, "counter_melody": -8.0, "lead": -6.5, "ostinato": -9.5, "bassline": -6.0, "riff": -8.0, "stabs": -8.0, "chords": -7.5}
 ROLE_HPF = {"bassline": 28.0, "pad": 110.0, "chords": 70.0, "stabs": 120.0, "ostinato": 140.0, "counter_melody": 150.0, "lead": 160.0, "riff": 90.0}
 
@@ -87,15 +91,14 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
     if pres is not None and carve_db > 0 and role != "bassline":
         freqs = np.fft.rfftfreq(n_fft, 1 / sr)
         band = np.exp(-0.5 * (np.log2(np.maximum(freqs, 1) / 2800) / 0.7) ** 2)  # centred 2.8 kHz, ~1.6 oct wide
-        out = np.empty_like(part)
-        for c in range(part.shape[0]):
-            spec = dsp.stft(part[c], n_fft, hop)
+        def carve(ch):
+            spec = dsp.stft(ch, n_fft, hop)
             p = pres[: len(spec)]
             if len(p) < len(spec):
                 p = np.pad(p, (0, len(spec) - len(p)))
-            gain = 10 ** (-carve_db * p[:, None] * band[None, :] / 20)
-            out[c] = dsp.istft(spec * gain, n, n_fft, hop)
-        part = out
+            gain = (10 ** (-carve_db * p[:, None] * band[None, :] / 20)).astype(np.float32)
+            return dsp.istft(spec * gain, n, n_fft, hop)
+        part = np.stack(list(_POOL.map(carve, list(part))))
         report["eq_carve"] = {"band_hz": [1500, 5000], "max_cut_db": carve_db, "vocal_active_fraction": round(float((pres > 0.5).mean()), 3)}
     # 3. reverb matched to the song
     space = analysis.get("space") or {"rt60": 0.8, "wet": 0.2, "predelay_ms": 18.0}
@@ -106,7 +109,7 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
         if bowed:  # strings want a hall: longer tail, 30 ms pre-delay, wetter
             rt60, wet, predelay = max(rt60, 1.8), min(0.5, wet + 0.12), 30.0
         ir = synth_ir(sr, rt60, predelay)
-        wet_sig = np.stack([dsp.fft_convolve(part[c], ir[c])[:n] for c in range(2)])
+        wet_sig = np.stack(list(_POOL.map(lambda c: dsp.fft_convolve(part[c], ir[c])[:n], range(2))))
         dry_rms, wet_rms = np.sqrt(np.mean(part ** 2) + 1e-12), np.sqrt(np.mean(wet_sig ** 2) + 1e-12)
         part = np.sqrt(1 - wet) * part + np.sqrt(wet) * wet_sig * (dry_rms / wet_rms)
         report["reverb"] = {"rt60": round(rt60, 3), "wet": round(wet, 3), "method": space.get("method", "default")}
@@ -144,7 +147,7 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
     if peak > 10 ** (-1 / 20):
         part *= 10 ** (-1 / 20) / peak
         gain_db += dsp.db(10 ** (-1 / 20) / peak)
-    final_lufs = dsp.loudness_lufs(part, sr)
+    final_lufs = part_lufs + gain_db if part_lufs > -69 else dsp.loudness_lufs(part, sr)
     song2 = song if song.shape[0] == 2 else np.repeat(song[:1], 2, axis=0)
     mix_peak = float(np.max(np.abs(song2[:, :n] + part)))
     report["loudness"] = {"song_lufs": round(song_lufs, 2), "part_lufs": round(final_lufs, 2), "relative_lu": round(final_lufs - song_lufs, 2),

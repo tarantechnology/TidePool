@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { envelopeAt, MAX_GAIN } from '../edits'
+import { envelopeAt, FOLLOW_MAX_GAIN } from '../edits'
 import {
   combineEnvelopes,
   intensityToKeyframes,
@@ -96,7 +96,7 @@ describe('intensityToKeyframes', () => {
 
   it('stays near minValue while quiet and reaches maxValue when loud', () => {
     expect(envelopeAt(kfs, 2)).toBeCloseTo(1, 1)
-    expect(envelopeAt(kfs, 18)).toBeCloseTo(MAX_GAIN, 1)
+    expect(envelopeAt(kfs, 18)).toBeCloseTo(FOLLOW_MAX_GAIN, 1)
   })
 
   it('rises through the middle of the ramp', () => {

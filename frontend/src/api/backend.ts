@@ -64,7 +64,10 @@ export interface FxPlan {
   duck_source: string | null
   duck_depth_db: number | null
   loudness_lufs: number | null
+  /** Only while these spoken words are said ("bass boost the bad words"); the preview finds them in a transcript. */
+  on_words?: FxWords | null
 }
+export interface FxWords { profanity: boolean; words: string[] }
 export interface FxPreviewRequest {
   op: 'chain' | 'adjust' | 'remove' | 'duck' | 'loudness'
   targets: string[]
@@ -77,6 +80,7 @@ export interface FxPreviewRequest {
   base_candidate_id?: string
   duck?: { source: string; depth_db: number | null }
   loudness_lufs?: number | null
+  on_words?: FxWords
 }
 
 export function toFxChips(raw: unknown): FxChip[] {
@@ -97,7 +101,7 @@ export function fxRequest(kind: 'fx' | 'duck' | 'loudness', fx: FxPlan, base?: s
   if (kind === 'loudness') return { op: 'loudness', targets, loudness_lufs: fx.loudness_lufs }
   if (fx.adjust === 'remove') return { op: 'remove', targets, preset: fx.preset }
   if (fx.adjust) return { op: 'adjust', targets, direction: fx.adjust, preset: fx.preset, ...(base ? { base_candidate_id: base } : {}) }
-  return { op: 'chain', targets, preset: fx.preset, chain: fx.chain, interval: fx.interval, speed: fx.speed }
+  return { op: 'chain', targets, preset: fx.preset, chain: fx.chain, interval: fx.interval, speed: fx.speed, ...(fx.on_words ? { on_words: fx.on_words } : {}) }
 }
 
 export async function createFxPreview(config: BackendConfig, projectId: string, body: FxPreviewRequest): Promise<string> {

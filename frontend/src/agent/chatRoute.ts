@@ -5,6 +5,7 @@ import { requestsSoundReplacement } from './replacementIntent'
 import { namesSfxSound, requestsSfxInsert } from './sfxIntent'
 import { requestsGeneratePart } from './generateIntent'
 import { requestsCensorship } from './censorshipIntent'
+import { requestsWordEffect } from './wordEffectIntent'
 import { extractLayerScope } from './layerScope'
 import { separationCommand } from '../separationCommand'
 
@@ -50,6 +51,8 @@ export interface ChatRoute {
 export function chatRoute(text: string, stems: FxStem[] = [], pendingReplacement = ''): ChatRoute {
   const none = { fx: null, sfx: false, replacement: null, generate: false }
   if (requestsCensorship(text)) return { ...none, censorship: true }
+  // "Bass boost the bad words": the server planner times the effect to the spoken words (app/word_fx.py).
+  if (requestsWordEffect(text)) return none
   const t = text.trim()
   const namedInsert = requestsSfxInsert(t) && namesSfxSound(t) && INSERT_PHRASING.test(t)
   const replacementShaped = REPLACE_VERB.test(text) || requestsSoundReplacement(text)

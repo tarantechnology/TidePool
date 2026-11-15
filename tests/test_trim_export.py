@@ -81,3 +81,27 @@ def test_clip_sequence_reorders_and_repeats_audio_and_video(client,tmp_path):
                 return subprocess.check_output(['ffmpeg','-v','error','-ss',str(t),'-i',str(out),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
             a,b,c=(np.frombuffer(frame(t),dtype='u1').astype(float) for t in (.4,1.4,2.4))
             assert np.mean(abs(a-c)) < np.mean(abs(a-b))
+
+
+def test_range_automation_is_audible_in_export_and_can_be_undone(client,tmp_path):
+    import numpy as np
+    clip=tmp_path/'tone.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=3',str(clip)],check=True)
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    with clip.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('tone.wav',f)}).status_code==200
+    jobid=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['tone']}).json()['job_id']
+    job=wait(client,'/api/jobs/'+jobid,h); assert job['status']=='completed'
+    stem=job['stems'][0]['id']
+    automation=[{'time':.5,'value':1},{'time':.55,'value':0},{'time':1.45,'value':0},{'time':1.5,'value':1}]
+    assert client.patch(f'/api/projects/{pid}/stems/{stem}',headers=h,json={'automation':automation}).status_code==200
+    def render(name):
+        response=client.post(f'/api/projects/{pid}/export',headers=h,json={'format':'wav','include_video':False}); assert response.status_code==202
+        result=wait(client,'/api/exports/'+response.json()['export_id'],h);assert result['status']=='completed',result
+        path=tmp_path/name;path.write_bytes(client.get(result['download_url'],headers=h).content)
+        return np.frombuffer(subprocess.check_output(['ffmpeg','-v','error','-i',str(path),'-ac','1','-ar','48000','-f','f32le','-']),dtype='<f4')
+    edited=render('edited.wav')
+    def rms(data,start,end): return float(np.sqrt(np.mean(data[int(start*48000):int(end*48000)]**2)))
+    assert rms(edited,.7,1.3) < rms(edited,1.8,2.4)*.01
+    assert client.patch(f'/api/projects/{pid}/stems/{stem}',headers=h,json={'automation':[]}).status_code==200
+    restored=render('restored.wav')
+    assert rms(restored,.7,1.3) > rms(edited,.7,1.3)*10 + .001

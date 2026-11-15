@@ -425,6 +425,7 @@ export default function Editor() {
           <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
               <Timeline
+                key={`${projectStems.projectId ?? 'local'}:${stems.map(s => s.id).join('|')}:${duration}`}
                 engine={engine}
                 stems={stems}
                 tracks={tracks}
@@ -432,6 +433,11 @@ export default function Editor() {
                 onAction={dispatch}
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
+                canTrim={Boolean(projectStems.projectId)}
+                onKeepRange={(start,end) => {
+                  if (!projectPanel.current) throw new Error('Project controls are not ready.')
+                  return projectPanel.current.keepRange(start,end)
+                }}
               />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">

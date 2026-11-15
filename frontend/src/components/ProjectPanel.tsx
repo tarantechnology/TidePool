@@ -67,6 +67,7 @@ export interface ProjectPanelHandle {
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan | {kind:'media'; message:string}>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
+  keepRange: (start:number, end:number) => string
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -147,6 +148,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [message, setMessage] = useState('')
   // A manual open/close lasts until the flow moves on (a new project, preview or apply).
   const [manualStep, setManualStep] = useState<{key:string;id:StepId|'none'}|null>(null)
+  const flowKey = `${project?.project_id ?? ''}|${candidateId}|${jobId}`
+  const openStep = manualStep?.key === flowKey ? manualStep.id : null
+  const setOpenStep = (next: StepId | 'none' | ((prev: StepId | 'none' | null) => StepId | 'none')) => setManualStep({key:flowKey,id:typeof next === 'function' ? next(openStep) : next})
   const [error, setError] = useState('')
   // The router's answer for this upload, and which separator the last split used.
   const [suggestion, setSuggestion] = useState<{projectId:string;text:string}|null>(null)
@@ -405,7 +409,27 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await splitInto(config, project, null)
   })
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, visualAction: async (chosen, description, action) => {
+  const finishExport = async (id: string, extension: string) => {
+    for (;;) {
+      const info=await getExport(config,id)
+      if (info.status === 'failed') throw new Error(info.error || 'Export failed')
+      if (info.status === 'completed') {
+        if (!info.download_url) throw new Error('Export has no download URL')
+        await downloadExport(config,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
+      }
+      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
+    }
+  }
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, keepRange: (start,end) => {
+    if (!project?.metadata) throw new Error('Upload media before trimming.')
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) throw new Error('Select a range within the uploaded media.')
+    start=Number(start.toFixed(3)); end=Math.min(Number(end.toFixed(3)),project.metadata.duration)
+    if (end <= start) throw new Error('Select a range within the uploaded media.')
+    setTrimStart(String(start)); setTrimEnd(String(end)); setOpenStep('export')
+    if (clips.length) { changeClips([]); setSelectedClip(null) }
+    const message=`Keeping ${start.toFixed(2)}–${end.toFixed(2)} seconds for export.${clips.length ? ' The clip list was cleared; use Undo clip edit to restore it.' : ''}`
+    setMessage(message); return message
+  }, visualAction: async (chosen, description, action) => {
     if (!project || !token) throw new Error('Upload a video first.')
     if (!description.trim()) throw new Error('Describe the sound to isolate.')
     if (busyRef.current) throw new Error('A project operation is already running.')
@@ -566,17 +590,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     }
     await loadVideo(config,info); onVisual(null); onClearSelection(); setSelection(null)
   }
-  const finishExport = async (id: string, extension: string) => {
-    for (;;) {
-      const info=await getExport(config,id)
-      if (info.status === 'failed') throw new Error(info.error || 'Export failed')
-      if (info.status === 'completed') {
-        if (!info.download_url) throw new Error('Export has no download URL')
-        await downloadExport(config,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
-      }
-      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
-    }
-  }
   const exportFile = () => run(async () => {
     if (!project) return
     await flush()
@@ -674,9 +687,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const durationSeconds = project?.metadata?.duration
   // Where the user is in Upload, Pick a sound, Preview and apply, Export.
   const current: StepId = !ready ? 'upload' : candidateId || undoId ? 'preview' : jobId ? 'export' : 'sound'
-  const flowKey = `${project?.project_id ?? ''}|${candidateId}|${jobId}`
-  const openStep = manualStep?.key === flowKey ? manualStep.id : null
-  const setOpenStep = (next: StepId | 'none' | ((prev: StepId | 'none' | null) => StepId | 'none')) => setManualStep({key:flowKey,id:typeof next === 'function' ? next(openStep) : next})
   const open = (id: StepId) => openStep === id || (openStep === null && current === id)
   const toggle = (id: StepId) => setOpenStep(prev => (prev === id || (prev === null && current === id)) ? 'none' : id)
   const status = (id: StepId): StepStatus => {

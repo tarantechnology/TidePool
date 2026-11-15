@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
-import { isAudible, MAX_GAIN, MAX_KEYFRAMES, stemStart } from '../edits'
+import { isAudible, MAX_GAIN, MAX_KEYFRAMES, spliceAutomation, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
@@ -27,6 +27,8 @@ interface Props {
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
+  canTrim: boolean
+  onKeepRange: (start:number, end:number) => string
 }
 
 function tickStep(duration: number): number {
@@ -104,8 +106,13 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, canTrim, onKeepRange }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
+  const [selecting, setSelecting] = useState(false)
+  const [selection, setSelection] = useState<{stemId:string;start:number;end:number}|null>(null)
+  const draggingRange = useRef<{stemId:string;start:number}|null>(null)
+  const previewFrame = useRef<number|null>(null)
+  useEffect(() => () => { if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current) }, [])
   // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
   // every lane at once, and dragging a lane's bottom edge sizes just that lane.
   const scroller = useRef<HTMLDivElement>(null)
@@ -147,6 +154,33 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
     engine.seek(ratio * duration)
   }
+  const timeFrom = (e: PointerEvent<HTMLDivElement>) => {
+    const rect=e.currentTarget.getBoundingClientRect()
+    return rect.width > 0 ? Math.min(duration,Math.max(0,(e.clientX-rect.left)/rect.width*duration)) : 0
+  }
+  const selectedTrack = selection && tracks.find(t => t.stemId === selection.stemId)
+  const selectedStem = selection && stems.find(s => s.id === selection.stemId)
+  const validSelection = Boolean(selection && selectedTrack && selectedStem && selection.end-selection.start >= 0.01)
+  const editSelection = (scale:number) => {
+    if (!selection || !selectedTrack || !selectedStem || !validSelection) return
+    const next=spliceAutomation(selectedTrack.automation,scale === 0 ? {level:0} : {scale},selection.start,selection.end,duration)
+    if (next.length > MAX_KEYFRAMES) { setLimitMessage(`That edit exceeds the ${MAX_KEYFRAMES}-keyframe limit.`); return }
+    onAction({type:'set_automation',stemId:selectedTrack.stemId,keyframes:next})
+    setLimitMessage(`${scale === 0 ? 'Muted' : 'Lowered'} ${selectedStem.label} in the selected range. Use Undo to restore it.`)
+  }
+  const previewSelection = async () => {
+    if (!selection || !validSelection) return
+    if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current)
+    engine.pause(); engine.seek(selection.start)
+    try { await engine.play() } catch (e) { setLimitMessage(`Playback failed: ${String(e)}`); return }
+    const stopAt=selection.end
+    const tick=() => {
+      if (!engine.isPlaying()) { previewFrame.current=null; return }
+      if (engine.getTime() >= stopAt) { engine.pause(); engine.seek(stopAt); previewFrame.current=null; return }
+      previewFrame.current=requestAnimationFrame(tick)
+    }
+    previewFrame.current=requestAnimationFrame(tick)
+  }
 
   const setAutomation = (stemId: string, keyframes: Keyframe[], coalesceKey?: string) =>
     onAction({ type: 'set_automation', stemId, keyframes }, coalesceKey)
@@ -175,6 +209,12 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
 
   return (
     <div ref={scroller} className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-xs">
+        <button type="button" aria-pressed={selecting} onClick={() => {setSelecting(!selecting);setLimitMessage('')}} className={`rounded border px-2 py-1 ${selecting ? 'border-accent bg-accent-soft text-accent' : 'border-line'}`}>Select range</button>
+        <span className="text-muted">{validSelection && selection && selectedStem ? `${selectedStem.label}: ${selection.start.toFixed(2)}–${selection.end.toFixed(2)}s` : selecting ? 'Drag across a sound wave to select a range.' : 'Select a range to edit part of a sound.'}</span>
+        {validSelection && <><button type="button" className="rounded border border-line px-2 py-1" onClick={() => void previewSelection()}>Play selection</button><button type="button" disabled={!canTrim} title={canTrim ? 'Keep this range when exporting' : 'Upload media first'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => {if (!selection) return; try {setLimitMessage(onKeepRange(selection.start,selection.end))} catch(e) {setLimitMessage(e instanceof Error ? e.message : String(e))}}}>Keep selection</button><button type="button" disabled={!syncing} title={syncing ? 'Mute this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0)}>Mute selection</button><button type="button" disabled={!syncing} title={syncing ? 'Lower this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0.3)}>Lower selection</button><button type="button" className="rounded border border-line px-2 py-1" onClick={() => setSelection(null)}>Clear selection</button></>}
+        {validSelection && !syncing && <span className="text-muted">Separate a sound first to mute or lower just that layer.</span>}
+      </div>
       {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
@@ -293,15 +333,22 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
 
         {/* Scrub layer + playhead, aligned to the lane column (15rem header) */}
         <div
-          className="absolute top-0 right-0 bottom-0 left-60 cursor-col-resize touch-none"
+          className={`absolute top-0 right-0 bottom-0 left-60 touch-none ${selecting ? 'cursor-crosshair' : 'cursor-col-resize'}`}
           onPointerDown={(e) => {
+            if (e.button !== 0 || e.ctrlKey) return
             e.currentTarget.setPointerCapture(e.pointerId)
+            const lane=(e.target as HTMLElement).closest<HTMLElement>('[data-lane]')
+            if (selecting && lane?.dataset.lane) { const start=timeFrom(e); draggingRange.current={stemId:lane.dataset.lane,start}; setSelection({stemId:lane.dataset.lane,start,end:start}); return }
             seekFrom(e)
           }}
           onPointerMove={(e) => {
-            if (e.buttons & 1) seekFrom(e)
+            if (!(e.buttons & 1)) return
+            if (draggingRange.current) {const {stemId,start}=draggingRange.current, t=timeFrom(e); setSelection({stemId,start:Math.min(start,t),end:Math.max(start,t)}); return}
+            seekFrom(e)
           }}
-          onDoubleClick={addKeyframeAt}
+          onPointerUp={() => {draggingRange.current=null}}
+          onPointerCancel={() => {draggingRange.current=null; setSelection(null)}}
+          onDoubleClick={e => {if (!selecting) addKeyframeAt(e)}}
         >
           <Playhead engine={engine} duration={duration} />
           {/* Keyframe layer: one box per lane, matching the track rows above. */}
@@ -311,6 +358,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
               if (!track || !engine.getPeaks(stem.id)) return null
               return (
                 <div key={stem.id} data-lane={stem.id} className="relative border-b border-transparent" style={{ height: laneHeight(stem.id) }}>
+                  {selection?.stemId === stem.id && <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-x-2 border-accent bg-accent/25" style={{left:`${selection.start/duration*100}%`,width:`${(selection.end-selection.start)/duration*100}%`}} />}
                   {track.automation.map((k, idx) => (
                     <KeyframeMarker
                       key={idx}

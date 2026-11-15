@@ -3,7 +3,7 @@ import math
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from .core import connect, discard, event, project_dir, probe, run, stem, uid
 from .media import InferenceError, separate, export
 from .messaging import provider
@@ -192,6 +192,8 @@ def work_once():
                 from .cinematic import build
             elif payload.get('_generate'):
                 from .generate_part import build
+            elif payload.get('_multi'):
+                from .multi import build
             else:
                 from .candidates import build
             snapshot=payload.get('_candidate') or {}
@@ -199,7 +201,8 @@ def work_once():
             # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
             if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
             creative=any(payload.get(k) for k in ('_fx','_effects','_director_adjust','_director','_cinematic','_sfx_insert','_generate'))
-            with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
+            # A multi preview reports its own "Applying 2 of 5 edits…" stage instead of the time-based estimate.
+            with (nullcontext() if payload.get('_multi') else ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload))):
                 output=build(p,payload,job['id'])
             with connect() as db:
                 db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))

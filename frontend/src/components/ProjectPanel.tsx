@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, GeneratePlan, DiscoveredSound, DirectorChange, LayerEffects, FxPreviewRequest, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery, SfxPlacement } from '../api/backend'
+import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, GeneratePlan, DiscoveredSound, DirectorChange, LayerEffects, FxPreviewRequest, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery, SfxPlacement, MultiEdit, MultiStep } from '../api/backend'
 
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
@@ -12,10 +12,11 @@ import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
 import { placementLines, sfxFollowup } from '../agent/sfxIntent'
 import { chatRoute } from '../agent/chatRoute'
+import { isCompound, localMultiPlan } from '../agent/multiCommand'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createGeneratePreview, createAutomaticReplacement, createReplacementPreview, createSfxPreview, adjustReplacementPreview, createEffectsPreview, createFxPreview, fxRequest, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createGeneratePreview, createAutomaticReplacement, createReplacementPreview, createSfxPreview, adjustReplacementPreview, createEffectsPreview, createFxPreview, createMultiPreview, fxRequest, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -109,8 +110,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [candidateWarnings,setCandidateWarnings]=useState<string[]>([])
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
-  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'fx'|'replacement'|'sfx'|'known-effect-replacement'>('separation')
+  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'fx'|'replacement'|'sfx'|'known-effect-replacement'|'multi'>('separation')
   const [sfxPlacements,setSfxPlacements]=useState<SfxPlacement[]>([])
+  const [multiEdits,setMultiEdits]=useState<MultiEdit[]>([])
+  const [multiSteps,setMultiSteps]=useState<MultiStep[]>([])
+  const [multiRequest,setMultiRequest]=useState('')
+  const [multiDropped,setMultiDropped]=useState<number[]>([])
   const [fxInfo,setFxInfo]=useState<{label:string;op:string;targets:string[]}>({label:'',op:'',targets:[]})
   const [cinematicStyle,setCinematicStyle]=useState<CinematicStyle>('cinematic')
   const [directorRequest,setDirectorRequest]=useState('Make the whole video more cinematic')
@@ -201,16 +206,17 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='fx' ? 'fx' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='sfx_insert' ? 'sfx' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
+        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='fx' ? 'fx' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='sfx_insert' ? 'sfx' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : job.provenance?.kind==='multi' ? 'multi' : 'separation')
+        if (job.provenance?.kind==='multi') { setMultiEdits(job.provenance.edits || []); setMultiSteps(job.provenance.raw_steps || []); setMultiRequest(job.provenance.request || ''); setMultiDropped([]) }
         setSfxPlacements(job.provenance?.kind==='sfx_insert' ? job.provenance.placements || [] : [])
         if (job.provenance?.kind==='fx') setFxInfo({label:job.provenance.label || 'Effect',op:job.provenance.op || 'chain',targets:(job.provenance.targets || []).map(t=>t.id)})
-        if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='fx' && job.provenance?.kind!=='replacement' && job.provenance?.kind!=='sfx_insert') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
+        if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='fx' && job.provenance?.kind!=='replacement' && job.provenance?.kind!=='sfx_insert' && job.provenance?.kind!=='multi') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
         if (job.provenance?.kind==='cinematic' || job.provenance?.kind==='director') { setCinematicSteps(job.provenance.steps || []); setCinematicStyle(job.provenance.style || 'cinematic'); if(job.provenance.kind==='director') { setDirectorRequest(job.provenance.request || 'Make the whole video more cinematic');setDirectorGoal(job.provenance.intent || 'cinematic');setDirectorChanges(job.provenance.changes || []) } }
         if(job.provenance?.kind==='replacement') {setReplacementPeaks(job.provenance.peak_times || []);setReplacementCount(job.provenance.requested_count ?? null);setReplacementMode(job.provenance.mode || 'replace');setReplacementEvents(job.provenance.events || []);setReplacementAlignment(job.provenance.alignment || 'peak')}
         setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
         setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
       }
-      setMessage(job.status === 'queued' ? 'Waiting for processing…' : job.stage==='finding' ? 'Finding the sound…' : job.stage==='generating' ? 'Generating the replacement sound…' : job.stage==='separating' ? 'Replacing the sound…' : jobProgressMessage({state:'processing',progress:job.progress,stage:job.stage ?? undefined},Date.now()-began,label));await new Promise(resolve=>setTimeout(resolve,1000))
+      setMessage(job.status === 'queued' ? 'Waiting for processing…' : job.stage==='finding' ? 'Finding the sound…' : job.stage==='generating' ? 'Generating the replacement sound…' : job.stage==='separating' ? 'Replacing the sound…' : job.stage && /^(?:Applying|Finishing) \d/.test(job.stage) ? job.stage : jobProgressMessage({state:'processing',progress:job.progress,stage:job.stage ?? undefined},Date.now()-began,label));await new Promise(resolve=>setTimeout(resolve,1000))
 
     }
   }
@@ -354,6 +360,22 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound:label})) } catch { /* Preview remains available in this tab. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
+  /** Several edits from one prompt as one candidate: compared, applied and undone together. */
+  const previewMulti = async (cfg:BackendConfig, info:ProjectInfo, steps:MultiStep[], requestText:string) => {
+    await flush()
+    const label=`${steps.length} edits`
+    setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('');setPrompt(label);setMessage(`Applying 1 of ${steps.length} edits…`)
+    const id=await createMultiPreview(cfg,info.project_id,steps,requestText)
+    try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound:label})) } catch { /* Preview remains available in this tab. */ }
+    await waitCandidate(cfg,info.project_id,id,'Applying the edits')
+  }
+  /** Re-render a multi preview without the edits the user unticked. */
+  const rerenderMulti = () => run(async () => {
+    if (!project) return
+    const kept=multiSteps.filter((_,i)=>!multiDropped.includes(i))
+    if (!kept.length) throw new Error('Keep at least one edit.')
+    await previewMulti(config,project,kept,multiRequest)
+  })
   const previewDirector = async (cfg:BackendConfig, info:ProjectInfo, requestText:string, intent:DirectorIntent, style:CinematicStyle) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('');setPrompt('Creative audio')
@@ -503,7 +525,27 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       pendingSfx.current=''
       // Effects ("add reverb to the vocals") and inserts ("add a vine boom at 0:12") share words; chatRoute decides.
       const route=chatRoute(sfxText,hasStems ? stems : [],pendingReplacement.current)
-      if (!pendingReplacement.current && route.sfx) {
+      // Several edits in one prompt ("reverb on the vocals, drums like a phone and a vine boom at 0:12") are one
+      // multi preview. The planner splits them; without it, each clause runs through the local parsers.
+      if (!pendingReplacement.current && !route.replacement && isCompound(sfxText)) {
+        const plan=await planProjectCommand(cfg,current.project_id,{...plannerInput,prompt:sfxText}).catch(()=>
+          localMultiPlan(sfxText,hasStems ? stems : [],clause=>planProjectCommand(cfg,current.project_id,{...plannerInput,prompt:clause}).catch(()=>null)))
+        if (plan.kind==='multi' && plan.steps?.length) {
+          setReplacementRecovery(null)
+          await previewMulti(cfg,current,plan.steps,sfxText)
+          return {...plan,message:`Preview ready: ${plan.steps.length} edits. Compare, untick any you don't want, then apply.`}
+        }
+        if (plan.kind==='clarify') { setMessage(plan.message); return plan }
+        if (plan.kind==='insert' && plan.inserts?.length) {
+          setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effects');setMessage(plan.message || 'Placing sound effects…')
+          const id=await createSfxPreview(cfg,current.project_id,plan.inserts,sfxText)
+          try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound effects'})) } catch { /* Preview can still run. */ }
+          await waitCandidate(cfg,current.project_id,id,'Placing sound effects')
+          return {...plan,message:'Sound effect preview ready. Compare, then apply to add the new layers.'}
+        }
+        prefetched=plan
+      }
+      if (!prefetched && !pendingReplacement.current && route.sfx) {
         const sfxPlan=await planProjectCommand(cfg,current.project_id,{...plannerInput,prompt:sfxText}).catch(()=>null)
         if (sfxPlan?.kind==='insert' && sfxPlan.inserts?.length) {
           setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effects');setMessage(sfxPlan.message || 'Placing sound effects…')
@@ -773,6 +815,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         <ul className="max-h-40 space-y-1 overflow-y-auto">{placementLines(sfxPlacements).map((line,index)=><li key={sfxPlacements[index].id} className="flex items-center justify-between gap-2 rounded-lg bg-surface-2 p-1"><span>{line}</span><button type="button" className={secondary} onClick={()=>setPreviewSeek({time:Math.max(0,sfxPlacements[index].start-.5),id:Date.now()})}>Listen</button></li>)}</ul>
         {candidateWarnings.map(w=><p key={w}>{w}</p>)}
       </div>}
+      {candidateKind==='multi' && <div className="mt-2 space-y-1 text-xs text-muted">
+        <p>{multiEdits.length} edits in one preview. Applying adds them all at once, and Undo restores everything together.</p>
+        <ul className="max-h-44 space-y-1 overflow-y-auto" aria-label="Edits in this preview">{multiEdits.map(edit=><li key={edit.index} className="rounded-lg bg-surface-2 p-1"><label className="flex items-center gap-2"><input type="checkbox" disabled={busy} checked={!multiDropped.includes(edit.index)} onChange={e=>setMultiDropped(d=>e.target.checked ? d.filter(i=>i!==edit.index) : [...d,edit.index])}/><span>{edit.index+1}. {edit.label}</span></label></li>)}</ul>
+        {multiDropped.length>0 && <button type="button" className={secondary} disabled={busy || multiDropped.length>=multiEdits.length} onClick={rerenderMulti}>Preview without {multiDropped.length} unticked edit{multiDropped.length===1?'':'s'}</button>}
+        {candidateWarnings.filter(w=>!/Undo restores everything/.test(w)).map(w=><p key={w}>{w}</p>)}
+      </div>}
       {candidateKind==='effects' && <p className="mt-2 text-xs text-muted">Effects are rendered into the selected layer on apply. Undo restores the previous audio. Listen for clipping.</p>}
       {candidateKind==='fx' && <div className="mt-2 space-y-1 text-xs text-muted">
         <p><span className="font-medium text-fg">{fxInfo.label}</span>. Applying renders it into the layer; each effect shows as a chip on its track, and Undo restores the previous audio.</p>
@@ -781,7 +829,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       </div>}
       {candidateKind==='known-effect-replacement' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       <div className="mt-3 flex items-center gap-2">
-        <button className={`${button} flex-1 py-2 text-sm`} disabled={busy} onClick={useRetry}>Apply to timeline</button>
+        <button className={`${button} flex-1 py-2 text-sm`} disabled={busy || (candidateKind==='multi' && multiDropped.length>0)} title={candidateKind==='multi' && multiDropped.length>0 ? 'Preview without the unticked edits first' : undefined} onClick={useRetry}>Apply to timeline</button>
         {candidateKind==='separation' && <button className={secondary} disabled={busy || !capabilities?.quality} title={capabilities?.quality ? 'Deep dive: a slower, higher-quality pass' : (capabilities?.reason || '')} onClick={() => void process(true)}>{FEATURES.quality}</button>}
       </div>
       {candidateKind==='separation' && selectionName && <button className="mt-2 text-xs text-accent hover:underline" disabled={busy} onClick={()=>{setSelection(null);setSelectionName('');onClearSelection();setCandidateId('');setOpenStep('sound');setMessage('Mark where you hear the sound, then preview again using text and time.')}}>Not right? Retry with text and time instead of the object</button>}

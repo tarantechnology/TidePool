@@ -196,3 +196,24 @@ command bar → POST /api/projects/{pid}/agent (OpenAI planner, strict schema)
   kind/preset/targets, or asks a sensible clarifying question. This is tested with a mocked LLM for the schema and live once for quality.
 - Bleep: ≥ 95% of profanity in a scripted test clip is caught, with timing within 80 ms.
 - SFX insert lands within 50 ms of the anchor word.
+
+## Several edits in one prompt (`kind: multi`)
+
+"Add reverb to the vocals, make the drums sound like a phone, pitch the bass down 2 semitones, add a piano part and put a
+vine boom at 0:12" is one planner answer, `kind: 'multi'`, whose `steps` are the existing single kinds (fx, duck, loudness,
+insert, generate, edit), each checked by that kind's own validator; an invalid step becomes a clarify naming it. Limits: 8
+steps, 3 generate steps. Speed/tempo, more/less adjustments, separation, replacement and bleeping are never combined; they
+run on their own. The agent route sends compound prompts (clause splitter, `app/multi.py` / `frontend/src/agent/multiCommand.ts`)
+to the planner before any single-ask fast path; without the planner the editor plans each clause with the local parsers.
+
+`POST /api/projects/{pid}/multi-preview` makes ONE candidate (atomic apply/undo, revision-checked):
+
+1. In parallel, a pool of at most 4 workers: one render per affected layer (that layer's effect steps appended to its chip
+   list in prompt order and rendered once from the dry audio, so chips still work), one audio-service call per generate step,
+   and one anchor resolution for all inserts (word timings fetched once).
+2. Then in prompt order: generated layers, inserted sound layers (with optional ducking), layer edits (gain, mute, solo,
+   automation, timed mutes) and auto-ducking; loudness normalization last, on the result.
+
+Generated parts follow the song as it was before the prompt's other edits. Any failing step fails the whole preview with a
+message naming it. The job's stage reads "Applying 3 of 5 edits…". The compare panel lists the edits; unticking some and
+choosing "Preview without …" re-renders the rest.

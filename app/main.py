@@ -354,6 +354,16 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan
+    # Several edits in one message ("reverb on the vocals, drums like a phone and a vine boom at 0:12") go to the
+    # planner whole, before any single-ask fast path could take just one clause (app/multi.py).
+    from . import multi
+    if multi.is_compound(body.prompt):
+        from .sfx_plan import finalize as finalize_insert
+        from .sfx_insert import service_features
+        try: result=agent_plan(body)
+        except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+        if result.get('kind')=='multi': return multi.finalize(result,body.duration,service_features())
+        return finalize_insert(result,body.duration,service_features()) if result.get('kind')=='insert' else result
     # Precedence (matches frontend/src/agent/chatRoute.ts): replacement -> insert (a named library
     # sound) -> generate (an instrument part) -> fx -> planner/separation.
     # SFX inserts ("vine boom when he says 'what'") parse offline first; see app/sfx_plan.py.
@@ -790,6 +800,73 @@ def fx_preview(pid: str, body: FxRequest, authorization: str | None=Header(None)
                   'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
     return {'candidate_id':start(pid,'candidate',{'_fx':True,'_candidate':snapshot,'fx':spec}),'status':'queued','plan':{k:v for k,v in spec.items() if k!='notes'}}
+
+class MultiRequest(BaseModel):
+    steps: list[dict] = Field(min_length=1, max_length=20)
+    request: str | None = Field(default=None, max_length=2000)
+
+@app.post('/api/projects/{pid}/multi-preview',status_code=202)
+def multi_preview(pid: str, body: MultiRequest, authorization: str | None=Header(None)):
+    """Several planned edits as ONE candidate (app/multi.py): independent layers render concurrently; apply/undo is atomic."""
+    p=auth(pid,authorization)
+    if not p['audio'] or not p['metadata']: raise HTTPException(409,'Upload media first')
+    refuse_during_refine(pid)
+    from types import SimpleNamespace
+    from pydantic import ValidationError
+    from . import multi
+    from .agent import validate_operations
+    from .candidates import safe_path
+    from .fx import export_duration
+    from .fx_schema import FxError
+    from .generate_part import validate_generate
+    from .sfx_insert import service_features, validate_request
+    if len(body.steps)>multi.MAX_STEPS or sum(1 for s in body.steps if s.get('kind')=='generate')>multi.MAX_GENERATE: raise HTTPException(422,multi.TOO_MANY)
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    meta=json.loads(p['metadata'])
+    duration=float(export_duration(rows,meta['duration'])) if rows else float(meta['duration'])
+    features=service_features() if any(s.get('kind')=='insert' for s in body.steps) else {}
+    try: source=safe_path(pid,p['audio'])
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    layers=SimpleNamespace(stems=[{'id':r['id']} for r in rows],duration=duration)
+    names={r['id']:r['name'] for r in rows}
+    steps=[]
+    for i,step in enumerate(body.steps):
+        name=multi._name(step,i)
+        try:
+            kind=step.get('kind')
+            if kind in ('fx','duck','loudness'):
+                plan=step.get('fx') or {}
+                if not isinstance(plan,dict): raise ValueError('The effect plan is missing.')
+                if plan.get('adjust'): raise ValueError('Ask for "more", "less" or removing an effect on its own.')
+                spec=fx_spec(pid,p,FxRequest.model_validate(multi.fx_request(kind,plan)),rows)
+                if spec['op']=='chain' and spec['item'].get('speed'): raise ValueError('Speed changes reshape the whole timeline; ask for that on its own.')
+                kind='fx' if spec['op']=='chain' else spec['op']
+                fallback=(spec['item']['label']+' on '+('the mix' if spec['targets']==['mix'] else ', '.join(names.get(t,t) for t in spec['targets']))) if kind=='fx' else \
+                         ('Auto-ducking' if kind=='duck' else f"Loudness {spec['lufs']:g} LUFS")
+            elif kind=='insert':
+                spec=validate_request(step.get('inserts') or [],probe(source)['duration'],features)
+                if not spec: raise ValueError('Which sound should I add, and where?')
+                fallback='Add '+', '.join(item['sfx_query'] for item in spec)
+            elif kind=='generate':
+                spec=validate_generate({**(step.get('generate') or {}),'engine':'symbolic'},meta['duration'])
+                fallback=f"Add a {spec.get('instrument') or 'new'} part"
+            elif kind=='edit':
+                spec=[{k:v for k,v in a.items() if v is not None} for a in step.get('actions') or [] if isinstance(a,dict)]
+                if not spec or len(spec)>20: raise ValueError('What should change on which layer?')
+                if any(a.get('type') not in multi.EDIT_ACTIONS for a in spec): raise ValueError('Ask for that layer edit on its own.')
+                validate_operations(spec,layers)
+                fallback='Edit '+', '.join(dict.fromkeys(names.get(a['stemId'],'layer') for a in spec))
+            else: raise ValueError('That edit cannot be combined with others; ask for it on its own.')
+        except (FxError,ValueError,ValidationError,TypeError,KeyError) as exc:
+            raise HTTPException(422,f'{name}: {exc}') from exc
+        given=step.get('label')
+        steps.append({'kind':kind,'label':(given.strip()[:60] if isinstance(given,str) and given.strip() else fallback[:60]),'spec':spec})
+    try:
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    payload={'_multi':True,'_candidate':snapshot,'_features':features,'steps':steps,'raw_steps':body.steps,'request':body.request}
+    return {'candidate_id':start(pid,'candidate',payload),'status':'queued','steps':[{'kind':s['kind'],'label':s['label']} for s in steps]}
 
 class CinematicRequest(BaseModel):
     style: Literal['subtle', 'cinematic', 'dramatic'] = 'cinematic'

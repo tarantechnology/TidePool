@@ -140,9 +140,37 @@ def _stem_name(row: dict) -> str | None:
     return None
 
 
+def generate_layer(pid: str, original, rows: list[dict], plan: dict, seed: int, new_file):
+    """Ask the audio service for a part that fits ``original`` (the current mix) and the project's stems.
+    Returns (layer row, service result, stems used, midi path or None). Files come from ``new_file``."""
+    import base64
+
+    from .candidates import safe_path
+    from .core import probe, uid
+    stems = {}
+    for row in rows:
+        name = _stem_name(row)
+        if name and name not in stems and not row.get('muted'):
+            stems[name] = safe_path(pid, row['path'])
+    result = request_generate_part(original, stems, plan, seed=seed)
+    part = new_file()
+    part.write_bytes(base64.b64decode(result['audio']['audio_base64']))
+    before, after = probe(original), probe(part)
+    if abs(before['duration'] - after['duration']) > 0.05:
+        raise ValueError('The generated part does not match the song length.')
+    info = result['part']
+    name = str(info.get('display_name') or info.get('name') or 'New part')[:100]
+    midi_path = None
+    if result.get('midi_base64'):
+        midi_path = new_file('.mid'); midi_path.write_bytes(base64.b64decode(result['midi_base64']))
+    layer = {'id': uid(), 'project_id': pid, 'name': name, 'label': name, 'path': str(part), 'duration': after['duration'], 'start_offset': 0,
+             'volume': 1, 'muted': 0, 'solo': 0, 'automation': '[]', 'mute_ranges': '[]', 'revision': 0, 'role': 'generated',
+             'tags': json.dumps([{'label': info.get('family', 'music').title(), 'score': 1.0}, {'label': name, 'score': 1.0}])}
+    return layer, result, stems, midi_path
+
+
 def build(project: dict, payload: dict, candidate_id: str) -> dict:
     """generate-preview candidate: the current mix + its stems -> audio service -> a new music layer."""
-    import base64
     import shutil
 
     from .candidates import revisions, safe_path
@@ -165,32 +193,15 @@ def build(project: dict, payload: dict, candidate_id: str) -> dict:
         original = new_file()
         if rows: export(rows, source, original, 'wav', False)
         else: shutil.copyfile(source, original)
-        stems = {}
-        for row in rows:
-            name = _stem_name(row)
-            if name and name not in stems and not row.get('muted'):
-                stems[name] = safe_path(pid, row['path'])
-        result = request_generate_part(original, stems, payload['plan'], seed=int(payload.get('seed') or 0))
-        part = new_file()
-        part.write_bytes(base64.b64decode(result['audio']['audio_base64']))
-        before, after = probe(original), probe(part)
-        if abs(before['duration'] - after['duration']) > 0.05:
-            raise ValueError('The generated part does not match the song length.')
-        info = result['part']
-        name = str(info.get('display_name') or info.get('name') or 'New part')[:100]
-        midi_path = None
-        if result.get('midi_base64'):
-            midi_path = new_file('.mid'); midi_path.write_bytes(base64.b64decode(result['midi_base64']))
-        layer = {'id': uid(), 'project_id': pid, 'name': name, 'label': name, 'path': str(part), 'duration': after['duration'], 'start_offset': 0,
-                 'volume': 1, 'muted': 0, 'solo': 0, 'automation': '[]', 'mute_ranges': '[]', 'revision': 0, 'role': 'generated',
-                 'tags': json.dumps([{'label': info.get('family', 'music').title(), 'score': 1.0}, {'label': name, 'score': 1.0}])}
+        layer, result, stems, midi_path = generate_layer(pid, original, rows, payload['plan'], int(payload.get('seed') or 0), new_file)
+        info = result['part']; before = probe(original)
         base_rows = rows or [{'id': uid(), 'project_id': pid, 'name': 'Original audio', 'path': str(source), 'duration': before['duration'], 'start_offset': 0,
                               'volume': 1, 'muted': 0, 'solo': 0, 'automation': '[]', 'mute_ranges': '[]', 'revision': 0}]
         proposed = base_rows + [layer]
         mix = new_file(); export(proposed, source, mix, 'wav', False)
         warnings = list(result.get('warnings') or [])
         warnings.append('The new part is generated from the song\'s detected chords and beats; detection can be wrong, so listen before applying.')
-        return {'target': {'path': str(part)}, 'mix': {'path': str(mix)}, 'original': {'path': str(original)}, 'snapshot': snapshot, 'proposed': proposed,
+        return {'target': {'path': layer['path']}, 'mix': {'path': str(mix)}, 'original': {'path': str(original)}, 'snapshot': snapshot, 'proposed': proposed,
                 'inference': {'model': {'is_mock': False, 'backend': 'generate-' + str((result.get('engine') or {}).get('name', 'symbolic'))}, 'warnings': warnings},
                 'provenance': {'kind': 'generate', 'plan': payload['plan'], 'part': info, 'engine': result.get('engine'), 'renderer': result.get('renderer'),
                                'windows': result.get('windows'), 'checks': result.get('checks'), 'mix_report': result.get('mix'),

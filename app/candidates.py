@@ -180,8 +180,8 @@ def apply(job):
                         db.execute(f'UPDATE stems SET {key}={value} WHERE id=? AND project_id=?',(item[key],item['id'],pid))
                 if 'refinement' in item:  # Previews built before refinement existed leave it alone.
                     db.execute('UPDATE stems SET refinement=? WHERE id=? AND project_id=?',(item['refinement'],item['id'],pid))
-                # Effects previews also carry automation (ducking), timeline scaling (speed) and chips.
-                for column in ('automation','start_offset','fx','spans','sound_start','sound_end'):
+                # Effects previews also carry automation (ducking), timeline scaling (speed) and chips; multi previews solo.
+                for column in ('automation','start_offset','fx','spans','sound_start','sound_end','solo'):
                     if column in item: db.execute(f'UPDATE stems SET {column}=? WHERE id=? AND project_id=?',(item[column],item['id'],pid))
             else:
                 keys=list(item)

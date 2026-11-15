@@ -504,19 +504,21 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
       if (isTextEntry(e.target as HTMLElement)) return
       e.preventDefault()
-      if(editDomain==='clips'){if(e.shiftKey)projectPanel.current?.redoClipEdit();else projectPanel.current?.undoClipEdit();return}
+      if(editDomain==='clips' && (e.shiftKey ? clipSequence.canRedo : clipSequence.canUndo)) {
+        if(e.shiftKey)projectPanel.current?.redoClipEdit();else projectPanel.current?.undoClipEdit();return
+      }
       if (e.shiftKey) redoAny()
       else undoAny()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undoAny, redoAny, editDomain])
+  }, [undoAny, redoAny, editDomain, clipSequence.canUndo, clipSequence.canRedo])
 
   const duration = engine?.duration ?? 0
-  const undoAvailable=editDomain==='clips'?clipSequence.canUndo:canUndoAny
-  const redoAvailable=editDomain==='clips'?clipSequence.canRedo:canRedoAny
-  const doUndo=()=>{if(editDomain==='clips')projectPanel.current?.undoClipEdit();else undoAny()}
-  const doRedo=()=>{if(editDomain==='clips')projectPanel.current?.redoClipEdit();else redoAny()}
+  const undoAvailable=editDomain==='clips'?(clipSequence.canUndo || canUndoAny):canUndoAny
+  const redoAvailable=editDomain==='clips'?(clipSequence.canRedo || canRedoAny):canRedoAny
+  const doUndo=()=>{if(editDomain==='clips' && clipSequence.canUndo)projectPanel.current?.undoClipEdit();else undoAny()}
+  const doRedo=()=>{if(editDomain==='clips' && clipSequence.canRedo)projectPanel.current?.redoClipEdit();else redoAny()}
   const hasLayers = stems.length > 0
   const viewToggle = (
     <div className="flex rounded-full border border-line bg-surface p-0.5 text-[10px] shadow-sm" role="group" aria-label="Layer view">

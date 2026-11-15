@@ -266,7 +266,8 @@ def build(project,payload,cid):
         events=[{'id':uid(),'group':None,'source_peak':p/rate,'source_onset':p/rate,'offset':0,'enabled':True} for p in peak_samples]
     normalized=directory/(uid()+'-effect.wav')
     run('ffmpeg','-v','error','-y','-i',str(effect),'-ar',str(rate),'-ac',str(channels),'-af','afade=t=in:st=0:d=0.005','-c:a','pcm_f32le',str(normalized))
-    alignment='peak'
+    alignment=payload.get('alignment','peak')
+    if alignment not in ('peak','onset'): raise ValueError('Unsupported alignment.')
     notices,peak_offset,onset_offset=render_effect(normalized,placed,events,rate,channels,count,alignment)
     warnings.extend(notices)
     effect_group_id=uid()
@@ -348,6 +349,27 @@ def parse_replacement(text,duration):
     example=re.search(r'\s*[;,]\s*(?:use|using)\s+(?:the|that)\s+sound\s+((?:at|around|near)\s+\d+(?:\.\d+)?\s*(?:seconds?|secs?|s))\s+as\s+(?:an?\s+)?example[.!?]?\s*$',text,re.I)
     if example:
         text=text[:example.start()].rstrip()+' '+example.group(1)
+    visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|play)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:we\s+)?see\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)[.!?]?',text,re.I)
+    if not visible:
+        visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|play)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)\s+(?:appears|shows\s+up|is\s+visible)[.!?]?',text,re.I)
+    if not visible:
+        conditional=re.fullmatch(r'(?:every\s+time|whenever|when)\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)\s+(?:appears|shows\s+up|is\s+visible)\s*,?\s*(?:please\s+)?(?:play|add)\s+(?:a\s+|an\s+|the\s+)?(.+?)[.!?]?',text,re.I)
+        if conditional:
+            label,track_id,effect=conditional.group(1).strip().lower(),int(conditional.group(2)),conditional.group(3).strip()
+            if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')
+            effect_request(effect)
+            return {'source':'','effect':effect,'time':None,'mode':'add','object_label':label,'object_track_id':track_id}
+    if visible:
+        effect,label,track_id=visible.group(1).strip(),visible.group(2).strip().lower(),int(visible.group(3))
+        if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')
+        effect_request(effect)
+        return {'source':'','effect':effect,'time':None,'mode':'add','object_label':label,'object_track_id':track_id}
+    spoken=re.fullmatch(r'''(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:after|when|whenever)\s+(?:(?:the|every|each)\s+)?(?:word\s+)?["“']?([\w]+(?:['’][\w]+)*)["”']?(?:\s+(?:is|was|has\s+been)\s+(?:said|spoken|mentioned))?[.!?]?''',text,re.I)
+    if spoken:
+        effect,word=spoken.group(1).strip(),spoken.group(2).strip()
+        if not effect or len(effect)>100 or len(word)>60: raise ValueError('What sound and spoken word should I use?')
+        effect_request(effect)
+        return {'source':'','effect':effect,'time':None,'mode':'add','spoken_word':word}
     addition=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+at\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)[.!?]?',text,re.I)
     if addition:
         effect=addition.group(1).strip();point=float(addition.group(2))
@@ -408,7 +430,37 @@ def auto_build(project,payload,cid):
     search_duration=probe(detection_source)['duration'] if selected_layer else duration
     local_time=plan['time']-source_offset if plan['time'] is not None else None
     if local_time is not None and not 0<=local_time<search_duration:raise ValueError('The timestamp is outside the selected source layer.')
-    if plan.get('all_occurrences'):
+    if plan.get('object_track_id') is not None:
+        from .object_selection import appearances
+        set_stage(cid,'finding',15)
+        found=appearances(project,plan['object_track_id'],plan['object_label'])
+        if found['analysis_id']!=snapshot.get('visual_analysis_id') or found['source_sha256']!=snapshot.get('visual_source_sha256'):
+            raise ValueError('Object analysis changed; find objects and preview again.')
+        intervals=[{'start':t,'end':min(duration,t+.01)} for t in found['starts'] if t<duration]
+        if not intervals:raise ValueError('No appearances were found inside the audio timeline.')
+        detection_meta={'method':'visual-track','analysis_id':found['analysis_id'],'label':found['label'],'track_id':found['track_id'],'processed_duration':found['processed_duration']}
+        note=f"Found {len(intervals)} appearance(s) of {found['label']} #{found['track_id']}. Tracking can miss appearances or switch identities; review each placement."
+        if found['processed_duration']+0.1<duration: note+=f" Only the first {found['processed_duration']:.1f} seconds were analyzed."
+    elif plan.get('spoken_word'):
+        from .censorship import transcribe, MAX_DURATION
+        import re
+        if duration>MAX_DURATION: raise ValueError('Word timing is limited to 10 minutes per preview.')
+        set_stage(cid,'transcribing',15)
+        transcript_audio=project_dir(pid)/'stems'/(uid()+'-transcription.wav')
+        try:
+            if snapshot['rows']: export(snapshot['rows'],source,transcript_audio,'wav',False)
+            else: shutil.copyfile(source,transcript_audio)
+            words,language=transcribe(transcript_audio,duration)
+        finally:
+            transcript_audio.unlink(missing_ok=True)
+        normalize=lambda word: re.sub(r"[^\w']",'',word.casefold())
+        matches=[w for w in words if normalize(w['word'])==normalize(plan['spoken_word']) and w['end']<duration]
+        if not matches: raise ValueError(f"I couldn't find the spoken word '{plan['spoken_word']}' in the current mix. Check the spelling or try a timestamp; transcription can miss words.")
+        if len(matches)>100: raise ValueError('More than 100 matching words were found. Try a shorter clip.')
+        intervals=[{'start':w['end'],'end':min(duration,w['end']+.01)} for w in matches]
+        detection_meta={'method':'local-word-transcription','word':plan['spoken_word'],'language':language}
+        note=f"Found {len(matches)} possible occurrence(s) of '{plan['spoken_word']}'. Word recognition and timing are approximate; review the placements."
+    elif plan.get('all_occurrences'):
         from .event_detection import find_similar_events,flexsed_intervals,merge_candidate_ranges
         set_stage(cid,'finding',15)
         match=find_similar_events(detection_source,search_duration,local_time)
@@ -454,7 +506,7 @@ def auto_build(project,payload,cid):
     asset=prepare_effect(project,{'prompt':plan['effect']})
     set_stage(cid,'separating',60)
     output=build(project,{'_candidate':snapshot,'asset_id':asset['asset_id'],'asset_sha256':file_sha256(asset_path(pid,asset['asset_id'])),
-                          'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints,'source_stem_id':payload.get('source_stem_id')},cid)
+                          'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints,'source_stem_id':payload.get('source_stem_id'),'alignment':'onset' if plan.get('spoken_word') or plan.get('object_track_id') is not None else 'peak'},cid)
     output['inference']['warnings'].insert(0,note)
     if resolver_unavailable:
         output['inference']['warnings'].append('Could not check for a similarly named effect layer; searched the residual audio instead.')

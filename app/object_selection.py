@@ -78,3 +78,36 @@ def validate_context(project, selection):
         raise ValueError('Selected object is unavailable in this analysis.')
     return {**selection,'label':obj['label'],'model':(stored.get('detector') or {}).get('model'),
             'audio_conditioning':'text_only','notice':'Object selection supplies a sound description; masks do not condition AudioSep.'}
+
+
+def appearances(project, track_id, label):
+    """Find starts of contiguous observations for one explicitly named track."""
+    import math
+    from collections import Counter
+    stored=json.loads(project['visual']) if project['visual'] else {}
+    if (stored.get('selection_only') is not True or stored.get('video_id')!=project['id']
+            or not stored.get('analysis_id') or stored.get('original_source_sha256')!=file_sha256(project['original'])):
+        raise ValueError('Find objects in this video first, then use the displayed object number.')
+    fps=float(stored.get('fps') or 0); processed=float(stored.get('processed_duration_seconds') or 0)
+    if not math.isfinite(fps) or not 1<=fps<=120 or not math.isfinite(processed) or processed<=0:
+        raise ValueError('Object analysis timing is unavailable; find objects again.')
+    observations=[];labels=Counter()
+    for frame in stored.get('frames',[]):
+        t=frame.get('timestamp_seconds')
+        if not isinstance(t,(int,float)) or not math.isfinite(t) or not 0<=t<processed: continue
+        obj=next((o for o in frame.get('objects',[]) if o.get('track_id')==track_id and o.get('mask')),None)
+        if obj:
+            observations.append(float(t));labels[str(obj.get('label','')).casefold()]+=1
+    minimum=3 if stored.get('discovery_mode')=='automatic' else 1
+    if len(observations)<minimum: raise ValueError(f'Object #{track_id} was not found in the current analysis. Find objects and choose a displayed number.')
+    best=labels.most_common(1)[0][0]
+    if best!=label.casefold(): raise ValueError(f'Object #{track_id} is labeled {best}, not {label}. Choose the number shown in Find objects.')
+    times=sorted(set(observations)); groups=[[times[0]]]
+    for previous,current in zip(times,times[1:]):
+        if current-previous>max(.3,2.1/fps)+1e-6: groups.append([])
+        groups[-1].append(current)
+    starts=[group[0] for group in groups if len(group)>=minimum]
+    if not starts: raise ValueError(f'Object #{track_id} has no stable detected appearances. Find objects again or choose another track.')
+    if len(starts)>100: raise ValueError('More than 100 appearances were found. Try a shorter video.')
+    return {'analysis_id':stored['analysis_id'],'source_sha256':stored['original_source_sha256'],
+            'label':best,'track_id':track_id,'starts':starts,'processed_duration':processed}

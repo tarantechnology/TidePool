@@ -55,7 +55,9 @@ def http_stub(monkeypatch, tmp_path, calls, split=.6, refinement=True):
     monkeypatch.setenv('INFERENCE_ADAPTER','http'); monkeypatch.setenv('SAM_AUDIO_SERVICE_URL','http://mock.invalid/separate')
     def post(url, files, data, **kwargs):
         metadata=json.loads(data['metadata']); calls.append(metadata)
-        source=tmp_path/f'in{len(calls)}.wav'; source.write_bytes(files['audio'][1].read())
+        # The adapter uploads FLAC; decode it like the service would.
+        upload=tmp_path/f'in{len(calls)}.flac'; upload.write_bytes(files['audio'][1].read())
+        source=tmp_path/f'in{len(calls)}.wav'; subprocess.run(['ffmpeg','-v','error','-y','-i',str(upload),'-c:a','pcm_f32le',str(source)],check=True)
         samples,rate=media.read_wav(source)
         passes=metadata['options'].get('passes',1)
         block={'passes_requested':passes,'passes_run':passes,'per_pass_energy_db':[-6.0-i for i in range(passes)],'stopped_early':False}

@@ -497,7 +497,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'fx'|'duck'|'loudness'|'insert'|'clip_edit'|'generate'|'clarify'; fx?:FxPlan|null; generate?:GeneratePlan|null; clip_edit?:{stem_id:string;operation:'move';start_offset:number}; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'fx'|'duck'|'loudness'|'insert'|'clip_edit'|'generate'|'clarify'; fx?:FxPlan|null; generate?:GeneratePlan|null; clip_edit?:{stem_id:string;operation:'move';start_offset:number}; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
   /** kind 'insert': library sound effects to place as new layers. */
   inserts?:SfxInsert[]|null
   /** A clarify because no library sound matched; another flow (generation) may still handle it. */
@@ -528,7 +528,7 @@ export async function getPrepareVisual(config:BackendConfig, jobId:string, signa
 export interface Anchor {token:"+"|"-";start:number;end:number}
 export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
 export interface ObjectSelectionContext {analysis_id:string;detection_id:string;track_id:number;frame_index:number}
-export interface PreviewOptions {object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
+export interface PreviewOptions {source_stem_id?:string;object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
 /** The object detector, as GET /capabilities reports it. Absent fields are null, not guessed. */
 export interface VisionCapability {automatic?:boolean;prompted?:boolean;retryable?:boolean;selectionOnly?:boolean;available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
 /**
@@ -603,7 +603,7 @@ export async function adjustReplacementPreview(config:BackendConfig,candidateId:
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/replacement-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adjustment)})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{placements?:SfxPlacement[];licences?:Array<{id:string;title:string;licence:string;author:string;source_url:string}>;op?:string;label?:string;item?:{id:string;label:string}|null;targets?:Array<{id:string;name:string}>;speed?:number;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{matches?:Array<{word:string;start:number;end:number}>;placements?:SfxPlacement[];licences?:Array<{id:string;title:string;licence:string;author:string;source_url:string}>;op?:string;label?:string;item?:{id:string;label:string}|null;targets?:Array<{id:string;name:string}>;speed?:number;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})
@@ -648,12 +648,16 @@ export async function generateSoundEffect(config:BackendConfig,projectId:string,
 export async function getSoundEffectJob(config:BackendConfig,id:string):Promise<{status:string;error?:string;result?:SoundEffectAsset}> {
   return (await (await request(config,`/api/sound-effect-jobs/${encodeURIComponent(id)}`)).json()) as {status:string;error?:string;result?:SoundEffectAsset}
 }
-export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
+export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;source_stem_id?:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
   return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/replacement-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json()) as {candidate_id:string}).candidate_id
 }
 
-export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string):Promise<string> {
-  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text})})).json()) as {candidate_id:string}).candidate_id
+export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string,sourceStemId?:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text,...(sourceStemId ? {source_stem_id:sourceStemId} : {})})})).json()) as {candidate_id:string}).candidate_id
+}
+
+export async function createCensorshipPreview(config:BackendConfig,projectId:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/censorship-preview`,{method:'POST'})).json()) as {candidate_id:string}).candidate_id
 }
 
 /** Preview library sound effects as new layers; apply and undo like any candidate. */

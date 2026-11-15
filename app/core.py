@@ -68,11 +68,11 @@ def restore_legacy_effect_groups(db):
 def group_matching_explicit_targets(db,pid=None):
     """Group identical explicit prompts without merging conflicting groups."""
     by_prompt={}
-    sql="SELECT id,project_id,prompt,sound_group_id FROM stems WHERE role='target' AND prompt IS NOT NULL AND trim(prompt)!=''"
+    sql="SELECT id,project_id,prompt,source_stem_id,sound_group_id FROM stems WHERE role='target' AND prompt IS NOT NULL AND trim(prompt)!=''"
     for row in db.execute(sql+(' AND project_id=?' if pid else ''),(pid,) if pid else ()):
-        key=(row['project_id'],' '.join(row['prompt'].casefold().split()))
+        key=(row['project_id'],' '.join(row['prompt'].casefold().split()),row['source_stem_id'])
         by_prompt.setdefault(key,[]).append(row)
-    for (project_id,_),rows in by_prompt.items():
+    for (project_id,_,_source_id),rows in by_prompt.items():
         groups={r['sound_group_id'] for r in rows if r['sound_group_id']}
         if len(rows)<2 or len(groups)>1:continue
         gid=next(iter(groups)) if groups else uid();label=rows[0]['prompt']

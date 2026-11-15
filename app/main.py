@@ -130,6 +130,7 @@ class CandidateRequest(BaseModel):
     processing_interval: Interval | None = None
     processing_time: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     stem_id: str | None=None
+    source_stem_id: str | None=Field(default=None,max_length=100)
     guidance: Guidance=Field(default_factory=Guidance)
     edit_scope: EditScope=Field(default_factory=EditScope)
     profile: Literal["preview", "quality"]="preview"
@@ -345,6 +346,12 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     if p['metadata']:
         from .fx import export_duration  # After a whole-song speed chip the timeline is no longer the upload's length.
         body.duration=export_duration(rows,json.loads(p['metadata'])['duration'])
+    # Precedence (matches frontend/src/agent/chatRoute.ts): censorship -> layer-scoped (the editor's
+    # layer separation flow; layer-scoped replacements stay replacements) -> replacement -> insert
+    # (a named library sound) -> generate (an instrument part) -> fx -> planner/separation.
+    from .sfx_plan import requests_censorship
+    if requests_censorship(body.prompt):  # Profanity beeps are the censorship preview's job, never a library insert or a generated part.
+        return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'Profanity beeps use the censorship preview: ask "bleep the swearing" in the editor.'}
     # Never let a replacement instruction fall through to a separation-only planner.
     import re
     # "Make the drums sound like a phone" names an effect preset; that is a layer effect, not a replacement.
@@ -354,8 +361,6 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan
-    # Precedence (matches frontend/src/agent/chatRoute.ts): replacement -> insert (a named library
-    # sound) -> generate (an instrument part) -> fx -> planner/separation.
     # SFX inserts ("vine boom when he says 'what'") parse offline first; see app/sfx_plan.py.
     from .sfx_plan import finalize as finalize_insert, rule_plan as insert_rule_plan
     from .sfx_insert import service_features
@@ -459,7 +464,9 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
         except (ValueError,KeyError,TypeError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     refuse_during_refine(pid)
     with connect() as db: rows=db.execute('SELECT * FROM stems WHERE project_id=?',(pid,)).fetchall()
-    if (object_context and not body.stem_id and body.edit_scope.action in ('mute','lower')
+    if body.stem_id and body.source_stem_id:raise HTTPException(422,'Choose either retry or a source layer.')
+    if body.source_stem_id and (object_context or body.visual_prompt):raise HTTPException(422,'Object guidance is not available for an individual layer.')
+    if (object_context and not body.stem_id and not body.source_stem_id and body.edit_scope.action in ('mute','lower')
             and body.edit_scope.interval is None and not body.processing_interval and body.processing_time is None
             and body.profile=='preview' and body.passes in (None,1) and not body.guidance.anchors):
         matches=[r for r in rows if r['role']=='target' and (r['prompt'] or '').strip().casefold()==description(body.prompt).casefold()]
@@ -470,33 +477,54 @@ def create_candidate(pid: str, body: CandidateRequest, authorization: str | None
             payload={'_candidate':snapshot,'_reuse_target_id':matches[0]['id'],'_object_context':object_context,
                      'edit_scope':body.edit_scope.model_dump(),'prompts':[description(body.prompt)]}
             return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
+    selected=next((r for r in rows if r['id']==body.source_stem_id),None)
+    if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
     targets=[r for r in rows if r['id']==body.stem_id and r['name'].lower()!='residual']
     residuals=[r for r in rows if r['name'].lower()=='residual']
+    # Creative edits can add effect layers to an otherwise untouched original
+    # without creating a separation residual. Split that original as a selected
+    # layer, preserving its mute ranges and the independently editable effects.
+    promote_original=False
+    if not body.stem_id and not selected and not residuals and not body.visual_prompt and not object_context:
+        originals=[r for r in rows if r['name'].casefold()=='original audio' and r['path']==p['audio'] and r['role'] is None]
+        if len(originals)==1 and all(r['id']==originals[0]['id'] or r['role']=='effect' for r in rows):
+            selected=originals[0]
+            promote_original=True
     if body.stem_id and (len(rows)!=2 or len(targets)!=1 or len(residuals)!=1):
         raise HTTPException(409,'Replacing an older target in a multitrack project requires its earlier source snapshot. Preview a new target from the current residual instead.')
-    if not body.stem_id and rows and len(residuals)!=1:
-        raise HTTPException(409,'A new target requires exactly one current residual.')
-    if any(r['start_offset'] != 0 for r in targets+residuals):
+    if not body.stem_id and not selected and rows and len(residuals)!=1:
+        raise HTTPException(409,'Choose the layer to search in before separating another sound.')
+    if not selected and any(r['start_offset'] != 0 for r in targets+residuals):
         raise HTTPException(409,'Preview requires the source layers to start at zero.')
-    source=p['audio'] if body.stem_id or not rows else residuals[0]['path']
-    try: validate_timing([],body.guidance,body.edit_scope,probe(source)['duration'])
+    source=selected['path'] if selected else (p['audio'] if body.stem_id or not rows else residuals[0]['path'])
+    source_offset=float(selected['start_offset']) if selected else 0.0
+    try: validate_timing([],body.guidance,body.edit_scope,probe(p['audio'])['duration'] if selected else probe(source)['duration'])
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     if body.processing_interval and body.processing_time is not None: raise HTTPException(422, 'Choose a range or a timestamp, not both.')
     duration=probe(source)['duration']
-    if body.processing_time is not None and body.processing_time > duration: raise HTTPException(422, 'Timestamp is outside the audio timeline.')
+    if body.processing_time is not None and not source_offset<=body.processing_time<(source_offset+duration if selected else source_offset+duration+1e-9): raise HTTPException(422, 'Timestamp is outside the selected source layer.')
     if body.processing_interval:
         if body.processing_interval.end-body.processing_interval.start > 600: raise HTTPException(422, 'Choose a processing interval of at most 10 minutes.')
-        if body.processing_interval.end > duration+1e-6: raise HTTPException(422, 'Selection extends beyond the audio timeline.')
+        if body.processing_interval.start < source_offset-1e-6 or body.processing_interval.end > source_offset+duration+1e-6: raise HTTPException(422, 'Selection extends beyond the selected source layer.')
     if (body.processing_interval or body.processing_time is not None) and body.visual_prompt: raise HTTPException(422, 'Visual guidance is not available for a selected audio range.')
     sound=description(body.prompt)
     if not sound or sound=='residual': raise HTTPException(422,'Enter a sound description; residual is a reserved layer name.')
     snapshot={'rows':[dict(r) for r in rows], 'source':source,
               'source_sha256':file_sha256(source), 'project_audio':p['audio'], 'target_id':body.stem_id,
-              'residual_id':residuals[0]['id'] if residuals else None}
+              'residual_id':selected['id'] if selected else (residuals[0]['id'] if residuals else None),
+              'promote_original':promote_original,
+              **({'source_layer_id':selected['id'],'source_offset':source_offset} if selected else {})}
     payload={'prompts':[sound],'visual_prompt':body.visual_prompt or {},
              'anchors':body.guidance.model_dump()['anchors'], 'edit_scope':body.edit_scope.model_dump(),
              'profile':body.profile, 'options':{**with_passes(separation_options(body.profile,body.reranking_candidates),body.passes),'seed':secrets.randbelow(2**31)},'hints':{'source_kind':source_kind(p)},
-             '_candidate':snapshot, '_object_context':object_context, '_processing_interval':body.processing_interval.model_dump() if body.processing_interval else None, '_processing_time':body.processing_time}
+             '_candidate':snapshot, '_object_context':object_context, '_processing_interval':({'start':body.processing_interval.start-source_offset,'end':body.processing_interval.end-source_offset} if body.processing_interval else None), '_processing_time':(body.processing_time-source_offset if body.processing_time is not None else None)}
+    if selected:
+        payload['options']['mode']='prompted'
+        translated=[]
+        for anchor in payload['anchors']:
+            if anchor['start']<source_offset or anchor['end']>source_offset+duration:raise HTTPException(422,'Guidance must lie within the selected layer.')
+            translated.append({**anchor,'start':anchor['start']-source_offset,'end':anchor['end']-source_offset})
+        payload['anchors']=translated
     try: payload=prepare_payload(p,payload)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',payload),'status':'queued'}
@@ -549,10 +577,12 @@ class ReplacementRequest(BaseModel):
     asset_id: str = Field(min_length=32,max_length=32)
     effect_label: str = Field(min_length=1,max_length=100)
     source_prompt: str = Field(min_length=1,max_length=200)
+    source_stem_id: str | None = Field(default=None,max_length=100)
     mode: Literal['replace','add']='replace'
     intervals: list[Interval] = Field(min_length=1,max_length=100)
     @model_validator(mode='after')
     def ordered(self):
+        if self.mode=='add' and self.source_stem_id:raise ValueError('A source layer is only used when replacing a sound.')
         if self.mode=='replace' and len(self.intervals)>20: raise ValueError('At most 20 separation ranges are supported.')
         for a,b in zip(self.intervals,self.intervals[1:]):
             if a.end>b.start: raise ValueError('Intervals must be ordered and not overlap.')
@@ -570,13 +600,17 @@ def replacement_preview(pid: str, body: ReplacementRequest, authorization: str |
         source=safe_path(pid,p['audio']);effect=asset_path(pid,body.asset_id)
         if any(i.end>probe(source)['duration'] for i in body.intervals): raise HTTPException(422,'Select times within the clip.')
         with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-        if body.mode=='replace' and rows and (len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1): raise HTTPException(409,'Replacement needs one unshifted residual layer. Choose add over the original or use a fresh project.')
+        selected=next((r for r in rows if r['id']==body.source_stem_id),None)
+        if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
+        if selected and any(i.start<selected['start_offset'] or i.end>selected['start_offset']+selected['duration']+1/48000 for i in body.intervals):raise HTTPException(422,'Select times within the chosen source layer.')
+        if body.mode=='replace' and not selected and rows and (len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1): raise HTTPException(409,'Replacement needs one unshifted residual layer. Choose a source layer or use a fresh project.')
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(422,'Project audio or sound effect is unavailable.') from exc
     return {'candidate_id':start(pid,'candidate',{'_replacement':True,'_candidate':snapshot,'asset_sha256':file_sha256(effect),**body.model_dump()}),'status':'queued'}
 
 class AutoReplacementRequest(BaseModel):
     request: str = Field(min_length=1,max_length=500)
+    source_stem_id: str | None = Field(default=None,max_length=100)
 
 @app.post('/api/projects/{pid}/automatic-replacement',status_code=202)
 def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization: str | None=Header(None)):
@@ -587,14 +621,22 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
     from .candidates import safe_path
     from .replacement import parse_replacement
     from .effect_followup import matching_effects
+    from .layer_scope import extract_layer_scope,resolve_layer
     try:
-        source=safe_path(pid,p['audio']);plan=parse_replacement(body.request,probe(source)['duration'])
+        source=safe_path(pid,p['audio'])
         with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+        request,layer_name=extract_layer_scope(body.request)
+        selected=resolve_layer(layer_name,rows) if layer_name else next((r for r in rows if r['id']==body.source_stem_id),None)
+        if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
+        if body.source_stem_id and selected and selected['id']!=body.source_stem_id:raise HTTPException(422,'The named layer and selected layer do not match.')
+        plan=parse_replacement(request,probe(source)['duration'])
+        if selected and plan.get('mode')=='add':raise HTTPException(422,'A source layer is only used when replacing a sound.')
+        if selected and plan.get('time') is not None and not selected['start_offset']<=plan['time']<selected['start_offset']+selected['duration']:raise HTTPException(422,'The timestamp is outside the selected source layer.')
         known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
-        if plan.get('mode')!='add' and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Try a fresh project or add a sound over the original.')
+        if plan.get('mode')!='add' and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':body.request}),'status':'queued'}
+    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None}),'status':'queued'}
 
 class SfxInsertRequest(BaseModel):
     inserts: list[dict] = Field(min_length=1,max_length=10)
@@ -840,6 +882,22 @@ class DirectorRequest(BaseModel):
     request: str = Field(min_length=1,max_length=1000)
     intent: Literal['cinematic','dramatic','cool','funny'] = 'cinematic'
     style: Literal['subtle','cinematic','dramatic'] = 'cinematic'
+
+@app.post('/api/projects/{pid}/censorship-preview',status_code=202)
+def censorship_preview(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    from .censorship import available
+    if not available(): raise HTTPException(503,'Local transcription is not configured. Install faster-whisper and configure a local model.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    try:
+        source=safe_path(pid,p['audio'])
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_censorship':True,'_candidate':snapshot}),'status':'queued'}
 
 @app.post('/api/projects/{pid}/director-preview',status_code=202)
 def director_preview(pid: str, body: DirectorRequest, authorization: str | None=Header(None)):

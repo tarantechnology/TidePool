@@ -130,3 +130,6 @@ def test_agent_route_precedence_insert_then_generate(client, tmp_path, monkeypat
         plan = ask(prompt)
         assert plan['kind'] == 'generate' and plan['generate']['instrument'] == instrument, prompt
     assert ask("replace the piano with violins")['kind'] == 'clarify'
+    # Censorship comes first: a generate ask never pre-empts the profanity beep flow.
+    for prompt in ("add violins and bleep the swearing", "censor the cuss words then add a piano part"):
+        plan = ask(prompt); assert plan['kind'] == 'clarify' and 'censorship' in plan['message'], prompt

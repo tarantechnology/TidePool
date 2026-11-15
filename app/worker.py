@@ -45,13 +45,15 @@ def ticking(job, stage, expected):
     """Advance a processing job's progress on a timer while a blocking call runs. Writes only
     while the job is still 'processing', so the final completion or failure write always wins."""
     done=threading.Event(); began=time.monotonic()
-    def write():
+    def write(initial=False):
         try:
-            with connect() as db: db.execute("UPDATE jobs SET stage=?,progress=MAX(progress,?) WHERE id=? AND status='processing'",(stage,eased(time.monotonic()-began,expected),job))
+            with connect() as db:
+                if initial: db.execute("UPDATE jobs SET stage=?,progress=MAX(progress,?) WHERE id=? AND status='processing'",(stage,eased(time.monotonic()-began,expected),job))
+                else: db.execute("UPDATE jobs SET progress=MAX(progress,?) WHERE id=? AND status='processing'",(eased(time.monotonic()-began,expected),job))
         except sqlite3.Error as exc: event('progress_failed',job_id=job,error=str(exc))
     def tick():
         while not done.wait(TICK_SECONDS): write()
-    write(); thread=threading.Thread(target=tick,daemon=True); thread.start()
+    write(True); thread=threading.Thread(target=tick,daemon=True); thread.start()
     try: yield
     finally: done.set(); thread.join()
 
@@ -170,7 +172,9 @@ def work_once():
             output=prepare_effect(p,payload)
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='candidate':
-            if payload.get('_clip_edit'):
+            if payload.get('_censorship'):
+                from .censorship import build
+            elif payload.get('_clip_edit'):
                 from .effect_clip import build
             elif payload.get('_replacement_adjust'):
                 from .replacement import adjust as build
@@ -198,7 +202,7 @@ def work_once():
             duration=probe(snapshot.get('source') or p['audio'])['duration']
             # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
             if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
-            creative=any(payload.get(k) for k in ('_fx','_effects','_director_adjust','_director','_cinematic','_sfx_insert','_generate'))
+            creative=any(payload.get(k) for k in ('_fx','_effects','_director_adjust','_director','_cinematic','_sfx_insert','_generate','_censorship'))
             with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
                 output=build(p,payload,job['id'])
             with connect() as db:

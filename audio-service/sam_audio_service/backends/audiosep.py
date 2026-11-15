@@ -10,6 +10,22 @@ import numpy as np
 from .base import Backend, BackendOptions, BackendPrompt, BackendResult
 from ..errors import UnsupportedOperation
 
+CHECKPOINT_REPO = 'Audio-AGI/AudioSep'
+CHECKPOINT_REVISION = '0807a713283035d8b0d0628f1b8e3d6580459f7b'
+
+
+def checkpoint_path(root: Path, variable: str, filename: str) -> Path:
+    explicit = os.getenv(variable)
+    local = Path(explicit).expanduser().resolve() if explicit else root/'checkpoint'/filename
+    if local.is_file():
+        return local
+    if explicit:
+        raise RuntimeError(f'{variable} points to a missing checkpoint')
+    # Public official weights, pinned to the verified revision. Hub cache is reused.
+    from huggingface_hub import hf_hub_download
+    return Path(hf_hub_download(CHECKPOINT_REPO, 'checkpoint/'+filename,
+                               repo_type='space', revision=CHECKPOINT_REVISION))
+
 
 class AudioSepBackend(Backend):
     name = 'audiosep'
@@ -40,10 +56,10 @@ class AudioSepBackend(Backend):
         if not self.root or not (self.root / 'models' / 'audiosep.py').is_file():
             raise RuntimeError('Set AUDIO_AUDIOSEP_ROOT to the prepared AudioSep checkout; see audio-service/README.md')
         config = self.root / 'config' / 'audiosep_base.yaml'
-        checkpoint = Path(os.getenv('AUDIO_AUDIOSEP_CHECKPOINT', str(self.root / 'checkpoint' / 'audiosep_base_4M_steps.ckpt'))).expanduser().resolve()
-        clap = Path(os.getenv('AUDIO_AUDIOSEP_CLAP_CHECKPOINT', str(self.root / 'checkpoint' / 'music_speech_audioset_epoch_15_esc_89.98.pt'))).expanduser().resolve()
-        if not all(p.is_file() for p in (config, checkpoint, clap)):
-            raise RuntimeError('AudioSep config or checkpoint is missing; see audio-service/README.md')
+        if not config.is_file():
+            raise RuntimeError('AudioSep config is missing; see audio-service/README.md')
+        checkpoint = checkpoint_path(self.root, 'AUDIO_AUDIOSEP_CHECKPOINT', 'audiosep_base_4M_steps.ckpt')
+        clap = checkpoint_path(self.root, 'AUDIO_AUDIOSEP_CLAP_CHECKPOINT', 'music_speech_audioset_epoch_15_esc_89.98.pt')
         import torch
         if self.requested_device == 'auto':
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'

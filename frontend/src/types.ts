@@ -29,6 +29,12 @@ export interface Stem {
   tags?: string[]
   /** Effects rendered into this layer, oldest first. Read-only here; removed through an effect preview. */
   fx?: FxChip[]
+  /** Related effect clips share an identity even when their names change. */
+  effectGroupId?: string
+  effectLabel?: string
+  isEffectClip?: boolean
+  /** Range on the original stem timeline that contains a separated occurrence. */
+  soundInterval?: {start:number;end:number}
 }
 
 /**

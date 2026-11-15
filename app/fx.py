@@ -443,6 +443,8 @@ def _scale_times(row, ratio):
     row['mute_ranges'] = json.dumps([[a * ratio, b * ratio] for a, b in ranges])
     spans = json.loads(row.get('spans') or 'null')
     if isinstance(spans, list): row['spans'] = json.dumps([[a * ratio, b * ratio] for a, b in spans])
+    for key in ('sound_start', 'sound_end'):  # A grouped sound's position on the source timeline.
+        if row.get(key) is not None: row[key] = float(row[key]) * ratio
 
 
 # ---------------------------------------------------------------- ducking

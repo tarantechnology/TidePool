@@ -2,9 +2,9 @@
 services:
   audio-service:
     build:
-      target: sam
+      target: audiosep
     environment:
-      AUDIO_BACKEND: sam
+      AUDIO_BACKEND: audiosep
       AUDIO_DEVICE: cuda
     deploy:
       resources:

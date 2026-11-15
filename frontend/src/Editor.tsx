@@ -258,6 +258,11 @@ export default function Editor() {
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
   }, [])
 
+  const dispatchBatch = useCallback((actions: EditAction[], coalesceKey?: string) => {
+    if (!actions.length) return
+    setHistory((h) => commit(h, { ...h.present, tracks: actions.reduce(applyAction, h.present.tracks) }, { coalesceKey, now:Date.now() }))
+  }, [])
+
   const setKind = useCallback((stemId: string, kind: StemKind) => {
     setHistory((h) => commit(h, { ...h.present, kinds: setKindOverride(h.present.kinds, stemId, kind) }))
   }, [])
@@ -268,7 +273,7 @@ export default function Editor() {
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
-      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'fx' || plan.kind === 'duck' || plan.kind === 'loudness' || plan.kind === 'insert') return {message:plan.message,ok:true}
+      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'fx' || plan.kind === 'duck' || plan.kind === 'loudness' || plan.kind === 'insert' || plan.kind === 'clip_edit') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}
@@ -411,6 +416,7 @@ export default function Editor() {
               visual={visual}
               onSelection={setVisualSelection}
               selection={visualSelection}
+              onClearSelection={() => setVisualSelection(null)}
               seekTo={seekTo}
               audioOnly={!videoSrc && projectStems.audioOnly === true}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
@@ -428,6 +434,8 @@ export default function Editor() {
                 tracks={tracks}
                 duration={duration}
                 onAction={dispatch}
+                onActions={dispatchBatch}
+                onClipEdit={(id,operation,position)=>void projectPanel.current?.editClip(id,operation,position)}
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
                 onRemoveFx={(stemId, chip) => { void projectPanel.current?.removeFx(stemId, chip.id, chip.label).catch(() => { /* The panel shows the error. */ }) }}

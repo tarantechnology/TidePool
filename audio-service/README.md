@@ -1,7 +1,7 @@
 # SoundCanvas audio inference service (Person 1)
 
-Text-, span- and visually-prompted sound separation with Meta's SAM Audio, exposed as a
-small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
+AudioSep text separation by default, with optional Meta SAM Audio text/span/visual
+separation, exposed as a small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
 at the repository root for the cross-team contract and open questions.
 
 ## Run locally (mock backend, no GPU)
@@ -9,7 +9,7 @@ at the repository root for the cross-team contract and open questions.
 ```bash
 cd audio-service
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m sam_audio_service        # http://localhost:8001/docs
+AUDIO_BACKEND=mock .venv/bin/python -m sam_audio_service  # http://localhost:8001/docs
 .venv/bin/python -m pytest -q
 ```
 
@@ -184,15 +184,15 @@ provenance, fixed splits/seeds, metrics, regression gate and staged rollback pro
 Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
 invalid visual guidance fails instead of silently changing to text-only inference.
 
-## AudioSep backend
+## Default AudioSep backend
 
-AudioSep is the default **text-only** separator when `AUDIO_BACKEND` is unset. It uses the AudioSep base checkpoint and
+AudioSep is the default **text-only** separator. It uses the AudioSep base checkpoint and
 CLAP text encoder; it is not SAM Audio and has no visual conditioning, time-anchor
 conditioning, independent candidates or judge-ranked retries. The editor reports those
 limitations. A timed mute is still an edit applied after separation. AudioSep may also
 extract speech, music or other sounds; review the target and edited mix before applying.
 
-The runtime must be installed separately and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
+Install its pinned inference dependencies with `pip install -e ".[audiosep]". The runtime is separate from the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
 prepared [upstream AudioSep checkout](https://github.com/Audio-AGI/AudioSep), its Python
 and PyTorch/torchaudio dependencies, and the official AudioSep and CLAP checkpoints. The
 upstream repository is MIT licensed; check the terms for model weights and dependencies
@@ -238,6 +238,25 @@ residual retains the original channels. The service default mask refinement is o
 latency and memory vary by recording; sample-accurate reconstruction does not guarantee
 correct isolation. Do not mistake the optional experimental spectral repairs for the
 standard AudioSep backend.
+
+### TidePool voice preservation
+
+AudioSep defaults to `AUDIO_SUPPRESSION=conservative` and
+`AUDIO_SUPPRESSION_STRENGTH=0.9`. The engine rebuilds the target from the original
+mixture phase through a selective ratio mask and limits processing when the target
+estimate is weak. This runs once after chunk reconstruction, preserving the full
+stereo timeline. The returned target is what is removed; target + residual still
+reconstruct the original. An additional legacy refinement mask is skipped in this mode.
+
+Request `options.suppression=off` for raw comparisons. `suppression_strength=1`
+uses stronger cleanup; `.9` retains some target to ease damage to other sounds.
+`model.suppression` and `/capabilities.defaults.suppression` report the effective
+settings. No source-separation method guarantees unchanged voices during overlap.
+
+The official AudioSep/CLAP checkpoints are reused from the checkout when present.
+Otherwise the adapter uses the Hugging Face cache and verified Space revision
+`0807a713283035d8b0d0628f1b8e3d6580459f7b`. Explicit missing checkpoint paths fail
+clearly. No SAM model or mock fallback is loaded by the AudioSep path.
 
 ## Music stems and model routing
 
@@ -286,9 +305,10 @@ split returns no residual; a subset returns one `residual` (the sum of the other
 | `AUDIO_ROUTING_DEFAULT` | `auto` | `options.mode` when a request sets none: `auto`, `prompted`, `music_stems` (the last needs a splitter). |
 | `AUDIO_ROUTER_CLASSIFIER` | `panns` with `demucs`/`chain`/`roformer`, else `off` | `off`, `mock` (everything is music; tests), `panns` (PANNs Cnn14 via `panns-inference`, 32 kHz; checkpoint `AUDIO_ROUTER_PANNS_CHECKPOINT`, default `~/panns_data/Cnn14_mAP=0.431.pth`), `ast` (`MIT/ast-finetuned-audioset-10-10-0.4593`, 16 kHz). Both score up to eight 10 s windows across the file and load on first use. A classifier that cannot load is disabled for the process and `/health` reports why; routing then uses the prompt rules alone (`scores: null`). |
 | `AUDIO_ROUTER_MUSIC_THRESHOLD` | per classifier: `panns` 0.4, `ast` 0.2 | Minimum "song" score (median over up to 8 10 s windows of AudioSet Music minus Speech) for stem-name prompts to go to the splitter. Speech over music (vlogs, soundtracks) scores ~0 and stays on the prompted model; full songs score ~0.8 (PANNs). |
-| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever the router classifier can tag (`panns`, `ast`); it reuses that model under its lock, no second load. `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
-| `AUDIO_STEM_LABEL_MIN_SCORE` | `0.1` | Minimum mean AudioSet probability for a tag (and for naming `other`). Picked on 50 MUSDB clips: 0.1 named 31/33 guitar-dominated "other" stems with a guitar and left 8/50 as "Other"; 0.2 drops to 28/33 and 14/50. |
-| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). 4 stems of a 4-min song: ~0.6 s warm with PANNs on an A40. |
+| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever a tagger can run. Each stem is described only with its own vocabulary (vocals: Male/Female singing, Rapping, Choir, Synth vocals, Spoken word, else "Singing"; drums: Drum kit/Drum machine + details; bass: Bass guitar/Synth bass/Double bass; other: melodic instruments). `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
+| `AUDIO_STEM_LABEL_MODEL` | `router` | Tagger for stem labels: `router` reuses the router's AudioSet classifier (PANNs; no second model, ~0.8 s warm for 4 stems of a 4-min song on a busy A40), `panns`/`ast` load their own copy when the router uses another, `clap` loads LAION-CLAP zero-shot (`AUDIO_STEM_LABEL_CLAP_MODEL`, default `laion/larger_clap_music_and_speech`, Apache-2.0). PANNs is the default: AST is ~3x slower and weaker on vocals; CLAP is strong on clean strings but mislabels separated vocals ("Synth vocals") and bass (2026-11-14 evaluation, docs/plans/music-stems.md). |
+| `AUDIO_STEM_LABEL_MIN_SCORE` | `0` | Floor on the per-family presence thresholds (`labeling.PRESENCE`, calibrated per tagger on synthetic BabySlakh stems) and on drum detail tags; `0` = calibrated thresholds only. |
+| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). |
 
 The splitter and classifier load lazily on first use (not at startup), share the GPU and
 the inference lock with the prompted model, and are reported under `splitter` and

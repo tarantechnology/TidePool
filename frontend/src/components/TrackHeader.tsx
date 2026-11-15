@@ -1,6 +1,6 @@
 import { Tip } from './Tip'
 import { useState } from 'react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { refinementBadge } from '../api/refine'
 import { tagLine } from '../api/backend'
 import { MAX_GAIN, toDb } from '../edits'
@@ -18,6 +18,7 @@ interface Props {
   compact?: boolean
   /** Preview this layer without one of its effects. */
   onRemoveFx?: (chip: FxChip) => void
+  clipActions?: ReactNode
 }
 
 const KIND_LABEL: Record<Stem['kind'], string> = {
@@ -62,7 +63,7 @@ function FxChips({ chips, label, onRemove }: { chips: FxChip[]; label: string; o
   )
 }
 
-export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRemoveFx }: Props) {
+export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRemoveFx, clipActions }: Props) {
   const btn = (active: boolean, activeCls: string) =>
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
       active ? activeCls : 'border-line bg-tint/[0.03] text-subtle hover:border-line-strong hover:text-fg'
@@ -115,6 +116,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
           </div>
           {!compact && stem.fx?.length ? <FxChips chips={stem.fx} label={stem.label} onRemove={onRemoveFx} /> : null}
         </div>
+        {clipActions}
         <Tip side="bottom" label={track.muted ? 'Unmute' : 'Mute'} detail={track.muted ? 'Bring this layer back into the mix.' : 'Silence this layer. Everything else keeps playing.'}>
           <button
             aria-label={track.muted ? `Unmute ${stem.label}` : `Mute ${stem.label}`}

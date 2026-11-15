@@ -8,6 +8,19 @@ const fetchMock = vi.fn<typeof fetch>()
 
 const bodyOf = (call = 0) => JSON.parse(String(fetchMock.mock.calls[call][1]?.body)) as Record<string, unknown>
 
+describe('separator identity', () => {
+  it('uses the serving model and voice-preservation status from capabilities', () => {
+    expect(toCapabilities({backend:'audiosep',model_id:'audiosep-base-4M',loaded:true,quality:false,visual:false,suppression:{mode:'conservative',strength:.9}})).toMatchObject({
+      backend:'audiosep',modelId:'audiosep-base-4M',loaded:true,preserveVoices:true,quality:false,visual:false,
+    })
+  })
+  it('does not invent a model or processing mode for an older server', () => {
+    const caps=toCapabilities({quality:false,visual:false})
+    expect(caps).not.toHaveProperty('backend')
+    expect(caps).not.toHaveProperty('preserveVoices')
+  })
+})
+
 describe('processProject', () => {
   beforeEach(() => {
     fetchMock.mockReset()
@@ -91,6 +104,12 @@ describe('toStem', () => {
 
   it('leaves a target with the default kind, which is not guessed from the name', () => {
     expect(toStem(row({ role: 'target', name: 'dialogue' }), 'blob:x').kind).toBe('sfx')
+  })
+
+  it('keeps grouped separated sounds distinct from editable effect clips', () => {
+    const target=toStem(row({role:'target',sound_group_id:'g',sound_group_label:'chopping',sound_start:1,sound_end:2}), 'blob:x')
+    expect(target.effectGroupId).toBe('g');expect(target.effectLabel).toBe('chopping');expect(target.soundInterval).toEqual({start:1,end:2});expect(target.isEffectClip).toBeUndefined()
+    expect(toStem(row({role:'effect',effect_group_id:'e',effect_label:'gong'}),'blob:x').isEffectClip).toBe(true)
   })
 
   it('prefers the backend label for display, and falls back to the name', () => {

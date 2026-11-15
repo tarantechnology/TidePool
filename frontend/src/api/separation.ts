@@ -195,7 +195,8 @@ export function orderForExplode(sounds: readonly string[], recipe = false): stri
 export function focusSounds(heard: readonly { prompt: string; tier: string; score: number }[]): string[] {
   const out: string[] = []
   const add = (p: string) => { if (!out.some(o => o.toLowerCase() === p.toLowerCase())) out.push(p) }
-  for (const h of heard) if (h.tier === 'voices') add(h.prompt)
+  // Every voice (talking, laughter, singing) goes into the one dialogue layer, so ask for it by its plainest name.
+  if (heard.some(h => h.tier === 'voices')) add('people talking')
   const weather = heard.filter(h => h.tier === 'background' && /\b(rain|storm|drizzle|downpour|thunder)/i.test(h.prompt))
   for (const h of weather) add(h.prompt)
   if (weather.some(h => /rain|storm|drizzle|downpour/i.test(h.prompt)) && !out.some(p => /thunder/i.test(p))) add('thunder rumbling')

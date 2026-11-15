@@ -10,11 +10,14 @@ describe('focusSounds', () => {
     { prompt: 'tense cinematic music', tier: 'music', score: 0.06 },
   ]
   it('keeps voices, weather with its thunder, and the one most distinctive hit', () => {
-    expect(focusSounds(heard)).toEqual(['deep male voice speaking', 'heavy rain', 'thunder rumbling', 'high-pitched screech'])
+    expect(focusSounds(heard)).toEqual(['people talking', 'heavy rain', 'thunder rumbling', 'high-pitched screech'])
   })
   it('leaves music and lesser hits in the background', () => {
     expect(focusSounds(heard)).not.toContain('tense cinematic music')
     expect(focusSounds(heard)).not.toContain('punches and fight impacts')
+  })
+  it('turns laughter or singing into the one dialogue layer', () => {
+    expect(focusSounds([{ prompt: 'laughter', tier: 'voices', score: 0.4 }, { prompt: 'rock music with drums', tier: 'music', score: 0.3 }])).toEqual(['people talking'])
   })
   it('adds no thunder without rain, and nothing when nothing was heard', () => {
     expect(focusSounds([{ prompt: 'dog barking', tier: 'hits', score: 0.6 }])).toEqual(['dog barking'])

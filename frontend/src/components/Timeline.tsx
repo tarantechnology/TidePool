@@ -37,6 +37,8 @@ interface Props {
   /** Rename a layer; absent when layers are not project stems. */
   onRename?: (stemId: string, name: string) => Promise<void>
   onDelete?: (stemId: string, fold: boolean) => Promise<void>
+  /** Merge one layer into another; absent when layers are not project stems. */
+  onMerge?: (stemId: string, into: string) => Promise<void>
   residualLabel?: string | null
   /** The residual itself can't be deleted. */
   residualId?: string | null
@@ -128,7 +130,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, onRename, onDelete, residualLabel = null, residualId = null, header, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip, onRemoveFx }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, onRename, onDelete, onMerge, residualLabel = null, residualId = null, header, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip, onRemoveFx }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [selecting, setSelecting] = useState(false)
@@ -358,6 +360,8 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
                 onRename={onRename ? (name) => onRename(stem.id, name) : undefined}
                 onDelete={onDelete ? (fold) => onDelete(stem.id, fold) : undefined}
+                onMerge={onMerge ? (into) => onMerge(stem.id, into) : undefined}
+                mergeTargets={onMerge ? stems.filter((s) => s.id !== stem.id).map((s) => ({ id: s.id, label: s.label })) : undefined}
                 residualLabel={residualLabel}
                 residualId={residualId}
                 unsynced={syncing && hasStepKeyframes(track.automation)}

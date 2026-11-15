@@ -2,6 +2,7 @@ import { Tip } from './Tip'
 import { useState } from 'react'
 import { EditableName } from './EditableName'
 import { DeleteLayer } from './DeleteLayer'
+import { MergeLayer } from './MergeLayer'
 import type { CSSProperties, ReactNode } from 'react'
 import { refinementBadge } from '../api/refine'
 import { tagLine } from '../api/backend'
@@ -28,6 +29,10 @@ interface Props {
   residualLabel?: string | null
   /** The residual itself can't be deleted. */
   residualId?: string | null
+  /** Merge this layer into another one (its sound is added there); absent when layers can't merge. */
+  onMerge?: (into: string) => Promise<void>
+  /** The other layers it can merge into. */
+  mergeTargets?: { id: string; label: string }[]
   clipActions?: ReactNode
 }
 
@@ -73,7 +78,7 @@ function FxChips({ chips, label, onRemove }: { chips: FxChip[]; label: string; o
   )
 }
 
-export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRename, onDelete, residualLabel = null, residualId = null, onRemoveFx, clipActions }: Props) {
+export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRename, onDelete, residualLabel = null, residualId = null, onMerge, mergeTargets, onRemoveFx, clipActions }: Props) {
   const btn = (active: boolean, activeCls: string) =>
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
       active ? activeCls : 'border-line bg-tint/[0.03] text-subtle hover:border-line-strong hover:text-fg'
@@ -147,6 +152,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             S
           </button>
         </Tip>
+        {onMerge && mergeTargets && stem.id !== residualId && <MergeLayer label={stem.label} targets={mergeTargets} onMerge={onMerge} />}
         {onDelete && <DeleteLayer label={stem.label} residualLabel={residualLabel} isResidual={stem.id === residualId} onDelete={onDelete} />}
       </div>
       <div className={`flex items-center gap-2.5 max-md:gap-1 ${compact ? 'hidden max-md:flex' : ''}`}>

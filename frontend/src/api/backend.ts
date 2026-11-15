@@ -513,11 +513,12 @@ export async function renameStem(config: BackendConfig, projectId: string, stemI
 
 /**
  * Remove a layer. fold=true adds its sound to the residual, so the mix still has it; fold=false
- * takes the sound out too. Returns the job to load the remaining layers from.
+ * takes the sound out too. into=<layer id> merges it into that layer instead (its audio is added there).
+ * Returns the job to load the remaining layers from.
  */
-export async function deleteStem(config: BackendConfig, projectId: string, stemId: string, fold: boolean, expectedRevision?: number): Promise<{ job_id: string; folded: boolean }> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}?fold=${fold}${expectedRevision === undefined ? '' : `&expected_revision=${expectedRevision}`}`, { method:'DELETE' })
-  return (await res.json()) as { job_id: string; folded: boolean }
+export async function deleteStem(config: BackendConfig, projectId: string, stemId: string, fold: boolean, expectedRevision?: number, into?: string): Promise<{ job_id: string; folded: boolean; merged_into?: string }> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}?fold=${fold}${into ? `&into=${encodeURIComponent(into)}` : ''}${expectedRevision === undefined ? '' : `&expected_revision=${expectedRevision}`}`, { method:'DELETE' })
+  return (await res.json()) as { job_id: string; folded: boolean; merged_into?: string }
 }
 
 /** A sound the model heard in the clip: a separation-ready prompt, and the 10-second windows it was heard in. */

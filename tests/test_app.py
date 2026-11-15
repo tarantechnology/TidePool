@@ -543,6 +543,36 @@ def test_export_reaches_500_percent_and_limits(tmp_path):
     out=tmp_path/'sync.wav'; export([stem],quiet,out,'wav',False)
     np.testing.assert_allclose(read_wav(out)[0], read_wav(quiet)[0], atol=1e-4)   # no look-ahead delay
 
+def test_merge_layer_into_another_keeps_its_loudness_and_undoes(client,tmp_path):
+    import numpy as np
+    from app.core import connect
+    from app.media import read_wav
+    p=client.post('/api/projects').json(); pid=p['project_id']; headers={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'a.wav'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=1',str(audio)],check=True)
+    with audio.open('rb') as f: client.post(f'/api/projects/{pid}/upload',headers=headers,files={'file':('a.wav',f,'audio/wav')})
+    job=wait(client,'/api/jobs/'+client.post(f'/api/projects/{pid}/process',headers=headers,json={'prompts':['people talking','music','residual']}).json()['job_id'],headers)
+    stems={s['name']:s for s in job['stems']}
+    residual,talk,music=stems['residual'],stems['people talking'],stems['music']
+    path=lambda sid: connect().execute('SELECT path FROM stems WHERE id=?',(sid,)).fetchone()['path']
+    a,b=read_wav(path(talk['id']))[0],read_wav(path(music['id']))[0]
+    url=f'/api/projects/{pid}/stems/'
+    assert client.delete(url+music['id']+'?into='+music['id'],headers=headers).status_code==422
+    assert client.delete(url+music['id']+'?into=nope',headers=headers).status_code==404
+    assert client.patch(url+talk['id'],headers=headers,json={'solo':True}).status_code==200
+    assert client.delete(url+music['id']+'?into='+talk['id'],headers=headers).status_code==409   # solo changes what is heard
+    assert client.patch(url+talk['id'],headers=headers,json={'solo':False,'volume':2}).status_code==200
+    before=client.post(f'/api/projects/{pid}/checkpoints',headers=headers,json={'label':'Before'}).json()['id']
+    r=client.delete(url+music['id']+'?into='+talk['id'],headers=headers)
+    assert r.status_code==200 and r.json()['merged_into']==talk['id']
+    # The target plays at 2x, so the moved sound is halved and still plays at its own 1x.
+    np.testing.assert_allclose(read_wav(path(talk['id']))[0],a+b*0.5,atol=1e-6)
+    loaded=client.get('/api/jobs/'+r.json()['job_id'],headers=headers).json()
+    assert {s['name'] for s in loaded['stems']}=={'residual','people talking'}
+    restored=client.post(f'/api/projects/{pid}/checkpoints/{before}/restore',headers=headers)
+    assert restored.status_code==200 and restored.json()['stems']==3
+    np.testing.assert_allclose(read_wav(path(talk['id']))[0],a,atol=1e-6)
+
 def test_delete_layer_folds_into_residual_and_undoes(client,tmp_path):
     import numpy as np
     from app.core import connect

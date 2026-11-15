@@ -56,6 +56,10 @@ interface Props {
   visual: VisualMetadata | null
   /** What the panel is busy with, for the timeline's working state; null when idle. */
   onBusy?: (label: string | null) => void
+  /** The step the flow is on, for a collapsed panel to show (phone layout). */
+  onStep?: (step: { n: number; title: string }) => void
+  /** Keep failures visible when the phone sheet closes during work. */
+  onError?: (message: string) => void
 }
 
 export interface ProjectPanelHandle {
@@ -69,7 +73,8 @@ export interface ProjectPanelHandle {
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, onBusy}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, onBusy, onStep, onError}, ref) {
+
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -165,6 +170,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
   useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
+  useEffect(()=>{if(error)onError?.(error)},[error,onError])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
   const run = async (fn: () => Promise<void>) => {
@@ -665,6 +671,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const durationSeconds = project?.metadata?.duration
   // Where the user is in Upload, Pick a sound, Preview and apply, Export.
   const current: StepId = !ready ? 'upload' : candidateId || undoId ? 'preview' : jobId ? 'export' : 'sound'
+  useEffect(() => { onStep?.(STEP_INFO[current]) }, [current, onStep])
+
   const flowKey = `${project?.project_id ?? ''}|${candidateId}|${jobId}`
   const openStep = manualStep?.key === flowKey ? manualStep.id : null
   const setOpenStep = (next: StepId | 'none' | ((prev: StepId | 'none' | null) => StepId | 'none')) => setManualStep({key:flowKey,id:typeof next === 'function' ? next(openStep) : next})
@@ -811,6 +819,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
 })
 
 type StepId = 'upload' | 'sound' | 'preview' | 'export'
+const STEP_INFO: Record<StepId, { n: number; title: string }> = { upload: { n: 1, title: 'Upload' }, sound: { n: 2, title: 'Pick a sound' }, preview: { n: 3, title: 'Preview and apply' }, export: { n: 4, title: 'Export' } }
 type StepStatus = 'done' | 'active' | 'todo'
 
 function Step({ n, title, tag, status, open, onToggle, summary, children }: { n: number; title: string; tag?: string; status: StepStatus; open: boolean; onToggle: () => void; summary?: string; children: ReactNode }) {

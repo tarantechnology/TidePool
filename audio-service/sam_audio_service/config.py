@@ -133,11 +133,17 @@ class Settings:
     router_music_threshold: float | None = field(default_factory=lambda: _opt_float("AUDIO_ROUTER_MUSIC_THRESHOLD"))
     # PANNs Cnn14 checkpoint; unset -> ~/panns_data/Cnn14_mAP=0.431.pth (downloaded if missing).
     router_panns_checkpoint: str | None = field(default_factory=lambda: os.getenv("AUDIO_ROUTER_PANNS_CHECKPOINT") or None)
-    # Instrument tags and descriptive names for music stems ("Other" -> "Synth & Strings"),
-    # from the router's AudioSet tagger (labeling.py): auto | off. auto labels whenever the
-    # router classifier can tag (panns, ast); otherwise tags are null and "other" stays "Other".
+    # Instrument tags and descriptive names for music stems ("Other" -> "Synth & Strings")
+    # (labeling.py): auto | off. auto labels whenever a tagger is available (see below);
+    # otherwise tags are null and "other" stays "Other".
     stem_labels: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABELS", "auto"))
-    # Minimum mean probability for a tag. Unset -> per classifier (see __post_init__).
+    # Tagger for stem labels: router | panns | ast | clap. router (default) reuses the router's
+    # AudioSet classifier (no second model); panns/ast load their own instance when the router
+    # uses something else; clap is the zero-shot LAION-CLAP model (AUDIO_STEM_LABEL_CLAP_MODEL).
+    stem_label_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABEL_MODEL", "router").strip().lower() or "router")
+    stem_label_clap_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABEL_CLAP_MODEL", "laion/larger_clap_music_and_speech"))
+    # Floor on the per-family presence thresholds (labeling.PRESENCE, calibrated per tagger) and
+    # on drum detail tags. 0 (default) = the calibrated thresholds alone.
     stem_label_min_score: float | None = field(default_factory=lambda: _opt_float("AUDIO_STEM_LABEL_MIN_SCORE"))
     # 10 s windows analysed per stem (active regions only, spread across the song).
     stem_label_max_windows: int = field(default_factory=lambda: _int("AUDIO_STEM_LABEL_MAX_WINDOWS", 12))
@@ -233,7 +239,7 @@ class Settings:
         if self.router_music_threshold is None:
             self.router_music_threshold = {"panns": 0.4, "ast": 0.2}.get(self.router_classifier, 0.4)
         if self.stem_label_min_score is None:
-            self.stem_label_min_score = {"panns": 0.1, "ast": 0.1}.get(self.router_classifier, 0.1)
+            self.stem_label_min_score = 0.0
         if not self.refine:
             # Measured 2026-11-13 on sam-audio-small: the mask improved every fixture (+1.8 to
             # +5.9 dB SI-SDRi, 1.7-6.5 dB less leakage) at no GPU cost, so it is on for the real
@@ -332,6 +338,8 @@ class Settings:
             raise ValueError("AUDIO_STEM_LABELS must be 'auto' or 'off'")
         if not 0 <= self.stem_label_min_score <= 1:
             raise ValueError("AUDIO_STEM_LABEL_MIN_SCORE must be in [0, 1]")
+        if self.stem_label_model not in {"router", "panns", "ast", "clap"}:
+            raise ValueError("AUDIO_STEM_LABEL_MODEL must be 'router', 'panns', 'ast' or 'clap'")
         if not 1 <= self.stem_label_max_windows <= 64:
             raise ValueError("AUDIO_STEM_LABEL_MAX_WINDOWS must be between 1 and 64")
         if self.router_classifier not in {"off", "mock", "ast", "panns"}:

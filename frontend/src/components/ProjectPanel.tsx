@@ -8,7 +8,7 @@ import type { VisualSelection } from '../visual'
 import { musicCommand, separationCommand } from '../separationCommand'
 import { separationSettings } from '../agent/separationSettings'
 import { muteExistingStem } from '../agent/planOutcome'
-import { splitSuggestion } from '../state/projectStems'
+import { canSplitProject, splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
 import { placementLines, sfxFollowup } from '../agent/sfxIntent'
 import { chatRoute } from '../agent/chatRoute'
@@ -130,6 +130,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [smartOrder, setSmartOrder] = useState(true)
   const [splitMusic, setSplitMusic] = useState(false)
   const [confirmExplode, setConfirmExplode] = useState(false)
+  const [confirmSplit, setConfirmSplit] = useState(false)
   /** What the model heard in this project's clip, once it has listened. */
   const [heard, setHeard] = useState<{projectId:string;sounds:HeardSound[];note:string}|null>(null)
   const [listening, setListening] = useState(false)
@@ -262,8 +263,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(()=>{let active=true;if(projectId && token)void getSavedStems({baseUrl,token},projectId).then(rows=>{if(active){setSourceLayers(rows);setSourceLayerId(id=>rows.some(r=>r.id===id)?id:'')}}).catch(()=>{if(active)setSourceLayers([])});return()=>{active=false}},[baseUrl,token,projectId,jobId])
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
   const audioOnly = project?.metadata?.has_video === false
-  // A split replaces every layer, so it is offered only before the first separation.
-  const canSplit = Boolean(project?.metadata) && !jobId && !candidateId && capabilities?.musicStems?.available !== false
+  // A split replaces every layer; it goes through an undo checkpoint, so existing layers do not block it.
+  const canSplit = canSplitProject({hasMetadata:Boolean(project?.metadata), candidateId, musicStemsAvailable:capabilities?.musicStems?.available})
   const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
   useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
@@ -411,7 +412,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     // Same render as setProject, so the save effect never writes this reset under the previous project.
     setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
-    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setConfirmExplode(false); setHeard(null); explodeEdited.current=false; setExplodeText(DEFAULT_EXPLODE); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setConfirmExplode(false); setConfirmSplit(false); setHeard(null); explodeEdited.current=false; setExplodeText(DEFAULT_EXPLODE); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
@@ -635,7 +636,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   })
   useEffect(() => { autoListen() }, [canListen, project?.project_id, project?.metadata, jobId])
   const splitSong = () => run(async () => {
-    if (!project) return
+    setConfirmSplit(false)
+    if (!project || !canSplit) return
     await splitInto(config, project, null)
   })
   const removeFx = async (stemId:string, chipId:string, label:string) => {
@@ -1146,7 +1148,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (result.status === 'accepted' && result.export_id) await finishExport(result.export_id, 'mp4')
     if (result.status === 'applied' && jobId) { await onLoadStems(new HttpStemSource(config,jobId),'Project stems'); await endStep(config) }
   })
-  const hasProject = Boolean(project)
   const recipeMode = capabilities?.explode === true
   const explodeOrder = smartOrder ? orderForExplode(parseExplodeList(explodeText), recipeMode) : parseExplodeList(explodeText)
   const tierOf = (sound: string) => recipeMode ? recipeTier(sound) : explodeTier(sound)
@@ -1236,9 +1237,26 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           {project && <details className="mt-2 text-xs"><summary className="cursor-pointer text-muted hover:text-fg">Share access</summary><p className="mt-1 text-muted">Saved to your projects in this browser. To open it on another computer, use “Open with an ID” on the projects page.</p><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e=>e.currentTarget.select()}/></label><p className="text-muted">Anyone with both can edit this project.</p></details>}
         </Step>
 
-        <Step n={2} title="Split into layers" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
+        <Step n={2} title="Split into layers" tag={FEATURES.separate} status={status('sound')} open={open('sound')} onToggle={() => toggle('sound')}
           summary={status('sound') === 'done' ? (prompt.trim() || (exploded ? `Exploded: ${exploded}` : undefined)) : undefined}>
           <div className="space-y-3">
+            <div className="rounded-xl border border-line bg-surface p-3 text-xs">
+              <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">♫</span>Split a song into tracks</p>
+              <p className="mt-0.5 text-muted">One track per instrument — vocals, drums, bass and the rest (named after what it sounds like). Best for music.</p>
+              <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-line-strong px-2 py-1.5 hover:border-accent/50 hover:bg-accent-soft/60">
+                <span className="font-medium text-accent">Upload an audio clip</span>
+                <span className="min-w-0 flex-1 truncate text-right text-subtle">{fileName || 'No file yet'}</span>
+                <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3,.flac,.m4a,video/*,audio/*" aria-label="Audio clip to split" disabled={busy} onChange={e => { const f=e.target.files?.[0] || null; e.currentTarget.value=''; setFile(f); if (f) void uploadMedia(f) }} />
+              </label>
+              {suggested && <p className="mt-2 text-[11px] font-medium text-accent">Sounds like a song — split it into tracks. <span className="font-normal text-muted">{suggested}</span></p>}
+              {capabilities?.musicStems?.available === false ? <p className="mt-2 text-[11px] text-amber-800">The song splitter isn't available on the audio service right now.</p>
+              : confirmSplit && jobId ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+                <p><span className="font-medium">This replaces your current layers</span>, along with their volume changes and names. Undo (⌘Z) brings the old layers back.</p>
+                <div className="mt-2 flex gap-2"><button className={`${button} flex-1`} disabled={busy} onClick={()=>void splitSong()}>Replace and split</button><button className={secondary} onClick={()=>setConfirmSplit(false)}>Keep my layers</button></div>
+              </div>
+              : <button className={`${button} mt-2 w-full py-2 font-medium`} disabled={busy || !canSplit} onClick={()=>jobId ? setConfirmSplit(true) : void splitSong()}>Split into tracks</button>}
+              {routing?.mode === 'music_stems' && <p className="mt-1 text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
+            </div>
             {project && <div className="rounded-xl border border-line bg-surface p-3 text-xs">
               <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">✺</span>Explode the whole clip<span className="ml-auto rounded-full bg-accent-soft px-1.5 py-px text-[10px] font-normal text-accent">Start here</span></p>
               <p className="mt-0.5 text-muted">One layer per sound you list, plus a background layer for everything else. Each layer is named after its sound, and you can rename it later. {canListen ? 'TidePool listens to the clip and fills in what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
@@ -1282,7 +1300,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
               </div>
             </details>}
             {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
-            {routing && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
+            {routing && routing.mode !== 'music_stems' && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
             {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata} onClick={()=>void run(async()=>{if(project)await previewDirector(config,project,'Make the whole video more cinematic','cinematic','cinematic')})}>Preview cinematic audio</button>}
             {project && <div className="rounded-xl border border-line p-2 text-xs">
               <button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>effectsOpen ? setEffectsOpen(false) : openEffects()}>Adjust layer EQ &amp; compression</button>

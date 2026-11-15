@@ -158,6 +158,8 @@ def test_add_effect_at_tracked_object_appearances_and_reject_stale_analysis(clie
     p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
     audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
     with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Add a gong every time we see person 5','stems':[],'tracks':[],'duration':5})
+    assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
     url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Add a gong every time we see person 5'}
     assert client.post(url,json=body).status_code==401
     assert client.post(url,headers=h,json=body).status_code==422

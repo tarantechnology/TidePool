@@ -346,6 +346,15 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     import re
     if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
+    # A browser tab left open across an editor update may still send sound
+    # generation requests to this older planning route. Never let its generic
+    # planner incorrectly say that the configured generator cannot add sounds.
+    if re.search(r'\badd\b',body.prompt,re.I):
+        from .replacement import parse_replacement
+        try: addition=parse_replacement(body.prompt,body.duration)
+        except ValueError: addition=None
+        if addition and addition.get('mode')=='add':
+            return {'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan

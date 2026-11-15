@@ -379,10 +379,9 @@ export async function getRoute(config: BackendConfig, projectId: string, signal?
   const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/route`, {}, signal, 120_000)
   return toRouting(await res.json())
 }
-export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
-  // An MP4 is turned to match the editor's picture; audio-only exports have no picture to turn.
+export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3', trim?: {start:number;end:number}, clips?: {start:number;end:number}[]): Promise<string> {
   const rotation = format==='mp4' ? readRotation(projectId) ?? 0 : 0
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(rotation ? {rotation} : {})})})
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(rotation ? {rotation} : {}),...(trim ? {trim} : {}),...(clips ? {clips} : {})})})
   return ((await res.json()) as {export_id:string}).export_id
 }
 export async function getExport(config: BackendConfig, exportId: string, signal?: AbortSignal): Promise<ExportInfo> {

@@ -45,3 +45,38 @@ def test_audiosep_rejects_unsupported_features_without_loading_torch():
         backend.separate(signal, BackendPrompt(text='dog', anchors=[('+', 0, 1)]), BackendOptions())
     with pytest.raises(UnsupportedOperation, match='ranked or independent'):
         backend.separate(signal, BackendPrompt(text='dog'), BackendOptions(candidates=2))
+
+
+def test_audiosep_is_default_and_can_be_explicitly_overridden(monkeypatch):
+    for name in ['AUDIO_BACKEND','AUDIO_MODEL_ID','AUDIO_SUPPRESSION','AUDIO_CHUNK_BATCH','AUDIO_CHUNK_WORKERS']:
+        monkeypatch.delenv(name, raising=False)
+    settings = load_settings()
+    assert settings.backend == 'audiosep' and settings.model_id == 'audiosep-base-4M'
+    assert settings.suppression == 'conservative' and settings.suppression_strength == .9
+    assert settings.chunk_batch == 1
+    monkeypatch.setenv('AUDIO_BACKEND','mock')
+    assert load_settings().suppression == 'off'
+
+
+def test_existing_checkpoint_is_reused_and_missing_explicit_path_fails(tmp_path, monkeypatch):
+    from sam_audio_service.backends.audiosep import checkpoint_path
+    folder=tmp_path/'checkpoint';folder.mkdir()
+    checkpoint=folder/'weights.ckpt';checkpoint.write_bytes(b'fixture')
+    monkeypatch.delenv('AUDIO_AUDIOSEP_CHECKPOINT',raising=False)
+    assert checkpoint_path(tmp_path,'AUDIO_AUDIOSEP_CHECKPOINT','weights.ckpt') == checkpoint
+    monkeypatch.setenv('AUDIO_AUDIOSEP_CHECKPOINT',str(tmp_path/'missing.ckpt'))
+    with pytest.raises(RuntimeError,match='missing checkpoint'):
+        checkpoint_path(tmp_path,'AUDIO_AUDIOSEP_CHECKPOINT','weights.ckpt')
+
+
+def test_checkpoint_download_is_pinned_to_official_revision(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from sam_audio_service.backends.audiosep import checkpoint_path, CHECKPOINT_REVISION
+    calls=[]
+    def download(*args,**kwargs):
+        calls.append((args,kwargs));return str(tmp_path/'downloaded')
+    monkeypatch.setitem(sys.modules,'huggingface_hub',SimpleNamespace(hf_hub_download=download))
+    monkeypatch.delenv('AUDIO_AUDIOSEP_CHECKPOINT',raising=False)
+    assert checkpoint_path(tmp_path,'AUDIO_AUDIOSEP_CHECKPOINT','weights.ckpt') == tmp_path/'downloaded'
+    assert calls == [(('Audio-AGI/AudioSep','checkpoint/weights.ckpt'),{'repo_type':'space','revision':CHECKPOINT_REVISION})]

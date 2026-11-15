@@ -46,7 +46,7 @@ class Settings:
     # "mock" is a deterministic DSP stand-in for local development and CI. It is NOT
     # source separation. "sam" loads the real SAM Audio checkpoints.
     backend: str = field(default_factory=lambda: os.getenv("AUDIO_BACKEND", "audiosep"))
-    model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID", "facebook/sam-audio-large"))
+    model_id: str = field(default_factory=lambda: os.getenv("AUDIO_MODEL_ID") or 'facebook/sam-audio-large')
     # "auto" picks cuda > mps > cpu.
     device: str = field(default_factory=lambda: os.getenv("AUDIO_DEVICE", "auto"))
     dtype: str = field(default_factory=lambda: os.getenv("AUDIO_DTYPE", "float32"))
@@ -81,6 +81,8 @@ class Settings:
     refine_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_THRESHOLD", 0.0))
     refine_residual_threshold: float = field(default_factory=lambda: _float("AUDIO_REFINE_RESIDUAL_THRESHOLD", 0.0))
     refine_gate_db: float = field(default_factory=lambda: _float("AUDIO_REFINE_GATE_DB", 0.0))
+    suppression: str = field(default_factory=lambda: os.getenv("AUDIO_SUPPRESSION", ""))
+    suppression_strength: float = field(default_factory=lambda: _float("AUDIO_SUPPRESSION_STRENGTH", .9))
     # Noise draws returned per chunk window and how one is picked (candidates.py). Each
     # extra draw costs one more batch item (K x compute and activation memory).
     candidates: int = field(default_factory=lambda: _int("AUDIO_CANDIDATES", 1))
@@ -131,11 +133,17 @@ class Settings:
     router_music_threshold: float | None = field(default_factory=lambda: _opt_float("AUDIO_ROUTER_MUSIC_THRESHOLD"))
     # PANNs Cnn14 checkpoint; unset -> ~/panns_data/Cnn14_mAP=0.431.pth (downloaded if missing).
     router_panns_checkpoint: str | None = field(default_factory=lambda: os.getenv("AUDIO_ROUTER_PANNS_CHECKPOINT") or None)
-    # Instrument tags and descriptive names for music stems ("Other" -> "Synth & Strings"),
-    # from the router's AudioSet tagger (labeling.py): auto | off. auto labels whenever the
-    # router classifier can tag (panns, ast); otherwise tags are null and "other" stays "Other".
+    # Instrument tags and descriptive names for music stems ("Other" -> "Synth & Strings")
+    # (labeling.py): auto | off. auto labels whenever a tagger is available (see below);
+    # otherwise tags are null and "other" stays "Other".
     stem_labels: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABELS", "auto"))
-    # Minimum mean probability for a tag. Unset -> per classifier (see __post_init__).
+    # Tagger for stem labels: router | panns | ast | clap. router (default) reuses the router's
+    # AudioSet classifier (no second model); panns/ast load their own instance when the router
+    # uses something else; clap is the zero-shot LAION-CLAP model (AUDIO_STEM_LABEL_CLAP_MODEL).
+    stem_label_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABEL_MODEL", "router").strip().lower() or "router")
+    stem_label_clap_model: str = field(default_factory=lambda: os.getenv("AUDIO_STEM_LABEL_CLAP_MODEL", "laion/larger_clap_music_and_speech"))
+    # Floor on the per-family presence thresholds (labeling.PRESENCE, calibrated per tagger) and
+    # on drum detail tags. 0 (default) = the calibrated thresholds alone.
     stem_label_min_score: float | None = field(default_factory=lambda: _opt_float("AUDIO_STEM_LABEL_MIN_SCORE"))
     # 10 s windows analysed per stem (active regions only, spread across the song).
     stem_label_max_windows: int = field(default_factory=lambda: _int("AUDIO_STEM_LABEL_MAX_WINDOWS", 12))
@@ -192,7 +200,9 @@ class Settings:
     ffmpeg_timeout: int = field(default_factory=lambda: _int("AUDIO_FFMPEG_TIMEOUT", 600))
 
     def __post_init__(self) -> None:
-        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and 'AUDIO_MODEL_ID' not in os.environ:
+        if not self.suppression:
+            self.suppression = 'conservative' if self.backend == 'audiosep' else 'off'
+        if self.backend == 'audiosep' and self.model_id == 'facebook/sam-audio-large' and not os.getenv('AUDIO_MODEL_ID'):
             self.model_id = 'audiosep-base-4M'
         if self.backend == 'audiosep' and self.chunk_batch_env is None and self.chunk_workers is None:
             self.chunk_batch = 1
@@ -229,7 +239,7 @@ class Settings:
         if self.router_music_threshold is None:
             self.router_music_threshold = {"panns": 0.4, "ast": 0.2}.get(self.router_classifier, 0.4)
         if self.stem_label_min_score is None:
-            self.stem_label_min_score = {"panns": 0.1, "ast": 0.1}.get(self.router_classifier, 0.1)
+            self.stem_label_min_score = 0.0
         if not self.refine:
             # Measured 2026-11-13 on sam-audio-small: the mask improved every fixture (+1.8 to
             # +5.9 dB SI-SDRi, 1.7-6.5 dB less leakage) at no GPU cost, so it is on for the real
@@ -237,6 +247,14 @@ class Settings:
             self.refine = "mask" if self.backend == "sam" else "off"
 
     def validate(self) -> None:
+        if self.backend == 'audiosep' and self.model_id.startswith('facebook/sam-'):
+            raise ValueError('AudioSep selected with an old SAM AUDIO_MODEL_ID; unset AUDIO_MODEL_ID or use audiosep-base-4M')
+        if self.suppression not in {'off', 'conservative'}:
+            raise ValueError('AUDIO_SUPPRESSION must be off or conservative')
+        if not 0 <= self.suppression_strength <= 1:
+            raise ValueError('AUDIO_SUPPRESSION_STRENGTH must be within [0, 1]')
+        if self.suppression != 'off' and self.backend != 'audiosep':
+            raise ValueError('Conservative suppression is available with AudioSep only')
         if self.visual_batch_size is not None and self.visual_batch_size <= 0:
             raise ValueError('AUDIO_VISUAL_BATCH_SIZE must be positive')
         if self.backend not in {"mock", "sam", "audiosep"}:
@@ -320,6 +338,8 @@ class Settings:
             raise ValueError("AUDIO_STEM_LABELS must be 'auto' or 'off'")
         if not 0 <= self.stem_label_min_score <= 1:
             raise ValueError("AUDIO_STEM_LABEL_MIN_SCORE must be in [0, 1]")
+        if self.stem_label_model not in {"router", "panns", "ast", "clap"}:
+            raise ValueError("AUDIO_STEM_LABEL_MODEL must be 'router', 'panns', 'ast' or 'clap'")
         if not 1 <= self.stem_label_max_windows <= 64:
             raise ValueError("AUDIO_STEM_LABEL_MAX_WINDOWS must be between 1 and 64")
         if self.router_classifier not in {"off", "mock", "ast", "panns"}:

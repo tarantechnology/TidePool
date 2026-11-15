@@ -103,10 +103,15 @@ def profile_extras(profile):
     return extras
 
 
-def options(profile, candidates=1):
+def options(profile, candidates=1, backend=None):
     """Request options for the audio service. ``quality`` re-ranks inside the model only when
     QUALITY_RERANKING=true (needs the service's text ranker); otherwise it relies on
     :func:`profile_extras`, which works without any ranker."""
+    backend = backend or os.getenv('AUDIO_BACKEND', 'audiosep')
+    if backend == 'audiosep':
+        return {'reranking_candidates':1, 'candidates':1, 'predict_spans':False,
+                'chunk_seconds':10, 'chunk_batch':1, 'residual':'mixture_minus_targets',
+                'output_format':'pcm_f32le', 'refine':'off'}
     rerank = profile == 'quality' and os.getenv('QUALITY_RERANKING', '').lower() in ('1', 'true', 'yes')
     return {'reranking_candidates': 2 if rerank else candidates,
             'predict_spans': False, 'chunk_seconds': 10, 'chunk_batch': 2,

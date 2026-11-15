@@ -1,7 +1,7 @@
 import { Tip } from './Tip'
 import { EditableName } from './EditableName'
 import { DeleteLayer } from './DeleteLayer'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { refinementBadge } from '../api/refine'
 import { tagLine } from '../api/backend'
 import { gainToPos, posToGain, toDb } from '../edits'
@@ -25,6 +25,7 @@ interface Props {
   residualLabel?: string | null
   /** The residual itself can't be deleted. */
   residualId?: string | null
+  clipActions?: ReactNode
 }
 
 const KIND_LABEL: Record<Stem['kind'], string> = {
@@ -36,7 +37,7 @@ const KIND_LABEL: Record<Stem['kind'], string> = {
 }
 const KINDS = Object.keys(KIND_LABEL) as StemKind[]
 
-export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRename, onDelete, residualLabel = null, residualId = null }: Props) {
+export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRename, onDelete, residualLabel = null, residualId = null, clipActions }: Props) {
   const btn = (active: boolean, activeCls: string) =>
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
       active ? activeCls : 'border-line bg-tint/[0.03] text-subtle hover:border-line-strong hover:text-fg'
@@ -49,7 +50,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
   } as CSSProperties
 
   return (
-    <div className={`relative z-30 has-[[role=dialog]]:z-40 flex min-h-0 flex-col justify-center border-r border-line px-4 ${compact ? 'gap-0' : 'gap-2.5'}`}>
+    <div className={`relative z-30 has-[[role=dialog]]:z-40 flex min-h-0 flex-col justify-center border-r border-line px-4 max-md:px-2.5 max-md:gap-0 ${compact ? 'gap-0' : 'gap-2.5'}`}>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline truncate text-[13px] font-medium tracking-tight" title={stem.tags?.length ? `Heard: ${stem.tags.join(', ')}` : undefined}>
@@ -88,6 +89,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             )}
           </div>
         </div>
+        {clipActions}
         <Tip side="bottom" label={track.muted ? 'Unmute' : 'Mute'} detail={track.muted ? 'Bring this layer back into the mix.' : 'Silence this layer. Everything else keeps playing.'}>
           <button
             aria-label={track.muted ? `Unmute ${stem.label}` : `Mute ${stem.label}`}
@@ -110,11 +112,12 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
         </Tip>
         {onDelete && <DeleteLayer label={stem.label} residualLabel={residualLabel} isResidual={stem.id === residualId} onDelete={onDelete} />}
       </div>
-      <div className={`flex items-center gap-2.5 ${compact ? 'hidden' : ''}`}>
+      <div className={`flex items-center gap-2.5 max-md:gap-1 ${compact ? 'hidden max-md:flex' : ''}`}>
         <div className="relative flex-1">
           <div className="pointer-events-none absolute top-1/2 left-1/2 h-2 w-px -translate-y-1/2 bg-tint/25" />
           <input
             type="range"
+            aria-label={`Volume ${stem.label}`}
             min={0}
             max={1}
             step={0.001}

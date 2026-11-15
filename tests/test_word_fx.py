@@ -22,6 +22,11 @@ from app.word_fx import find, parse, windows
     ('make all the bad words and every instance of mohammed bass boosted', 'make bass boosted', True, ['mohammed']),
     ('bass boost every time he says mohammed and the bad words', 'bass boost', True, ['mohammed']),
     ('bass boost the word mohammed', 'bass boost', False, ['mohammed']),
+    ('make the bad words and every Muhammad sound like a giant', 'make sound like a giant', True, ['muhammad']),
+    ('pitch the bad words and Muhammad down 12 semitones', 'pitch down 12 semitones', True, ['muhammad']),
+    ('bass boost the bad words and whenever anyone says Muhammad', 'bass boost', True, ['muhammad']),
+    ('make every Mohammed squeaky', 'make squeaky', False, ['mohammed']),
+    ('make the bad words and person 2 louder', 'make person 2 louder', True, []),
 ])
 def test_parse_word_clauses(prompt, rest, profanity, words):
     assert parse(prompt) == (rest, {'profanity': profanity, 'words': words})
@@ -39,6 +44,14 @@ def test_find_matches_profanity_names_and_split_names():
     assert windows(found, 10)[1] == [pytest.approx(1.94), pytest.approx(3.46)]  # "fuck, Mc Lovin" merge into one window
     assert find(words, {'profanity': False, 'words': ['class']})[0]['word'] == 'class'
     assert find(words, {'profanity': False, 'words': ['classy']}) == []
+
+
+@pytest.mark.parametrize('heard,asked,ok', [('Muhammad!', 'mohammed', True), ('Mohamad', 'mohammed', True), ('MacLevin', 'mclovin', True),
+                                            ("McLovin's", 'mclovin', True), ('mohawk', 'mohammed', False), ('hammer', 'mohammed', False),
+                                            ('Michael', 'mclovin', False), ('watt', 'what', False), ('shot', 'shit', False)])
+def test_spoken_spellings_match(heard, asked, ok):
+    words = [{'word': 'hey', 'start': 0, 'end': .2}, {'word': heard, 'start': .3, 'end': .6}]
+    assert [w['word'] for w in find(words, {'profanity': False, 'words': [asked]})] == ([heard] if ok else [])
 
 
 def test_blend_many_only_changes_the_windows():

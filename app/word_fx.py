@@ -40,8 +40,22 @@ _INSTANCE = re.compile(r"\b(?:every|each|all|any)\s+(?:the\s+)?(?:instances?|occ
 # sound insert (app/replacement.py); "bleep/mute the swearing" stays the censorship flow.
 _EFFECT = re.compile(r"\b(?:reverb\w*|echo\w*|delay|chorus|flanger|phaser|tremolo|distort\w*|overdrive|eq|bass(?:\s*[- ]?boost\w*|ier)?|"
                      r"boost\w*|treble|compress\w*|pitch\w*|deep(?:en|er)?|muffle\w*|muffled|lo-?fi|bitcrush\w*|telephone|phone|radio|"
-                     r"megaphone|underwater|robot\w*|chipmunk|giant|announcer|church|cathedral|stadium|hall|bathroom|dreamy|warm(?:er)?|"
+                     r"megaphone|underwater|robot\w*|chipmunk|squeak\w*|helium|high[- ]pitched|higher|giant|announcer|church|cathedral|stadium|hall|bathroom|dreamy|warm(?:er)?|"
                      r"bright(?:er)?|louder|quieter|loud|quiet|deep[- ]fried|earrape|8-?bit|vinyl|wobble|stutter|slow(?:er|ed)?|effect)\b", re.I)
+
+
+_JOINED = re.compile(r"\s*(?:and|&|plus|,)\s+(?:(?:every|each|all|any)\s+(?:(?:instances?|occurrences?|mentions?)\s+of\s+)?)?(?:the\s+(?:word|name)\s+)?"
+                     r"[\"“'‘]?(?P<n>[A-Za-z][\w'’-]*)\b[\"”'’]?(?!\s*\d)")
+_EVERY_NAME = re.compile(r"\b(?:every|each)\s+[\"“'‘]?(?P<n>[A-Z][\w'’-]+)\b[\"”'’]?(?!\s*\d)")
+_NOT_NAMES = frozenset('the a an every each all any time times person people music background vocals vocal voice voices dialogue dialog '
+                       'everything everyone it them his her their layer layers speech sound sounds track tracks song mix whole other '
+                       'rest laugh laughter whenever when instance instances occurrence occurrences mention mentions word words name names '
+                       'someone anyone he she they'.split())
+
+
+def _is_name(token):
+    t = norm(token)
+    return bool(t) and len(t) >= 3 and t not in _NOT_NAMES and not _EFFECT.fullmatch(t) and not re.fullmatch(_PROFANITY_NOUN, t, re.I)
 
 
 def norm(word):
@@ -60,7 +74,19 @@ def parse(prompt):
         if m:
             profanity = True
             rest = rest[:m.start()] + ' ' + rest[m.end():]
+            # "the bad words and (every) Muhammad": a name joined to the profanity clause is a word too.
+            j = _JOINED.match(rest, m.start())
+            if j and _is_name(j.group('n')):
+                key = norm(j.group('n'))
+                if key not in words: words.append(key)
+                rest = rest[:j.start()] + ' ' + rest[j.end():]
             break
+    # "every Muhammad", "each McLovin": a capitalised name after every/each (never "every time").
+    for e in list(_EVERY_NAME.finditer(rest)):
+        if _is_name(e.group('n')):
+            key = norm(e.group('n'))
+            if key not in words: words.append(key)
+            rest = rest.replace(e.group(0), ' ', 1)
     for pattern in (_SAID, _INSTANCE, _ON_WORD):
         m = pattern.search(rest)
         if m and m.group('w'):
@@ -104,6 +130,31 @@ def describe(on_words):
     return ' and '.join(parts) if len(parts) < 3 else ', '.join(parts[:-1]) + ' and ' + parts[-1]
 
 
+def skeleton(word):
+    """A rough sound-alike key: consonants only, c/k/q and s/z merged, doubles collapsed, first letter kept.
+    "Mohammed", "Muhammad" and "Mohamad" share "mhmd"; "McLovin" and "MacLevin" share "mklvn"."""
+    w = re.sub(r"[^a-z]", '', str(word).lower())
+    if not w: return ''
+    w = w.replace('ph', 'f').replace('ck', 'k')
+    w = re.sub(r"[cq]", 'k', w); w = w.replace('z', 's')
+    rest = re.sub(r"[aeiouyw]", '', w[1:])
+    out = w[0] + rest
+    return re.sub(r"(.)\1+", r"\1", out)
+
+
+def same(heard, asked):
+    """True when a transcript word is the asked word, allowing a plural/possessive and the spelling a transcript
+    picks for a name ("Muhammad" for "Mohammed"). Short words must match exactly, so "what" never matches "watt"."""
+    a = heard.replace("'", ''); b = asked.replace("'", '')
+    if not a or not b: return False
+    if a == b or a.rstrip('s') == b.rstrip('s'): return True
+    if min(len(a), len(b)) < 5 or abs(len(a) - len(b)) > 2: return False
+    ka, kb = skeleton(a), skeleton(b)
+    if len(kb) >= 4 and (ka == kb or ka.rstrip('s') == kb.rstrip('s')) and a[0] == b[0]: return True
+    from difflib import SequenceMatcher
+    return min(len(a), len(b)) >= 6 and SequenceMatcher(None, a, b).ratio() >= .8
+
+
 def find(words, on_words):
     """Transcript words (``{'word','start','end'}``) that match: profanity and/or the asked words and phrases."""
     from .censorship import PROFANITY
@@ -117,13 +168,13 @@ def find(words, on_words):
         parts = [p.replace("'", '') for p in phrase.split()]
         n = len(parts)
         for i in range(len(keys) - n + 1):
-            window = [keys[i + j].replace("'", '') for j in range(n)]
-            # "mclovin" also matches "mclovin's"; transcripts often split or join names, so join-compare as well.
-            if window == parts or (n == 1 and window[0].rstrip('s') == parts[0].rstrip('s')) or ''.join(window) == ''.join(parts):
+            window = [keys[i + j] for j in range(n)]
+            # Transcripts often split or join names, so join-compare as well.
+            if all(same(w, p) for w, p in zip(window, parts)) or (n > 1 and same(''.join(window), ''.join(parts))):
                 for j in range(n): hits[i + j] = True
         if n == 1:  # "McLovin" heard as "Mc Lovin": two transcript words that join into the asked word.
             for i in range(len(keys) - 1):
-                if (keys[i] + keys[i + 1]).replace("'", '') == parts[0]: hits[i] = hits[i + 1] = True
+                if keys[i] and keys[i + 1] and same(keys[i] + keys[i + 1], parts[0]): hits[i] = hits[i + 1] = True
     return [w for w, h in zip(words, hits) if h]
 
 

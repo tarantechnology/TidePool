@@ -475,7 +475,9 @@ export function parsePrompt(text: string, stems: Stem[], tracks: TrackState[]): 
       if (b <= a) return { actions: [], message: 'End time must be after start time.' }
       return timedEdit(stem, track, { scale: factor }, a, b, `${stem.label} ${louder ? 'louder' : 'quieter'} from ${a}s to ${b}s.`)
     }
-    const next = clamp(track.gain * (louder ? 1.5 : 0.5), 0, MAX_GAIN)
+    // "way louder", "much louder", "a lot": a big step, so the layer clearly stands out (the others make room).
+    const strong = /\b(?:way|much|a lot|lots|really|super|so much|massively|a ton)\b/.test(q)
+    const next = clamp(track.gain * (louder ? (strong ? 3 : 1.5) : strong ? 0.25 : 0.5), 0, MAX_GAIN)
     return {
       actions: [{ type: 'set_gain', stemId: stem.id, value: next }],
       message: `${stem.label} fader to ${toDb(next)}.`,

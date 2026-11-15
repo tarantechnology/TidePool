@@ -1,9 +1,11 @@
 import { automationFrom, isAudible, stemEnd, stemStart, withMuteRanges } from '../edits'
+import { activity, boostersFor, ROOM_HOP, roomAt } from './room'
 import type { Stem, TrackState } from '../types'
 import type { SourceClip } from '../state/clipSequence'
 import { lengthOf, timelinePosition } from '../state/timeline'
 
-// Per-stem graph:  source -> envelope (automation) -> fader (volume) -> gate (mute/solo) -> master
+// Per-stem graph:  source -> envelope (automation) -> fader (volume) -> room -> gate (mute/solo) -> master
+// room turns a layer down while another layer, boosted past 100%, is sounding (see room.ts).
 // The timeline clock is derived from AudioContext time, so playback position
 // and gain automation are scheduled against the same clock.
 
@@ -14,8 +16,11 @@ interface Channel {
   stem: Stem
   buffer: AudioBuffer
   peaks: Float32Array
+  /** 0..1 per ROOM_HOP: how much this layer is sounding, for making room. */
+  activity: Float32Array
   envelope: GainNode
   fader: GainNode
+  room: GainNode
   gate: GainNode
   source: AudioBufferSourceNode | null
 }
@@ -106,7 +111,14 @@ export class AudioEngine {
       limiter.attack.value = 0.003
       limiter.release.value = 0.1
       this.master.connect(limiter)
-      limiter.connect(this.ctx.destination)
+      // The compressor's 3 ms attack lets the first edge of a loud boost through (measured +1.6 dBFS at 500%),
+      // so a soft clipper catches what it misses. Below 0.9 it passes audio untouched.
+      if (typeof this.ctx.createWaveShaper === 'function') {
+        const catcher = this.ctx.createWaveShaper()
+        catcher.curve = softClipCurve()
+        limiter.connect(catcher)
+        catcher.connect(this.ctx.destination)
+      } else limiter.connect(this.ctx.destination)
     } else this.master.connect(this.ctx.destination)
   }
 
@@ -165,16 +177,20 @@ export class AudioEngine {
     for (const { stem, buffer } of loaded) {
       const envelope = this.ctx.createGain()
       const fader = this.ctx.createGain()
+      const room = this.ctx.createGain()
       const gate = this.ctx.createGain()
       envelope.connect(fader)
-      fader.connect(gate)
+      fader.connect(room)
+      room.connect(gate)
       gate.connect(this.master)
       this.channels.set(stem.id, {
         stem,
         buffer,
         peaks: computePeaks(buffer),
+        activity: activity(Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c)), buffer.sampleRate),
         envelope,
         fader,
+        room,
         gate,
         source: null,
       })
@@ -340,8 +356,42 @@ export class AudioEngine {
       if (this.playing) {
         for (const kf of ramps) env.linearRampToValueAtTime(kf.value, this.startedAt + kf.t)
       }
+      this.applyRoom(ch, track, now, t0)
     }
   }
+
+  /** Turn this layer down while boosted layers are sounding; scheduled ahead as a curve while playing. */
+  private applyRoom(ch: Channel, track: TrackState, now: number, t0: number): void {
+    const room = ch.room.gain
+    room.cancelScheduledValues(now)
+    const boosters = boostersFor(this.tracks, track.stemId)
+    const source = (id: string) => {
+      const c = this.channels.get(id)
+      return c && { muteRanges: c.stem.muteRanges, start: stemStart(c.stem), activity: c.activity }
+    }
+    const end = this.sequence.length ? this.sequence[this.clipIndex].end : this.duration
+    if (!boosters.length || !this.playing || end - t0 < 2 * ROOM_HOP) {
+      room.setTargetAtTime(roomAt(boosters, source, t0), now, SMOOTH)
+      return
+    }
+    const n = Math.ceil((end - t0) / ROOM_HOP) + 1
+    const curve = new Float32Array(n)
+    for (let i = 0; i < n; i++) curve[i] = roomAt(boosters, source, t0 + i * ROOM_HOP)
+    room.setValueCurveAtTime(curve, now, (n - 1) * ROOM_HOP)
+  }
+
+}
+
+/** Identity up to 0.9, then a tanh knee that never passes 0.99. Inputs beyond +-1 hold the end values. */
+export function softClipCurve(): Float32Array<ArrayBuffer> {
+  const n = 4097
+  const curve = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1
+    const m = Math.abs(x)
+    curve[i] = Math.sign(x) * (m <= 0.9 ? m : 0.9 + 0.09 * Math.tanh((m - 0.9) / 0.09))
+  }
+  return curve
 }
 
 function computePeaks(buffer: AudioBuffer): Float32Array {

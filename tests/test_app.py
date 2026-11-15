@@ -543,6 +543,31 @@ def test_export_reaches_500_percent_and_limits(tmp_path):
     out=tmp_path/'sync.wav'; export([stem],quiet,out,'wav',False)
     np.testing.assert_allclose(read_wav(out)[0], read_wav(quiet)[0], atol=1e-4)   # no look-ahead delay
 
+def test_export_makes_room_for_a_boosted_layer(tmp_path):
+    """While a layer above 100% is sounding, the others step back by its level (app/room.py)."""
+    import json as j, numpy as np
+    from app.media import export, read_wav
+    def tone(name, freq, until=4):
+        path=tmp_path/f'{name}.wav'
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency={freq}:duration=4:sample_rate=48000','-af',f"volume='0.4*lt(t,{until})':eval=frame",'-ac','2','-c:a','pcm_f32le',str(path)],check=True)
+        return path
+    voice,talks_then_stops,bed=tone('voice',440),tone('gap',440,2),tone('bed',2000)
+    def layer(path, volume, automation=(), mutes=()):
+        return {'path':str(path),'muted':False,'solo':False,'volume':volume,'automation':j.dumps(list(automation)),'mute_ranges':j.dumps(list(mutes)),'start_offset':0}
+    def bed_level(stems, at):
+        out=tmp_path/'mix.wav'; export(stems,voice,out,'wav',False)
+        x=read_wav(out)[0][:,0]; seg=x[int(at*48000):int(at*48000)+4800]
+        return np.abs(np.fft.rfft(seg))[200]/len(seg)   # the 2000 Hz bin, at 10 Hz resolution
+    alone=bed_level([layer(voice,1),layer(bed,1)],1)
+    assert abs(bed_level([layer(voice,4),layer(bed,1)],1)/alone-0.25)<0.01            # 400% voice: bed at a quarter
+    assert abs(bed_level([layer(voice,0.5),layer(bed,1)],1)/alone-1)<0.01             # quieter layers duck nothing
+    assert abs(bed_level([layer(talks_then_stops,4),layer(bed,1)],3)/alone-1)<0.01    # the bed comes back once it stops
+    curve=[{'time':0,'value':1},{'time':2,'value':1},{'time':2.01,'value':4}]
+    assert abs(bed_level([layer(voice,1,curve),layer(bed,1)],1)/alone-1)<0.01          # before its curve rises
+    assert abs(bed_level([layer(voice,1,curve),layer(bed,1)],3)/alone-0.25)<0.01       # and after
+    assert abs(bed_level([layer(voice,4,(),[[2.5,4]]),layer(bed,1)],3)/alone-1)<0.01  # a muted stretch gives the room back
+    assert not list(tmp_path.glob('.room-*'))                                          # its temporary curves are gone
+
 def test_delete_layer_folds_into_residual_and_undoes(client,tmp_path):
     import numpy as np
     from app.core import connect

@@ -295,6 +295,18 @@ def export(stems, original, destination, fmt, include_video, rotation=0, trim=No
     for s in active: args += ['-i',s['path']]
     args += ['-f','lavfi','-t',str(duration),'-i','anullsrc=r=48000:cl=stereo']
     filters=[]; labels=[]; base = 1 if whole_video else 0
+    # Layers make room while a layer boosted past 100% is sounding (app/room.py). Each room curve is one more input.
+    import numpy as np
+    from .room import HOP, room_tracks
+    length=max([duration]+[float(s['start_offset'])+float(s['duration'] if s.get('duration') else probe(s['path'])['duration']) for s in active])
+    rooms=room_tracks(active,read_wav,length); room_inputs={}
+    for i,room in enumerate(rooms):
+        if room is None: continue
+        path=Path(destination).with_name(f'.room-{i}-{Path(destination).name}.wav')
+        rate=48000; t=np.arange(int(length*rate)+rate)/rate
+        channels=read_wav(active[i]['path'])[0].shape[1]   # amultiply needs the layer's own channel layout
+        write_wav(path,np.repeat(np.interp(t,np.arange(room.size)*HOP,room).astype(np.float32)[:,None],channels,axis=1),rate)
+        room_inputs[i]=path
     for i,s in enumerate(active):
         points=json.loads(s['automation']); ranges=json.loads(s['mute_ranges'])
         expr=str(float(s['volume']))
@@ -307,10 +319,14 @@ def export(stems, original, destination, fmt, include_video, rotation=0, trim=No
             expr=f"({s['volume']})*if(lt(t,{float(points[0]['time'])}),{float(points[0]['value'])},{expr})"
         for rg in ranges: expr=f'({expr})*if(between(t,{float(rg[0])},{float(rg[1])}),0,1)'
         delay=round(float(s['start_offset'])*48000)
-        filters.append(f"[{base+i}:a]aresample=48000,adelay={delay}S:all=1,volume='{expr}':eval=frame[a{i}]")
+        filters.append(f"[{base+i}:a]aresample=48000,adelay={delay}S:all=1,volume='{expr}':eval=frame"+(f',aformat=sample_fmts=flt[v{i}]' if i in room_inputs else f'[a{i}]'))
         labels.append(f'[a{i}]')
     silent=base+len(active)
     labels.append(f'[{silent}:a]')
+    # Room curves come after every other input so the input numbers used below (silent, clip videos) stay put.
+    room_base=silent+1+(len(clips) if clips and include_video else 0)
+    for n,(i,path) in enumerate(room_inputs.items()):
+        filters.append(f'[{room_base+n}:a]aformat=sample_fmts=flt[r{i}];[v{i}][r{i}]amultiply[a{i}]')
     mixed=''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0'+limiter()
     if clips:
         if len(clips)>100: raise ValueError('Too many clips')
@@ -337,13 +353,16 @@ def export(stems, original, destination, fmt, include_video, rotation=0, trim=No
     if not clips: filters.append(mixed+'[mix]')
     turn=ROTATE_FILTERS.get(int(rotation or 0)) if include_video else None
     if turn: filters.append(('[video]' if trim or clips else '[0:v:0]')+turn+',format=yuv420p[vout]')
+    for path in room_inputs.values(): args += ['-i',str(path)]
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
     if include_video:
         output_duration=sum(float(c['end'])-float(c['start']) for c in clips) if clips else end-start if trim else duration
         args += ['-map','[vout]' if turn else '[video]' if trim or clips else '0:v:0','-c:v','libx264' if trim or clips or turn else 'copy','-c:a','aac','-b:a','192k','-t',str(output_duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
     else: args += ['-c:a','pcm_f32le']
-    run(*args,str(destination))
+    try: run(*args,str(destination))
+    finally:
+        for path in room_inputs.values(): path.unlink(missing_ok=True)
 
 
 def suggest_sounds(audio, max_sounds=6):

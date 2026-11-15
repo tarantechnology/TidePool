@@ -859,3 +859,12 @@ describe('gainToPos / posToGain', () => {
     for (const g of [0, 0.3, 1, 2.2, 5]) expect(posToGain(gainToPos(g))).toBeCloseTo(g)
   })
 })
+
+describe('way louder', () => {
+  const stems: Stem[] = [{ id: 'p2', label: 'person 2', kind: 'dialogue', url: '', duration: 10 }]
+  const tracks: TrackState[] = [{ stemId: 'p2', gain: 1, muted: false, solo: false, automation: [] }]
+  it('takes a big step for "way louder" and a small one for "louder"', () => {
+    expect(parsePrompt('make person 2 way louder', stems, tracks).actions).toEqual([{ type: 'set_gain', stemId: 'p2', value: 3 }])
+    expect(parsePrompt('make person 2 louder', stems, tracks).actions).toEqual([{ type: 'set_gain', stemId: 'p2', value: 1.5 }])
+  })
+})

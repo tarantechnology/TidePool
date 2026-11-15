@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { gainToPos, isAudible, posToGain, toDb } from '../edits'
+import { peakLevel } from '../audio/room'
 import type { EditAction, Stem, TrackState } from '../types'
 import { EditableName } from './EditableName'
 import { DeleteLayer } from './DeleteLayer'
@@ -39,7 +40,7 @@ export function Mixer({ stems, tracks, onAction, onRename, onDelete, residualLab
                 step={0.001}
                 value={gainToPos(track.gain)}
                 aria-label={`${stem.label} volume`}
-                title="Volume (double-click to reset)"
+                title="Volume (double-click to reset). Past 100%, the other layers step back while this one is sounding."
                 style={style}
                 className="fader mixer-fader"
                 onChange={(e) => onAction({ type: 'set_gain', stemId: stem.id, value: Math.round(posToGain(Number(e.target.value)) * 100) / 100 }, `gain:${stem.id}`)}
@@ -50,6 +51,7 @@ export function Mixer({ stems, tracks, onAction, onRename, onDelete, residualLab
               <div className="font-mono text-base font-semibold tabular-nums text-fg">{percent}%</div>
               <div className="font-mono text-[10px] tabular-nums text-subtle">{toDb(track.gain)}</div>
             </div>
+            {audible && peakLevel(track) > 1 && <span className="text-center text-[10px] text-subtle" title="While this layer is sounding above 100%, every other layer is turned down by the same amount so it stands out.">others {toDb(1 / peakLevel(track))}</span>}
             {track.automation.length > 0 && <span className="text-center text-[10px] text-accent" title="This layer also has a volume curve on the Tide chart; the slider scales it.">has a curve</span>}
             <div className="flex w-full gap-1">
               <button aria-label={track.muted ? `Unmute ${stem.label}` : `Mute ${stem.label}`} aria-pressed={track.muted} className={toggle(track.muted, 'border-red-200 bg-red-50 text-red-600')} onClick={() => onAction({ type: 'set_mute', stemId: stem.id, muted: !track.muted })}>M</button>

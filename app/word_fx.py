@@ -265,6 +265,11 @@ def local_plan(rest, stems):
     targets = [s['id'] for s in stems if s.get('label') and re.search(r'\b' + re.escape(str(s['label'])) + r'\b', rest, re.I)] or ['mix']
     plan = {'targets': targets, 'preset': None, 'chain': None, 'interval': None, 'adjust': None, 'speed': None,
             'duck_source': None, 'duck_depth_db': None, 'loudness_lufs': None}
+    from .fx_schema import pitch_shift
+    semitones = pitch_shift(rest)
+    if semitones is not None:
+        # Down keeps the formants so a deep word stays clear (where rubberband is available); up stays a chipmunk.
+        return {**plan, 'chain': [{'type': 'pitch', 'params': {'semitones': semitones, 'formant': 1 if semitones < 0 else 0}}]}
     if re.search(r"\b(?:louder|boost(?:ed)?\s+(?:the\s+)?volume|loud)\b", rest, re.I) and not re.search(r"bass", rest, re.I):
         return {**plan, 'chain': [{'type': 'gain', 'params': {'gain': 8}}]}
     if re.search(r"\b(?:quieter|softer|quiet|lower the volume)\b", rest, re.I):

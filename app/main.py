@@ -357,8 +357,13 @@ def word_effect_plan(body):
     if not rest:return clarify(f'Which effect should go on the {describe(on_words)}? For example "bass boost the bad words".')
     def usable(fx):
         return bool(fx) and not fx.get('adjust') and not fx.get('speed') and fx.get('preset') not in ('slowed_reverb','slowed','nightcore','sped_up')
-    try: result=agent_plan(body.model_copy(update={'prompt':planner_prompt(rest)}))
-    except AgentError: result={}
+    from .fx_schema import pitch_shift
+    if pitch_shift(rest) is not None:
+        # "pitch ... down 7 semitones": the amount is in the words; no planner needed.
+        result={}
+    else:
+        try: result=agent_plan(body.model_copy(update={'prompt':planner_prompt(rest)}))
+        except AgentError: result={}
     fx=result.get('fx') if result.get('kind')=='fx' else None
     if not usable(fx):
         # "add echo" can read as a new sound to the planner; an effect word still names the effect.

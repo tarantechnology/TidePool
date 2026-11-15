@@ -95,6 +95,13 @@ def test_agent_plans_the_effect_and_attaches_the_words(client, tmp_path, monkeyp
     plan = r.json()
     stems = {s['name']: s for s in client.get(f'/api/projects/{pid}/stems', headers=h).json()}
     assert plan['kind'] == 'fx' and plan['fx']['targets'] == [stems['speech']['id']] and plan['fx']['chain'][0]['type'] == 'gain', plan
+    # A pitch amount is read from the words, without the planner; down keeps the formants.
+    _, sent = fake_planner(monkeypatch, base_plan('clarify', {}))
+    r = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': 'pitch the bad words and every Mohammed down 7 semitones', 'stems': [], 'tracks': [], 'duration': 2})
+    plan = r.json()
+    assert plan['kind'] == 'fx' and plan['fx']['on_words'] == {'profanity': True, 'words': ['mohammed']}, plan
+    assert plan['fx']['chain'][0]['type'] == 'pitch' and plan['fx']['chain'][0]['params']['semitones'] == -7 and plan['fx']['chain'][0]['params']['formant'] == 1
+    assert not sent
     # With no effect named at all, it asks.
     r = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': 'do something cool to the bad words with an effect', 'stems': [], 'tracks': [], 'duration': 2})
     assert r.json()['kind'] == 'clarify' and 'effect' in r.json()['message']

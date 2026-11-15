@@ -1,5 +1,5 @@
 /**
- * Tidepool's feature names, each something you'd find in or near a tidepool:
+ * TidePool's feature names, each something you'd find in or near a tidepool:
  * Whirlpool separates, Ripple selects by sight, Current takes commands,
  * Reflection compares, Deep dive retries for quality, Undertow pulls out more,
  * Tide chart is the timeline, Outflow exports, Moon pull keeps a sound's meaning for the whole clip.

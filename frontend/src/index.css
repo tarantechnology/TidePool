@@ -189,7 +189,7 @@ input[type="range"].fader::-moz-range-thumb {
   .shimmer, .rise-in { animation: none; }
 }
 
-/* Tidepool entrance: rings spread, the name surfaces, then the water opens from the click point. */
+/* TidePool entrance: rings spread, the name surfaces, then the water opens from the click point. */
 @property --tp-r {
   syntax: "<length>";
   inherits: false;

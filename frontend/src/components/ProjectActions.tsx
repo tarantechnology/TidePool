@@ -101,7 +101,7 @@ export function SaveButton({ projectId, flush, disabledReason, saveRef }: {
               className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-subtle focus:border-accent/50 focus:ring-2 focus:ring-accent/15 focus:outline-none" />
             <button type="submit" className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#1b62b3]">Done</button>
           </form>
-          <p className="mt-2 text-[11px] leading-relaxed text-muted">Your layers and edits are stored on Tidepool, and every change also saves on its own as you work.</p>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted">Your layers and edits are stored on TidePool, and every change also saves on its own as you work.</p>
 
           <div className="mt-3 border-t border-line pt-2.5">
             <p className="text-[11px] font-medium text-fg-2">Open on another computer</p>

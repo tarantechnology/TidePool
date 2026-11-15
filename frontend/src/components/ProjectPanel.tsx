@@ -546,7 +546,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useImperativeHandle(ref, () => ({ splitSong, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), exportAs: async (fmt, onStatus) => {
     if (!project || !token || !jobId) throw new Error('Split the clip into layers first (step 2), then export.')
     if (fmt === 'mp4' && !project.metadata?.has_video) throw new Error('This project has no video. Export it as WAV or MP3.')
-    if (busyRef.current) throw new Error('Tidepool is still working on the last step. Export again when it finishes.')
+    if (busyRef.current) throw new Error('TidePool is still working on the last step. Export again when it finishes.')
     busyRef.current = true; setBusy(true); setError('')
     try {
       onStatus('Saving your latest edits…'); await flush()
@@ -957,7 +957,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <div className="space-y-3">
             {project && <div className="rounded-xl border border-line bg-surface p-3 text-xs">
               <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">✺</span>Explode the whole clip<span className="ml-auto rounded-full bg-accent-soft px-1.5 py-px text-[10px] font-normal text-accent">Start here</span></p>
-              <p className="mt-0.5 text-muted">One layer per sound you list, plus a background layer for everything else. Each layer is named after its sound, and you can rename it later. {canListen ? 'Tidepool listens to the clip and fills in what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
+              <p className="mt-0.5 text-muted">One layer per sound you list, plus a background layer for everything else. Each layer is named after its sound, and you can rename it later. {canListen ? 'TidePool listens to the clip and fills in what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
               {canListen && <div className="mt-2 flex items-center gap-2 text-[11px]">
                 {listening ? <span className="flex items-center gap-1.5 text-accent"><DropLoader size={16}/>Listening to the clip…</span>
                   : heardHere?.sounds.length ? <span className="text-muted">Heard: {heardHere.sounds.map(h=>`${h.prompt} (${h.windows.map(w=>`${w*10}–${w*10+10}s`).slice(0,2).join(', ')}${h.windows.length>2?'…':''})`).join(' · ')}</span>

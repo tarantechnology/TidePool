@@ -83,10 +83,11 @@ def test_generate_preview_adds_a_layer_apply_undo(client, tmp_path, monkeypatch)
         n = round(info['duration']*48000)
         tone = (0.1*np.sin(2*np.pi*440*np.arange(n)/48000)).astype(np.float32)
         calls.update(plan=plan, stems=dict(stems))
+        calls.setdefault('analysis', []).append((kw.get('analysis'), kw.get('output_sample_rate')))
         return {'part': {'name': 'Violins', 'display_name': 'Violins', 'kind': 'music', 'family': 'strings', 'role': 'counter_melody'},
                 'audio': {'audio_base64': base64.b64encode(encode_wav(np.stack([tone, tone], axis=1), 48000)).decode()},
                 'midi_base64': None, 'engine': {'name': 'symbolic'}, 'renderer': {'used': 'vsco:violins'}, 'windows': [[0, 2]],
-                'checks': {'notes': {'chord_tone_ratio': 0.98}}, 'mix': {}, 'warnings': []}
+                'checks': {'notes': {'chord_tone_ratio': 0.98}}, 'mix': {}, 'warnings': [], 'analysis': {'tempo': 120.0}}
 
     monkeypatch.setattr(generate_part, 'request_generate_part', fake_service)
     pid, h = _uploaded(client, tmp_path)
@@ -105,6 +106,11 @@ def test_generate_preview_adds_a_layer_apply_undo(client, tmp_path, monkeypatch)
     assert sorted(s['name'] for s in stems) == ['Original audio', 'Violins']
     assert client.post(f'/api/candidates/{cid}/undo', headers=h).status_code == 200
     assert client.get(f'/api/projects/{pid}/stems', headers=h).json() == []
+    # Second ask on the same audio: the cached analysis is sent (no re-analysis, light upload).
+    r2 = client.post(f'/api/projects/{pid}/generate-preview', headers=h, json={'instrument': 'piano', 'prompt': 'add a piano part'})
+    job2 = _wait(client, r2.json()['candidate_id'], h)
+    assert job2['status'] == 'completed' and job2['provenance']['analysis_cached'] is True
+    assert calls['analysis'][0][0] is None and calls['analysis'][1] == ({'tempo': 120.0}, 48000)
 
 
 # ---------------------------------------------------------------- agent-route precedence (matches frontend chatRoute.ts)

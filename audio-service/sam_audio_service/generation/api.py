@@ -80,6 +80,7 @@ class GenerateMetadata(BaseModel):
     # Render at this rate when the upload is only a low-rate reference (cached analysis, no stems).
     output_sample_rate: int | None = Field(default=None, ge=8000, le=192000)
     include_analysis: bool = True
+    audio_checks: bool = False
     request_id: str | None = None
 
     @field_validator("engine")
@@ -207,7 +208,8 @@ def register(app: FastAPI, settings, generator: Generator) -> None:
                 mix_arr = np.repeat(mix_arr, 2, axis=0)
             req = PartRequest(instrument=meta.instrument, prompt=meta.prompt, role=meta.role, style=meta.style, sections=meta.sections,
                               interval=(meta.interval.start, meta.interval.end) if meta.interval else None, density=meta.density, engine=meta.engine,
-                              seed=meta.seed, level_db=meta.level_db, duck_db=meta.duck_db, humanize=meta.humanize, analysis=meta.analysis)
+                              seed=meta.seed, level_db=meta.level_db, duck_db=meta.duck_db, humanize=meta.humanize, analysis=meta.analysis,
+                              audio_checks=meta.audio_checks)
             res = await run_in_threadpool(generator.generate, mix_arr, sr, stem_arr, req)
             request_id = meta.request_id or uuid.uuid4().hex
             if meta.output_format == "flac":

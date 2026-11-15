@@ -53,6 +53,7 @@ class PartRequest:
     duck_db: float = 3.0
     humanize: bool = True
     analysis: dict[str, Any] | None = None
+    audio_checks: bool = False
 
 
 @dataclass
@@ -238,9 +239,13 @@ class Generator:
         mixed, mix_report = mix_in(part, sr, mix, vocals, analysis, spec.role, windows, level_db=req.level_db, duck_db=req.duck_db, has_bass_stem=has_bass, family=spec.family)
         elapsed["mix"] = round(time.perf_counter() - t2, 3)
         warnings += mix_report.pop("warnings", [])
-        checks = {"audio": audio_checks(mixed, sr, analysis, mix)}
+        # Note-level checks are free; the audio-level ones cost seconds on a long song, so they run
+        # only for audio-generative engines (no notes) or when asked for.
+        checks: dict[str, Any] = {}
         if notes:
             checks["notes"] = note_checks(notes, analysis)
+        if not notes or req.audio_checks:
+            checks["audio"] = audio_checks(mixed, sr, analysis, mix)
         midi = write_midi(notes, tempo=float(analysis["tempo"]), program=_gm_program(spec), name=spec.display_name) if notes else None
         elapsed["total"] = round(time.perf_counter() - t_start, 3)
         return PartResult(mixed, sr, midi, notes, spec, analysis, windows, engine_info, renderer_info, mix_report, checks, warnings, elapsed)

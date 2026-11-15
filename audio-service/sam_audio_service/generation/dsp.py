@@ -91,13 +91,24 @@ def stft(x: np.ndarray, n_fft: int = 2048, hop: int = 512) -> np.ndarray:
 def istft(spec: np.ndarray, n: int, n_fft: int = 2048, hop: int = 512) -> np.ndarray:
     """Inverse of :func:`stft` (sqrt-Hann analysis/synthesis, weighted overlap-add)."""
     win = np.sqrt(np.hanning(n_fft + 1)[:-1]).astype(np.float32)
-    fr = np.fft.irfft(spec, n=n_fft, axis=1) * win
-    total = n_fft + hop * (len(fr) - 1)
-    out = np.zeros(total, np.float32)
-    norm = np.zeros(total, np.float32)
-    for i, f in enumerate(fr):
-        out[i * hop:i * hop + n_fft] += f
-        norm[i * hop:i * hop + n_fft] += win ** 2
+    fr = (np.fft.irfft(spec, n=n_fft, axis=1) * win).astype(np.float32)
+    T = len(fr)
+    total = n_fft + hop * (T - 1)
+    if n_fft % hop == 0:  # vectorised overlap-add: frame t's block r lands at block t + r
+        R = n_fft // hop
+        blocks = np.zeros((T + R - 1, hop), np.float32)
+        wblocks = np.zeros((T + R - 1, hop), np.float32)
+        w2 = (win ** 2).reshape(R, hop)
+        for r in range(R):
+            blocks[r:r + T] += fr[:, r * hop:(r + 1) * hop]
+            wblocks[r:r + T] += w2[r]
+        out, norm = blocks.reshape(-1), wblocks.reshape(-1)
+    else:
+        out = np.zeros(total, np.float32)
+        norm = np.zeros(total, np.float32)
+        for i, f in enumerate(fr):
+            out[i * hop:i * hop + n_fft] += f
+            norm[i * hop:i * hop + n_fft] += win ** 2
     out = out / np.maximum(norm, 1e-3)
     pad = n_fft // 2
     return out[pad:pad + n] if len(out) >= pad + n else np.pad(out[pad:], (0, pad + n - len(out)))
@@ -183,6 +194,9 @@ def loudness_lufs(x: np.ndarray, sr: int) -> float:
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 1:
         x = x[None]
+    if sr > 24000 and x.shape[-1] > 60 * sr:
+        # Long inputs: measure at 24 kHz (K-weighting above 12 kHz barely moves the number; ~4x faster).
+        x, sr = resample(x, sr, 24000), 24000
     if x.shape[-1] < sr // 2:
         x = np.pad(x, ((0, 0), (0, sr // 2 - x.shape[-1])))
     kw = np.stack([k_weight(c, sr) for c in x])

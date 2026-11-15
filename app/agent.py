@@ -113,6 +113,7 @@ def plan(body: AgentRequest):
         if type(data.get('use_visual',False)) is not bool or type(data.get('remove',False)) is not bool: raise ValueError('Invalid flags')
         # Strip null placeholders; both backend and frontend validate actions against actual stems and duration.
         data['actions']=[{k:v for k,v in a.items() if v is not None} for a in data['actions']]
+        normalize_edit(data, body)
         validate_operations(data['actions'],body)
         guidance=Guidance.model_validate(data.get('guidance') or {})
         scope=EditScope.model_validate(data.get('edit_scope') or {'action':'mute' if data.get('remove') else 'keep'})
@@ -132,6 +133,51 @@ def plan(body: AgentRequest):
         data['separation_mode'],data['stems']=mode,stems
         return data
     except (ValueError, KeyError, TypeError, ValidationError) as exc: raise AgentError('The AI returned an invalid or incomplete plan. Please rephrase.') from exc
+
+
+def normalize_edit(data, body):
+    """Make timed edit plans usable instead of rejecting them.
+
+    For kind=edit the model often puts the user's time range in edit_scope, processing_time or
+    extra start/end fields on set_gain (measured on the live planner: 7 of 8 "make the dialogue
+    quieter from 2 to 5 seconds" / "make the thunder louder at 15 seconds" plans were refused,
+    and the accepted one silently changed the whole layer). Edits act on existing layers only, so
+    those fields are cleared, and a set_gain with a time range becomes a volume curve that holds
+    the requested level over the range with short ramps. A single time point gets three seconds.
+    """
+    if data.get('kind')!='edit': return
+    scope=data.get('edit_scope') if isinstance(data.get('edit_scope'),dict) else {}
+    interval=scope.get('interval') if isinstance(scope.get('interval'),dict) else None
+    point=data.get('processing_time')
+    data['edit_scope']={'action':'keep','interval':None}; data['processing_time']=None; data['guidance']={'anchors':[]}
+    gains={t.get('stemId'):t.get('gain') for t in body.tracks if isinstance(t,dict)}
+    real=lambda x: type(x) in (int,float) and x==x
+    out=[]
+    for a in data['actions']:
+        if isinstance(a,dict) and a.get('type')=='set_gain' and real(a.get('value')):
+            s,e=a.get('start'),a.get('end')
+            if not (real(s) and real(e)):
+                if interval and real(interval.get('start')) and real(interval.get('end')): s,e=interval['start'],interval['end']
+                elif real(point): s,e=point-1.5,point+1.5
+                else: s=e=None
+            if s is not None:
+                s,e=max(0.0,float(s)),min(float(body.duration),float(e))
+                if e>s:
+                    g=gains.get(a.get('stemId'))
+                    g=g if real(g) and g>0 else 1.0
+                    level=max(0.0,min(5.0,a['value']/g)); ramp=min(0.15,(e-s)/4)
+                    keys=[]
+                    for t,v in ((0.0,1.0),(s-ramp,1.0),(s,level),(e,level),(e+ramp,1.0),(float(body.duration),1.0)):
+                        t=round(min(max(t,0.0),float(body.duration)),3)
+                        if keys and t<=keys[-1]['t']:
+                            if t==keys[-1]['t']: keys[-1]['value']=v
+                            continue
+                        keys.append({'t':t,'value':v})
+                    a={'type':'set_automation','stemId':a.get('stemId'),'keyframes':keys}
+            else:
+                a={k:v for k,v in a.items() if k not in ('start','end')}
+        out.append(a)
+    data['actions']=out
 
 
 def validate_operations(actions, body):

@@ -71,7 +71,7 @@ export default function Editor() {
   const [projectStems,setProjectStems]=useState<ProjectStemsState>(NO_PROJECT_STEMS)
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [working, setWorking] = useState<string | null>(null)
-  const [exportClips, setExportClips] = useState<SourceClip[]>([])
+  const [clipSequence, setClipSequence] = useState<{clips:SourceClip[];canUndo:boolean;canRedo:boolean}>({clips:[],canUndo:false,canRedo:false})
   const videoUploadInProgress = useRef(false)
   const [videoAspect, setVideoAspect] = useState<number | null>(null)
   const portrait = videoSrc !== null && videoAspect !== null && videoAspect < 0.9
@@ -436,7 +436,15 @@ export default function Editor() {
                 onKindChange={setKind}
                 syncing={syncTarget !== null}
                 canTrim={Boolean(projectStems.projectId)}
-                exportClips={exportClips}
+                exportClips={clipSequence.clips}
+                canUndoClip={clipSequence.canUndo}
+                canRedoClip={clipSequence.canRedo}
+                onUndoClip={() => projectPanel.current?.undoClipEdit()}
+                onRedoClip={() => projectPanel.current?.redoClipEdit()}
+                onCutRange={(start,end) => {
+                  if (!projectPanel.current) throw new Error('Project controls are not ready.')
+                  return projectPanel.current.cutRange(start,end)
+                }}
                 onSplitRange={(start,end) => {
                   if (!projectPanel.current) throw new Error('Project controls are not ready.')
                   return projectPanel.current.splitRange(start,end)
@@ -471,7 +479,7 @@ export default function Editor() {
             onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
           <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onClipSequence={setExportClips} onBusy={setWorking} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onClipSequence={setClipSequence} onBusy={setWorking} />
           </div>
         </main>
       )}

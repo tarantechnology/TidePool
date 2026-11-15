@@ -19,7 +19,7 @@ import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCap
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
 import { mediaCommand } from '../mediaCommand'
-import { splitSelection } from '../state/clipSequence'
+import { cutSelection, splitSelection } from '../state/clipSequence'
 import type { SourceClip } from '../state/clipSequence'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -56,7 +56,7 @@ interface Props {
   onSelectVisual: (selection: VisualSelection) => void
   onSeek: (seconds: number) => void
   getPlayhead: () => number
-  onClipSequence: (clips:SourceClip[]) => void
+  onClipSequence: (state:{clips:SourceClip[]; canUndo:boolean; canRedo:boolean}) => void
   /** The detections the editor is showing, for the object list. */
   visual: VisualMetadata | null
   /** What the panel is busy with, for the timeline's working state; null when idle. */
@@ -72,6 +72,9 @@ export interface ProjectPanelHandle {
   splitSong: () => Promise<void>
   keepRange: (start:number, end:number) => string
   splitRange: (start:number, end:number) => string
+  cutRange: (start:number, end:number) => string
+  undoClipEdit: () => void
+  redoClipEdit: () => void
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -96,8 +99,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [clipClipboard,setClipClipboard] = useState<{start:number;end:number}|null>(null)
   const [selectedClip,setSelectedClip] = useState<number|null>(null)
   const clips = clipHistory.present
-  useEffect(() => { onClipSequence(clips) }, [clips,onClipSequence])
+  useEffect(() => { onClipSequence({clips,canUndo:canUndo(clipHistory),canRedo:canRedo(clipHistory)}) }, [clipHistory,clips,onClipSequence])
   const changeClips = (next: {start:number;end:number}[]) => setClipHistory(h => commit(h,next))
+  const effectiveClips = (duration:number):SourceClip[] => {
+    if (clips.length) return clips
+    const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : duration
+    if (!trimStart.trim() || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end || end > duration + 1e-6) throw new Error('Choose a valid trim range before editing clips.')
+    return start === 0 && !trimEnd.trim() ? [] : [{start,end}]
+  }
   const [command, setCommand] = useState('')
   const [retryPrompt,setRetryPrompt]=useState('')
   const [retryStems,setRetryStems]=useState<SavedStem[]>([])
@@ -425,10 +434,17 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, splitRange: (start,end) => {
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, undoClipEdit: () => {setClipHistory(h => undo(h)); setSelectedClip(null)}, redoClipEdit: () => {setClipHistory(h => redo(h)); setSelectedClip(null)}, cutRange: (start,end) => {
+    if (!project?.metadata) throw new Error('Upload media before cutting.')
+    const duration=project.metadata.duration
+    const next=cutSelection(effectiveClips(duration),duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
+    changeClips(next);setSelectedClip(null);setOpenStep('export')
+    const message=`Cut ${start.toFixed(2)}–${end.toFixed(2)} seconds from the whole video. The remaining clips join on export. Use Undo clip edit to restore it.`
+    setMessage(message);return message
+  }, splitRange: (start,end) => {
     if (!project?.metadata) throw new Error('Upload media before splitting.')
     const duration=project.metadata.duration
-    const result=splitSelection(clips,duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
+    const result=splitSelection(effectiveClips(duration),duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
     changeClips(result.clips);setSelectedClip(result.selected);setOpenStep('export')
     const message='Selection split into a clip. Use the clip list to move, copy or delete it in the exported video.'
     setMessage(message);return message

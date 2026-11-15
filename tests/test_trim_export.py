@@ -81,6 +81,18 @@ def test_clip_sequence_reorders_and_repeats_audio_and_video(client,tmp_path):
                 return subprocess.check_output(['ffmpeg','-v','error','-ss',str(t),'-i',str(out),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
             a,b,c=(np.frombuffer(frame(t),dtype='u1').astype(float) for t in (.4,1.4,2.4))
             assert np.mean(abs(a-c)) < np.mean(abs(a-b))
+    # Cutting the middle second joins the first and last second in both streams.
+    r=client.post(url,headers=h,json={'format':'mp4','include_video':True,'clips':[{'start':0,'end':1},{'start':2,'end':3}]})
+    assert r.status_code==202
+    job=wait(client,'/api/exports/'+r.json()['export_id'],h);assert job['status']=='completed',job
+    cut=tmp_path/'cut.mp4';cut.write_bytes(client.get(job['download_url'],headers=h).content)
+    info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(cut)]))
+    for stream in info['streams']: assert abs(float(stream['duration'])-2)<.12
+    samples=np.frombuffer(subprocess.check_output(['ffmpeg','-v','error','-i',str(cut),'-ac','1','-ar','48000','-f','f32le','-']),dtype='<f4')
+    for index,expected in enumerate((440,1320)):
+        chunk=samples[int((index+.2)*48000):int((index+.8)*48000)]
+        freq=np.fft.rfftfreq(len(chunk),1/48000)[np.argmax(np.abs(np.fft.rfft(chunk)))]
+        assert abs(freq-expected)<5
 
 
 def test_range_automation_is_audible_in_export_and_can_be_undone(client,tmp_path):

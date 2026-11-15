@@ -369,16 +369,6 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan
-    # Several edits in one message ("reverb on the vocals, drums like a phone and a vine boom at 0:12") go to the
-    # planner whole, before any single-ask fast path could take just one clause (app/multi.py).
-    from . import multi
-    if multi.is_compound(body.prompt):
-        from .sfx_plan import finalize as finalize_insert
-        from .sfx_insert import service_features
-        try: result=agent_plan(body)
-        except AgentError as exc: raise HTTPException(502,str(exc)) from exc
-        if result.get('kind')=='multi': return multi.finalize(result,body.duration,service_features())
-        return finalize_insert(result,body.duration,service_features()) if result.get('kind')=='insert' else result
     # SFX inserts ("vine boom when he says 'what'") parse offline first; see app/sfx_plan.py.
     from .sfx_plan import finalize as finalize_insert, rule_plan as insert_rule_plan
     from .sfx_insert import service_features
@@ -403,6 +393,14 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
         try: early=parse_replacement(body.prompt,body.duration)
         except ValueError: early=None
         if early and early.get('mode')=='add' and early.get('object_track_id') is not None: return stale  # never a generated part
+    # Object-appearance additions (above) stay main's; several edits in one message ("reverb on the vocals, drums like a phone and a vine boom at 0:12") go to the
+    # planner whole, before any single-ask fast path could take just one clause (app/multi.py).
+    from . import multi
+    if multi.is_compound(body.prompt):
+        try: result=agent_plan(body)
+        except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+        if result.get('kind')=='multi': return multi.finalize(result,body.duration,service_features())
+        return finalize_insert(result,body.duration,service_features()) if result.get('kind')=='insert' else result
     quick=insert_rule_plan(body.prompt)
     if quick is not None and quick['kind']=='insert':
         return finalize_insert(quick,body.duration,service_features())

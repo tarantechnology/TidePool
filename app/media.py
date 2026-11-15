@@ -4,6 +4,8 @@ import json
 import math
 import os
 from pathlib import Path
+import re
+import subprocess
 import httpx
 from . import guidance
 from .core import max_passes, run, probe, uid
@@ -47,20 +49,42 @@ def fake_music_stems(audio, directory, requested, report):
 
 
 # Stems come back as 16-bit PCM unless a caller asks otherwise: ample for editing, half the transfer of float32.
+# guidance.options() always asks for pcm_f32le, music_stems splits included: the service's encode_wav_pcm16 hard-clips
+# at +/-1.0, so a stem above full scale would no longer sum back to the mix. Switch splits to s16 only once the service
+# guarantees headroom (e.g. a shared gain or float fallback); until then this default only applies to bare callers.
 STEM_OUTPUT_FORMAT = 'pcm_s16le'
 
+
+# FLAC is integer PCM: float samples beyond full scale would clip (a 1.40 peak comes back as 1.00).
+FLAC_SAFE_PEAK = 0.999
+
+
+def source_peak(audio):
+    """Linear sample peak over all channels (FFmpeg astats, one decode pass); None when it cannot be measured."""
+    try:
+        out = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', str(audio), '-vn', '-af',
+                              'astats=measure_perchannel=none:measure_overall=Peak_level', '-f', 'null', '-'],
+                             capture_output=True, text=True, timeout=int(os.getenv('FFMPEG_TIMEOUT', '600')))
+    except (subprocess.SubprocessError, OSError):
+        return None
+    found = re.findall(r'Peak level dB:\s*(-?inf|[-+\d.]+)', out.stderr)
+    if not found: return None
+    return 0.0 if found[-1] == '-inf' else 10 ** (float(found[-1]) / 20)
 
 
 @contextmanager
 def service_upload(audio):
     """(filename, file, content type) for posting audio to the service: a fast lossless FLAC encode
     (a fraction of the float WAV through the tunnel; the service decodes any FFmpeg format).
-    Falls back to the original file when FFmpeg cannot encode it."""
+    Falls back to the original file when FFmpeg cannot encode it, or when the source peaks above
+    full scale (FLAC would clip it)."""
     import tempfile
     handle, name = tempfile.mkstemp(suffix='.flac'); os.close(handle)
     flac = Path(name)
     try:
         try:
+            peak = source_peak(audio)
+            if peak is not None and peak > FLAC_SAFE_PEAK: raise ValueError('source exceeds full scale')
             run('ffmpeg', '-v', 'error', '-y', '-i', str(audio), '-vn', '-c:a', 'flac', '-compression_level', '1', str(flac))
             encoded = flac.stat().st_size > 0
         except Exception:

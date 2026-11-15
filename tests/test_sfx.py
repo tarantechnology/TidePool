@@ -353,6 +353,27 @@ def test_agent_route_plans_inserts_offline_and_clarifies_honestly(client, tmp_pa
     assert ask('airhorn at 0:30')['kind'] == 'clarify'  # past the end
 
 
+def test_agent_route_keeps_inserts_and_effects_ahead_of_the_stale_editor_guard(client, tmp_path, monkeypatch):
+    import app.main as main
+    from app import sfx_insert
+    monkeypatch.setattr(sfx_insert, 'service_features', lambda: {'words': {'available': True}, 'beats': {'available': False}})
+    planned = []
+    monkeypatch.setattr(main, 'agent_plan', lambda body: planned.append(body.prompt) or {'kind': 'fx', 'description': None, 'remove': False, 'actions': [], 'message': 'fx'})
+    pid, h = project(client, tmp_path, 20.0)
+    ask = lambda prompt: client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': prompt, 'stems': [], 'tracks': [], 'duration': 20}).json()
+    refresh = 'Refresh the editor to enable this sound-generation request, then submit it again.'
+    plan = ask('add a vine boom at 12 seconds')
+    assert plan['kind'] == 'insert' and plan['inserts'][0]['anchor']['value'] == 12
+    plan = ask('add an airhorn after the word hello')
+    assert plan['kind'] == 'insert' and plan['inserts'][0]['anchor']['type'] == 'word' and plan['inserts'][0]['anchor']['value'] == 'hello'
+    plan = ask('add reverb to the vocals at 12 seconds')
+    assert plan['kind'] == 'fx' and planned == ['add reverb to the vocals at 12 seconds']
+    plan = ask('Add a gong every time we see person 5')  # main's object-appearance generation flow
+    assert plan['kind'] == 'clarify' and plan['message'] == refresh
+    assert ask('play a whoosh whenever car 2 appears')['message'] == refresh
+    assert planned == ['add reverb to the vocals at 12 seconds']
+
+
 def test_strict_schema_requires_every_property():
     from app.agent import SCHEMA
     def walk(node):

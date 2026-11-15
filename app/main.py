@@ -352,15 +352,6 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .fx_schema import mentions_effect
     if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or (re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I) and not mentions_effect(body.prompt)):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
-    # A browser tab left open across an editor update may still send sound
-    # generation requests to this older planning route. Never let its generic
-    # planner incorrectly say that the configured generator cannot add sounds.
-    if re.search(r'\b(?:add|play)\b',body.prompt,re.I):
-        from .replacement import parse_replacement
-        try: addition=parse_replacement(body.prompt,body.duration)
-        except ValueError: addition=None
-        if addition and addition.get('mode')=='add':
-            return {'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan
@@ -370,9 +361,25 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .sfx_plan import requests_censorship
     if requests_censorship(body.prompt):  # Profanity beeps are the censorship preview's job, never a library insert.
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'Profanity beeps use the censorship preview: ask "bleep the swearing" in the editor.'}
+    # A browser tab left open across an editor update may still send sound
+    # generation requests to this older planning route. Never let its generic
+    # planner incorrectly say that the configured generator cannot add sounds.
+    # Censorship (above), library inserts and layer effects ("add reverb to the vocals") keep their own flows;
+    # object-appearance additions ("add a gong every time we see person 5") are always the generator's.
+    from .sfx_plan import _FX_WORDS
+    from .fx_schema import PRESET_WORDS
+    addition=None
+    if re.search(r'\b(?:add|play)\b',body.prompt,re.I) and not _FX_WORDS.search(body.prompt) and not PRESET_WORDS.search(body.prompt):
+        from .replacement import parse_replacement
+        try: addition=parse_replacement(body.prompt,body.duration)
+        except ValueError: addition=None
+        if not (addition and addition.get('mode')=='add'): addition=None
+    stale={'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
+    if addition and addition.get('object_track_id') is not None: return stale
     quick=rule_plan(body.prompt)
     if quick is not None:
         return finalize_insert(quick,body.duration,service_features()) if quick['kind']=='insert' else quick
+    if addition: return stale
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()

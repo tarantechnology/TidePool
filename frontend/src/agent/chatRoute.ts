@@ -10,6 +10,8 @@ import { separationCommand } from '../separationCommand'
 /** "add a phone ring at 0:12", "put an echo at the end": a new sound, not an effect on a layer. */
 const INSERT_PHRASING = /^(?:(?:please|can you|could you|would you|just|now|also)\s+)*(?:add|insert|put|drop|throw(?: in)?|stick|slap|play|place)\s+(?:a|an|some|one|the sound of)\b/i
 const ON_A_LAYER = /\b(?:to|on|onto|over)\s+(?:the|my|his|her|their|this|that|it|everything|all|every|whole)\b|\b(?:effects?|filters?)\b/i
+/** Main's object-appearance phrasings (see replacementIntent.ts): "... every time we see person 5", "when car 2 appears". */
+const OBJECT_APPEARANCE = [/\b(?:every\s+time|whenever|when)\s+(?:we\s+)?see\s+/i, /\b[a-z][a-z -]*\s*#?\s*\d+\s+(?:appears|shows\s+up|is\s+visible)\b/i]
 /** Explicit replacement verbs: these never become an insert or an effect. */
 const REPLACE_VERB = /\b(?:replace|replacing|swap|substitute)\b|\binstead of\b/i
 
@@ -53,6 +55,8 @@ export function chatRoute(text: string, stems: FxStem[] = [], pendingReplacement
   const followup = namedInsert ? null : replacementFollowup(pendingReplacement, text)
   if (followup) return { fx: null, sfx: false, replacement: followup }
   if (REPLACE_VERB.test(text)) return { fx: null, sfx: false, replacement: text }
+  // Sounds on tracked object appearances ("add a gong every time we see person 5") are main's generation flow.
+  if (requestsSoundReplacement(text) && OBJECT_APPEARANCE.some(re => re.test(text))) return { fx: null, sfx: false, replacement: text }
   const fx = fxCommand(text, stems)
   const asReplacement = requestsSoundReplacement(text) ? text : null
   const sfx = requestsSfxInsert(text)

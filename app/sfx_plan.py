@@ -243,13 +243,13 @@ _OTHER_OPS = re.compile(r'^(?:mute|unmute|solo|isolate|separate|split|remove|del
 _NOT_A_SOUND = re.compile(r"^(?:the\s+|some\s+|a\s+|an\s+|my\s+|this\s+|that\s+)?(?:music|song|beat|instrumental|bgm|backing\s+track|silence|quiet|nothing|"
                           r"vocals?|voice|dialog(?:ue)?|speech|audio|sound|volume|track|layer|everything|mix|bass|drums?|guitar|piano)$", re.I)
 # Profanity beeps ("bleep the swearing", "put a bleep over the curse words") belong to the censorship flow.
-_CENSORSHIP = re.compile(r'\b(?:cuss(?:ing)?|swear(?:ing|s)?|swear\s+words?|profanity|curse|curses|cursing|expletives?)\b', re.I)
+_CENSORSHIP = re.compile(r'\b(?:cuss(?:ing)?|swear(?:ing)?|profanity|curse|cursing|expletives?)\b', re.I)
 _CENSOR_VERB = re.compile(r'\b(?:beep|bleep|censor|mute|remove)\b', re.I)
-_CENSOR_NEGATED = re.compile(r"\b(?:do\s+not|don['’]?t|never)\s+(?:beep|bleep|censor|mute|remove)\b", re.I)
+_CENSOR_NEGATED = re.compile(r"\b(?:do not|don't|never)\s+(?:beep|bleep|censor|mute|remove)\b", re.I)
 
 
 def requests_censorship(text):
-    """Mirror of the editor's censorshipIntent: an explicit ask to beep profanity (the censorship preview owns it)."""
+    """Exact mirror of the editor's requestsCensorship (frontend/src/agent/censorshipIntent.ts): an explicit ask to beep profanity (the censorship preview owns it)."""
     text = str(text or '')
     return bool(_CENSOR_VERB.search(text) and _CENSORSHIP.search(text) and not _CENSOR_NEGATED.search(text))
 

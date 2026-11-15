@@ -92,4 +92,10 @@ describe('chatRoute: censorship and layer scope come first', () => {
     const r = chatRoute('make the vocals higher pitch', stems)
     expect(r.fx?.kind).toBe('fx'); expect(r.sfx).toBe(false); expect(r.replacement).toBeNull()
   })
+  it("object-appearance sound asks go to main's generation flow, not a library insert or effect", () => {
+    for (const ask of ['Add a gong every time we see person 5', 'Every time person 5 appears, play a gong sound.', 'play a whoosh whenever car 2 appears']) {
+      const r = chatRoute(ask, stems)
+      expect(r.replacement, ask).toBe(ask); expect(r.sfx, ask).toBe(false); expect(r.fx, ask).toBeNull()
+    }
+  })
 })

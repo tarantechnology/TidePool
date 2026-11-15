@@ -139,7 +139,7 @@ def speech_frames(mono: np.ndarray, floor_db: float | None = None) -> np.ndarray
     return active
 
 
-def _cluster(emb: np.ndarray, max_speakers: int, p_keep: float = 0.95) -> np.ndarray:
+def _cluster(emb: np.ndarray, max_speakers: int, p_keep: float = 0.95, min_k: int = 3) -> np.ndarray:
     """Spectral clustering of unit embeddings (the d-vector recipe of Wang et al. 2018):
     cosine affinity, each row keeps only its strongest links, symmetrised and diffused, then
     the number of speakers is the largest eigengap of the normalised Laplacian (2 to
@@ -163,6 +163,11 @@ def _cluster(emb: np.ndarray, max_speakers: int, p_keep: float = 0.95) -> np.nda
     top = min(max_speakers, n - 1)
     gaps = np.diff(vals[: top + 1])
     k = int(np.argmax(gaps[1:]) + 2) if top >= 2 else 1
+    # The eigengap undercounts when one voice is close to another (McLovin's three friends came
+    # out as two). Proposing at least ``min_k`` is safe because _merge_close and the
+    # too-little-speech fold join clusters that are one person; they cannot split a merged one.
+    # Each proposed cluster needs about 2 s of windows.
+    k = max(k, min(min_k, top, n // 8))
     V = vecs[:, :k]
     V /= np.linalg.norm(V, axis=1, keepdims=True) + 1e-12
     return _kmeans(V, k)
@@ -306,7 +311,7 @@ def split_speakers(dialogue: np.ndarray, sample_rate: int, encoder: VoiceEncoder
     padded = np.pad(mono, (0, max(0, (starts[-1] + win) * HOP - len(mono))))
     windows = np.stack([padded[s * HOP:(s + win) * HOP] for s in starts])
     emb = encoder.embed(windows)
-    labels = _cluster(emb, max_speakers)
+    labels = _cluster(emb, max_speakers, min_k=int(_env("AUDIO_SPEAKER_PROPOSE", 3)))
     pitch = window_pitch(padded, starts, win)
     labels = _merge_close(emb, labels, threshold, maybe, pitch, _env("AUDIO_SPEAKER_PITCH_RATIO", 1.25))
 

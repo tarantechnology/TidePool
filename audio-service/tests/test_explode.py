@@ -205,3 +205,30 @@ def test_window_pitch_handles_windows_across_batches_and_silence():
     pitch = window_pitch(x, [0, 600, 1000, 1350], 150)
     assert np.allclose(pitch[:3], 220, rtol=0.05)
     assert np.isnan(pitch[3])
+
+
+def test_three_close_voices_are_all_proposed():
+    """Three people whose voices are close enough that the eigengap prefers two: the
+    clustering still proposes three, and none merge because they are not alike enough."""
+    from sam_audio_service.speakers import _cluster, _merge_close
+    rng = np.random.default_rng(3)
+    base = np.eye(3)
+    centers = 0.55 * base + 0.45 * np.ones(3) / np.sqrt(3)
+    centers[2] = 0.75 * centers[1] + 0.25 * centers[2]  # person 3 close to person 2
+    emb = np.concatenate([c + 0.04 * rng.standard_normal((30, 3)) for c in centers])
+    emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+    labels = _merge_close(emb, _cluster(emb, 4), 0.995, 0.995, None)
+    assert len(np.unique(labels)) == 3
+    truth = np.repeat(np.arange(3), 30)
+    for k in range(3):
+        assert len(np.unique(labels[truth == k])) == 1
+
+
+def test_two_people_stay_two_when_three_are_proposed():
+    from sam_audio_service.speakers import _cluster, _merge_close
+    rng = np.random.default_rng(4)
+    emb = np.concatenate([np.array([1.0, 0, 0]) + 0.05 * rng.standard_normal((40, 3)),
+                          np.array([0, 1.0, 0]) + 0.05 * rng.standard_normal((40, 3))])
+    emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+    labels = _merge_close(emb, _cluster(emb, 4), 0.82, 0.60, None)
+    assert len(np.unique(labels)) == 2

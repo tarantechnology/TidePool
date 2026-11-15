@@ -56,7 +56,7 @@ def main() -> None:
         if len(starts) >= 4:
             padded = np.pad(mono, (0, win * S.HOP))
             emb = enc.embed(np.stack([padded[s * S.HOP:(s + win) * S.HOP] for s in starts]))
-            labels = S._cluster(emb, 4)
+            labels = S._cluster(emb, 4, min_k=int(S._env("AUDIO_SPEAKER_PROPOSE", 3)))
             ids, sim = S._centroid_sims(emb, labels)
             pitch = S.window_pitch(padded, starts, win)
             f0 = [S._cluster_pitch(pitch, labels, k) for k in ids]

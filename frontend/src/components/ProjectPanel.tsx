@@ -24,7 +24,7 @@ import type { StemExclusive } from '../hooks/useStemSync'
 import { NO_VISUAL_PROMPT, explodeTier, orderForExplode, parseExplodeList, recipeTier, focusSounds } from '../api/separation'
 import type { StemSource } from '../api/stemSources'
 import { createCheckpoint, restoreCheckpoint } from '../api/checkpoints'
-import { getProject as getSavedProject, nameFromFile, saveProject } from '../projects/registry'
+import { fileBase, getProject as getSavedProject, nameFromFile, saveProject } from '../projects/registry'
 import type { ServerStep } from '../state/steps'
 
 import { SoundGuidance } from './SoundGuidance'
@@ -88,6 +88,8 @@ export interface ProjectPanelHandle {
   splitSong: () => Promise<void>
   /** Undo or redo a server step: put the layers back as a checkpoint saw them, then load them. */
   restoreTo: (checkpoint:string, label:string, how:'undo'|'redo') => Promise<void>
+  /** Outflow from the top bar: save pending edits, render, and download. onStatus hears each stage. */
+  exportAs: (format:'mp4'|'wav'|'mp3', onStatus:(text:string)=>void) => Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -213,7 +215,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   }
   /** Describe the project on its card in the project list. */
   const noteProject = (info: ProjectInfo) => {
-    saveProject({id:info.project_id, ...(info.filename ? {name:nameFromFile(info.filename)} : {}), ...(info.metadata?.duration ? {duration:info.metadata.duration} : {}), hasVideo:Boolean(info.metadata?.has_video)})
+    // A name the user gave the project stays; otherwise the card is named after the clip.
+    const named = getSavedProject(info.project_id)?.named
+    saveProject({id:info.project_id, ...(info.filename && !named ? {name:nameFromFile(info.filename)} : {}), ...(info.metadata?.duration ? {duration:info.metadata.duration} : {}), hasVideo:Boolean(info.metadata?.has_video)})
   }
   // A step that changes layers on the server is bracketed by two checkpoints, so undo and redo can step over it.
   const pendingStep = useRef<{label:string;before:string;projectId:string}|null>(null)
@@ -503,7 +507,18 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await splitInto(config, project, null)
   })
-  useImperativeHandle(ref, () => ({ splitSong, renameLayer: async (stemId, label, exclusive) => {
+  useImperativeHandle(ref, () => ({ splitSong, exportAs: async (fmt, onStatus) => {
+    if (!project || !token || !jobId) throw new Error('Split the clip into layers first (step 2), then export.')
+    if (fmt === 'mp4' && !project.metadata?.has_video) throw new Error('This project has no video. Export it as WAV or MP3.')
+    if (busyRef.current) throw new Error('Tidepool is still working on the last step. Export again when it finishes.')
+    busyRef.current = true; setBusy(true); setError('')
+    try {
+      onStatus('Saving your latest edits…'); await flush()
+      onStatus('Rendering your export…')
+      const id = await startExport(config, project.project_id, fmt)
+      await finishExport(id, fmt, onStatus)
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false) }
+  }, renameLayer: async (stemId, label, exclusive) => {
     const name = label.trim()
     if (!project || !token || !jobId) throw new Error('Separate the audio before renaming layers.')
     if (!name) return
@@ -705,15 +720,17 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     }
     await loadVideo(config,info); onVisual(null); onClearSelection(); setSelection(null)
   }
-  const finishExport = async (id: string, extension: string) => {
+  const finishExport = async (id: string, extension: string, onStatus: (text:string)=>void = setMessage) => {
     for (;;) {
       const info=await getExport(config,id)
       if (info.status === 'failed') throw new Error(info.error || 'Export failed')
       if (info.status === 'completed') {
         if (!info.download_url) throw new Error('Export has no download URL')
-        await downloadExport(config,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
+        // The file is named after the project, so several exports are easy to tell apart.
+        const name = project ? getSavedProject(project.project_id)?.name : null
+        await downloadExport(config,info.download_url,`${fileBase(name)}.${extension}`); onStatus('Export downloaded.'); return
       }
-      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
+      onStatus('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
   const exportFile = () => run(async () => {

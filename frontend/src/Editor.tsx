@@ -38,7 +38,9 @@ import { canRedo, canUndo, commit, createHistory, redo, undo } from './state/his
 import { dropRedo, nextRedo, nextUndo, pushStep, stepRedone, stepUndone } from './state/steps'
 import type { ServerStep, StepStack } from './state/steps'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
-import { captureThumb, getProject as getSavedProject, loadSteps, saveProject, saveSteps, takePendingUpload } from './projects/registry'
+import { ExportButton, SaveButton } from './components/ProjectActions'
+import type { ExportFormat, SaveHandle } from './components/ProjectActions'
+import { captureThumb, fileBase, getProject as getSavedProject, loadSteps, saveProject, saveSteps, takePendingUpload } from './projects/registry'
 import type { History } from './state/history'
 import { createEditorState, mergeKinds, setKindOverride } from './state/kinds'
 import type { EditorState } from './state/kinds'
@@ -430,6 +432,17 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
   const canUndoAny = canUndo(history) || undoStep !== null
   const canRedoAny = canRedo(history) || redoStep !== null
 
+  const saveButton = useRef<SaveHandle | null>(null)
+  useEffect(() => {
+    // ⌘S saves the project instead of opening the browser's "Save page" dialog.
+    const onSave = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's') return
+      e.preventDefault()
+      void saveButton.current?.save()
+    }
+    window.addEventListener('keydown', onSave)
+    return () => window.removeEventListener('keydown', onSave)
+  }, [])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
@@ -459,7 +472,17 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
     ? (label, work, reload) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); return projectPanel.current.withLayers(label, work, reload) }
     : null
   const setRuleAutomation = (stemId: string, keyframes: Keyframe[]) => dispatch({ type: 'set_automation', stemId, keyframes })
-  const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel === 'Project stems' ? `Saved · ${baseStems.length} layer${baseStems.length === 1 ? '' : 's'}` : stemsLabel === VIDEO_AUDIO_LABEL ? 'Not split yet' : stemsLabel)
+  const openId = projectStems.projectId
+  const saveBlocked = openId ? null : stemsLabel === MOCK_LABEL ? 'These are sample layers. Upload a clip in step 1 to start a project you can save.' : 'Upload a clip in step 1 to start a project.'
+  const exportBlocked = !openId ? 'Upload a clip in step 1 and split it into layers in step 2. Then export the clip with its new sound here.'
+    : stemsLabel !== 'Project stems' ? 'Split the clip into layers first (step 2). Then you can export it with your new sound.'
+    : status !== 'ready' ? 'Wait for the layers to finish loading.' : null
+  const exportProject = async (format: ExportFormat, onStatus: (text: string) => void) => {
+    if (format === 'json') { downloadText(serializeEditList(tracks), `${fileBase(openId ? getSavedProject(openId)?.name : null)} edit list.json`); return }
+    if (!projectPanel.current) throw new Error('Project controls are not ready.')
+    await projectPanel.current.exportAs(format, onStatus)
+  }
+  const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel === 'Project stems' ? `Autosaved · ${baseStems.length} layer${baseStems.length === 1 ? '' : 's'}` : stemsLabel === VIDEO_AUDIO_LABEL ? 'Not split yet' : stemsLabel)
 
   return (
     <div
@@ -521,12 +544,16 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
             <path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />
           </IconButton>
           <span
-            title={chipErrors.join(' ') || statusText}
+            title={chipErrors.join(' ') || (openId && stemsLabel === 'Project stems' ? 'Every change saves on its own as you work.' : statusText)}
             className="ml-1 inline-flex max-w-52 items-center gap-2 truncate rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted"
           >
             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipErrors.length > 0 || status === 'error' ? 'bg-red-400' : status === 'ready' ? 'bg-accent' : 'animate-pulse-dot bg-faint'}`} />
-            <span className="truncate">{statusText}</span>
+            {/* On a narrow window the dot stands alone, so the transport keeps its room; hover shows the text. */}
+            <span className={`truncate ${status === 'ready' && chipErrors.length === 0 ? 'hidden min-[1360px]:inline' : ''}`}>{statusText}</span>
           </span>
+          <span className="mx-1 h-5 w-px bg-line" aria-hidden="true" />
+          <SaveButton projectId={openId} flush={flush} disabledReason={saveBlocked} saveRef={saveButton} />
+          <ExportButton ready={exportBlocked} hasVideo={projectStems.audioOnly !== true} onExport={exportProject} />
           <details className="relative">
             <summary aria-label="More" title="More" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-full text-muted transition-colors hover:bg-tint/[0.06] hover:text-fg">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>

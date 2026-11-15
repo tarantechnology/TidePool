@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { forgetProject, getProject, listProjects, loadSteps, nameFromFile, saveProject, saveSteps } from './registry'
+import { claimShareLink, fileBase, forgetProject, getProject, listProjects, loadSteps, nameFromFile, parseShareLink, renameProject, saveProject, saveSteps, shareLink } from './registry'
 
 // The tests run in node, which has no localStorage.
 const store = new Map<string, string>()
@@ -36,5 +36,34 @@ describe('project registry', () => {
   it('names a project from its file', () => {
     expect(nameFromFile('batman_rain-scene.mp4')).toBe('batman rain scene')
     expect(nameFromFile('')).toBe('Untitled clip')
+  })
+})
+
+describe('saving and sharing a project', () => {
+  beforeEach(() => localStorage.clear())
+  it('keeps a name the user gave it', () => {
+    saveProject({ id: 'a', token: 't', name: 'rain scene' })
+    renameProject('a', '  Batman rain, final  ')
+    expect(getProject('a')).toMatchObject({ name: 'Batman rain, final', named: true })
+    renameProject('a', '   ')
+    expect(getProject('a')?.name).toBe('Batman rain, final')
+  })
+  it('round-trips a project link, token in the # part only', () => {
+    const link = shareLink({ id: 'p 1', token: 'tok/+=', name: 'Rain & thunder' }, 'https://tide.example/')
+    expect(link.startsWith('https://tide.example/#/app/open/')).toBe(true)
+    const hash = link.slice(link.indexOf('#'))
+    expect(parseShareLink(hash)).toEqual({ id: 'p 1', token: 'tok/+=', name: 'Rain & thunder' })
+    expect(claimShareLink(hash)).toBe('#/app/p/p%201')
+    expect(getProject('p 1')).toMatchObject({ token: 'tok/+=', name: 'Rain & thunder', named: true })
+  })
+  it('ignores other addresses and links without a token', () => {
+    expect(claimShareLink('#/app/p/x')).toBeNull()
+    expect(parseShareLink('#/app/open/x?n=Hi')).toBeNull()
+    expect(listProjects()).toEqual([])
+  })
+  it('turns a name into a safe file name', () => {
+    expect(fileBase('Rain: final/v2?')).toBe('Rain final v2')
+    expect(fileBase('')).toBe('tidepool')
+    expect(fileBase(null)).toBe('tidepool')
   })
 })

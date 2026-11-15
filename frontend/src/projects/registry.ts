@@ -16,6 +16,10 @@ export interface SavedProject {
   hasVideo?: boolean
   /** A small JPEG data URL of a frame, for the project card. */
   thumb?: string
+  /** The name was typed by the user, so the clip's filename no longer replaces it. */
+  named?: boolean
+  /** When the user last pressed Save. */
+  savedAt?: number
 }
 
 const KEY = 'tidepool.projects'
@@ -77,6 +81,45 @@ export function subscribeProjects(fn: () => void): () => void {
   const onStorage = (e: StorageEvent) => { if (e.key === KEY) { cached = null; fn() } }
   window.addEventListener('storage', onStorage)
   return () => { listeners.delete(fn); window.removeEventListener('storage', onStorage) }
+}
+
+/** Give a project its own name; it shows in the top bar and on its card. */
+export function renameProject(id: string, name: string) {
+  const next = name.trim().slice(0, 80)
+  if (next) saveProject({ id, name: next, named: true })
+}
+
+/**
+ * A link that opens this project in any browser. The ID and token ride in the address's # part,
+ * which browsers never send to a server; whoever has the link can edit the project.
+ */
+export function shareLink(p: Pick<SavedProject, 'id' | 'token' | 'name'>, base = `${window.location.origin}${window.location.pathname}`): string {
+  const q = new URLSearchParams({ t: p.token, n: p.name })
+  return `${base}#/app/open/${encodeURIComponent(p.id)}?${q.toString()}`
+}
+
+/** Read a link from shareLink: the project to add to this browser, or null. */
+export function parseShareLink(hash: string): { id: string; token: string; name: string | null } | null {
+  const m = /^#\/app\/open\/([^?#/]+)\?(.*)$/.exec(hash)
+  if (!m) return null
+  const q = new URLSearchParams(m[2])
+  const token = q.get('t')
+  const id = decodeURIComponent(m[1])
+  if (!id || !token) return null
+  return { id, token, name: q.get('n')?.trim() || null }
+}
+
+/** Add a shared project to this browser's list. Returns its editor address, or null for any other address. */
+export function claimShareLink(hash: string): string | null {
+  const link = parseShareLink(hash)
+  if (!link) return null
+  saveProject({ id: link.id, token: link.token, ...(link.name ? { name: link.name, named: true } : {}) }, true)
+  return `#/app/p/${encodeURIComponent(link.id)}`
+}
+
+/** A project name as a file name: "Rain scene: final" becomes "Rain scene final". */
+export function fileBase(name: string | null | undefined): string {
+  return (name ?? '').replace(/[^\p{L}\p{N} _-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'tidepool'
 }
 
 /** "rain-scene_final.mp4" reads as "rain scene final". */

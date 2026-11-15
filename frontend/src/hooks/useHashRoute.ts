@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { claimShareLink } from '../projects/registry'
 
 /**
  * #/                landing page
  * #/app             your projects
  * #/app/new         the editor, empty, ready for a new clip
  * #/app/p/<id>      the editor with that project open
+ * #/app/open/<id>?t=<token>&n=<name>   a shared link: adds the project here, then opens it
  */
 export type Route = 'landing' | 'projects' | 'editor'
 
@@ -29,10 +31,17 @@ export function parseHash(hash: string): Omit<RouteState, 'visit'> {
 
 let visits = 0
 
+/** A shared project link is added to this browser and swapped for the project's own address. */
+function current(): Omit<RouteState, 'visit'> {
+  const claimed = claimShareLink(window.location.hash)
+  if (claimed) { try { window.history.replaceState(null, '', claimed) } catch { /* parse the claimed address anyway */ } return parseHash(claimed) }
+  return parseHash(window.location.hash)
+}
+
 export function useHashRoute(): RouteState {
-  const [state, setState] = useState<RouteState>(() => ({ ...parseHash(window.location.hash), visit: visits }))
+  const [state, setState] = useState<RouteState>(() => ({ ...current(), visit: visits }))
   useEffect(() => {
-    const onChange = () => setState({ ...parseHash(window.location.hash), visit: ++visits })
+    const onChange = () => setState({ ...current(), visit: ++visits })
     window.addEventListener('hashchange', onChange)
     return () => window.removeEventListener('hashchange', onChange)
   }, [])

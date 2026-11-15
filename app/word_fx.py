@@ -194,7 +194,12 @@ VOICE = re.compile(r'\b(?:voice|voices|vocals?|speech|speaking|dialogue|dialog|n
 
 def voice_rows(rows):
     def text(r): return ' '.join(str(r.get(k) or '') for k in ('name', 'label', 'prompt'))
-    return [r for r in rows if not r.get('muted') and float(r.get('volume') or 0) > 0 and r.get('role') != 'effect' and VOICE.search(text(r))]
+    live = [r for r in rows if not r.get('muted') and float(r.get('volume') or 0) > 0 and r.get('role') != 'effect']
+    named = [r for r in live if VOICE.search(text(r))]
+    if named: return named
+    # Layers renamed after the people in the scene ("Mclovin", "Jonah Hill") no longer say "person" or
+    # "dialogue"; every separated target that is not the background then counts as a voice.
+    return [r for r in live if r.get('role') == 'target' and (r.get('name') or '').lower() != 'residual']
 
 
 def resolve(pid, spec, snapshot, source, new_file, stage=None):

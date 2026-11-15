@@ -368,6 +368,10 @@ def word_effect_plan(body):
         result={'kind':'fx','description':None,'remove':False,'actions':[],'fx':fx}
     if not usable(fx):
         return clarify(f'I can put an effect such as bass boost, echo, reverb, deepen or muffle on the {describe(on_words)}. Which effect do you want?')
+    # Swearing and names come from anyone in the scene: unless the ask names a layer ("Mclovin's bad words"),
+    # the effect goes on every voice layer, not whichever one the planner happened to pick.
+    named=any((s.get('label') or s.get('name') or '').strip().lower() in body.prompt.lower() for s in body.stems if (s.get('label') or s.get('name') or '').strip())
+    if not named: fx={**fx,'targets':['mix']}
     return {**result,'fx':{**fx,'interval':None,'on_words':on_words},
             'message':f'Finding the {describe(on_words)} in the speech, then previewing the effect on each one.'}
 

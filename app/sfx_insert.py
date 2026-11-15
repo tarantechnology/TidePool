@@ -58,8 +58,9 @@ def _service_post(path, audio, metadata, timeout):
     if not url.netloc:
         raise ValueError('The audio service is not configured.')
     try:
-        with open(audio, 'rb') as f:
-            response = httpx.post(urlunsplit((url.scheme, url.netloc, path, '', '')), files={'audio': ('audio.wav', f, 'audio/wav')},
+        from .media import service_upload
+        with service_upload(audio) as upload:  # FLAC: a fraction of the float WAV through the tunnel.
+            response = httpx.post(urlunsplit((url.scheme, url.netloc, path, '', '')), files={'audio': upload},
                                   data={'metadata': json.dumps(metadata)}, timeout=timeout)
     except httpx.HTTPError as exc:
         raise ValueError('The audio service could not be reached for word or beat timing.') from exc

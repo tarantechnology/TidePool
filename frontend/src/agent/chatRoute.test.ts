@@ -58,3 +58,38 @@ describe('chatRoute: replacement precedence', () => {
     }
   })
 })
+
+describe('chatRoute: censorship and layer scope come first', () => {
+  it('profanity beeps always go to the censorship flow, even with a pending replacement question', () => {
+    for (const ask of ['bleep the swearing', 'censor the cuss words', 'beep out curse words', 'put a bleep over the swear words', 'mute the profanity']) {
+      expect(chatRoute(ask, stems), ask).toEqual({ fx: null, sfx: false, replacement: null, censorship: true })
+      expect(chatRoute(ask, stems, 'replace the dog bark with a meow').censorship, ask).toBe(true)
+    }
+  })
+  it('an explicit censor-bleep library insert is still an insert', () => {
+    const r = chatRoute('add a censor bleep at 0:12', stems)
+    expect(r.censorship).toBeUndefined(); expect(r.sfx).toBe(true)
+  })
+  it('a separate/remove ask naming one layer goes to layer separation', () => {
+    expect(chatRoute('isolate the dog in the Music layer', stems)).toEqual({ fx: null, sfx: false, replacement: null, layer: { name: 'Music', text: 'isolate the dog' } })
+    expect(chatRoute('remove the cough from the Vocals track', stems).layer).toEqual({ name: 'Vocals', text: 'remove the cough' })
+  })
+  it('layer-scoped replacements stay replacements; effects on a named layer stay effects', () => {
+    const ask = 'replace the dog bark in the Music layer with a cat meow'
+    expect(chatRoute(ask, stems)).toEqual({ fx: null, sfx: false, replacement: ask })
+    const fx = chatRoute('add reverb on the Vocals track', stems)
+    expect(fx.layer).toBeUndefined(); expect(fx.fx?.kind).toBe('fx')
+  })
+  it('a separation naming two layers is ambiguous', () => {
+    expect(() => chatRoute('isolate the dog in the Music layer from the Vocals track', stems)).toThrow(/one source layer/)
+  })
+  it('a named library insert wins over a pending replacement question', () => {
+    const r = chatRoute('add a vine boom at 0:12', stems, 'replace the dog bark with a meow')
+    expect(r.sfx).toBe(true); expect(r.replacement === null || r.replacement === 'add a vine boom at 0:12').toBe(true)
+    expect(chatRoute('at 12', stems, 'replace the dog bark with a meow').replacement).toMatch(/at 12 seconds$/)
+  })
+  it('pitch asks without an amount are effects', () => {
+    const r = chatRoute('make the vocals higher pitch', stems)
+    expect(r.fx?.kind).toBe('fx'); expect(r.sfx).toBe(false); expect(r.replacement).toBeNull()
+  })
+})

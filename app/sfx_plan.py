@@ -239,6 +239,21 @@ _FX_WORDS = re.compile(r'\b(?:reverb|echo|delay|chorus|flanger|phaser|tremolo|di
                        r'nightcore|slowed|sped\s+up|normali[sz]e|loudness|denoise|noise\s+reduction|vocals?\s+effect)\b', re.I)
 _REPLACE = re.compile(r'\b(?:replace|replacing|swap|substitute|instead\s+of|sound\s+like|turn\s+(?:it|him|her|the\s+\w+)\s+into)\b', re.I)
 _OTHER_OPS = re.compile(r'^(?:mute|unmute|solo|isolate|separate|split|remove|delete|cut|extract|lower|raise|boost|turn|make|set|bleep|duck\s+the|normali[sz]e)\b', re.I)
+# Not library sounds: the music, silence, a layer. "drop the music at 0:30" / "add silence at the start" go to the planner.
+_NOT_A_SOUND = re.compile(r"^(?:the\s+|some\s+|a\s+|an\s+|my\s+|this\s+|that\s+)?(?:music|song|beat|instrumental|bgm|backing\s+track|silence|quiet|nothing|"
+                          r"vocals?|voice|dialog(?:ue)?|speech|audio|sound|volume|track|layer|everything|mix|bass|drums?|guitar|piano)$", re.I)
+# Profanity beeps ("bleep the swearing", "put a bleep over the curse words") belong to the censorship flow.
+_CENSORSHIP = re.compile(r'\b(?:cuss(?:ing)?|swear(?:ing|s)?|swear\s+words?|profanity|curse|curses|cursing|expletives?)\b', re.I)
+_CENSOR_VERB = re.compile(r'\b(?:beep|bleep|censor|mute|remove)\b', re.I)
+_CENSOR_NEGATED = re.compile(r"\b(?:do\s+not|don['’]?t|never)\s+(?:beep|bleep|censor|mute|remove)\b", re.I)
+
+
+def requests_censorship(text):
+    """Mirror of the editor's censorshipIntent: an explicit ask to beep profanity (the censorship preview owns it)."""
+    text = str(text or '')
+    return bool(_CENSOR_VERB.search(text) and _CENSORSHIP.search(text) and not _CENSOR_NEGATED.search(text))
+
+
 _ORD = {'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5, 'last': -1, 'final': -1}
 _SPEECH = r"(?:says?|said|saying|goes|yells?|yelled|shouts?|shouted|screams?|screamed|whispers?|mentions?|asks?|asked|utters?)"
 _SPEAKER = r"(?:(?:he|she|they|i|you|we|someone|somebody|anyone|everyone|the\s+(?:guy|girl|man|woman|kid|host|speaker|narrator|teacher|dude))\s+)?"
@@ -397,7 +412,7 @@ def rule_plan(prompt):
     """Offline parse of insert requests. Returns an insert plan, a clarify, or None when the
     prompt is not an insert request (so other planners can handle it)."""
     text = ' '.join(str(prompt).strip().split()).rstrip('.!?')
-    if not text or _REPLACE.search(text):
+    if not text or _REPLACE.search(text) or _CENSORSHIP.search(text):
         return None
     text, quotes = _protect_quotes(text)
     body, has_verb = _strip_lead(text)
@@ -448,6 +463,8 @@ def rule_plan(prompt):
             earlier = next((j['anchor'] for j in reversed(inserts[:i]) if j['anchor']), None)
             insert['anchor'] = later or earlier
     missing = next((i for i in inserts if i['_entry'] is None), None)
+    if missing and not matched and all(_NOT_A_SOUND.match(i['sfx_query'].strip()) for i in inserts):
+        return None
     if missing:
         hint = f" Closest: {', '.join(missing['_suggestions'])}." if missing['_suggestions'] else ''
         return clarify(f"I don't have a \"{missing['sfx_query']}\" sound in the library.{hint} Try one of those, or describe it differently.",

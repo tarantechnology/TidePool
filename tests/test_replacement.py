@@ -242,6 +242,76 @@ def test_process_append_groups_same_explicit_sound(client,tmp_path,monkeypatch):
     assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
 
 
+def test_split_selected_shifted_layer_preserves_other_layers_and_undo(client,tmp_path,monkeypatch):
+    import numpy as np
+    from app.core import connect
+    from app.media import read_wav
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,freq,duration in [(audio,440,4),(fx,800,.5)]:
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency={freq}:duration={duration}','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('fx.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'gong','source_prompt':'sound','mode':'add','intervals':[{'start':1.5,'end':1.51},{'start':3,'end':3.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed';assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();chosen=next(s for s in before if s['role']=='effect')
+    assert client.patch(f'/api/projects/{pid}/stems/{chosen["id"]}',headers=h,json={'volume':.6,'automation':[{'time':0,'value':.8}]}).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();chosen=next(s for s in before if s['id']==chosen['id'])
+    with connect() as db:original_path=db.execute('select path from stems where id=?',(chosen['id'],)).fetchone()[0]
+    original,rate=read_wav(original_path);start=chosen['start_offset']+.05
+    url=f'/api/projects/{pid}/candidates';body={'source_stem_id':chosen['id'],'prompt':'ring','processing_interval':{'start':start,'end':start+.2}}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json={**body,'source_stem_id':'missing'}).status_code==404
+    assert client.post(url,headers=h,json={**body,'processing_interval':{'start':0,'end':.1}}).status_code==422
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['source_kind']=='selected-layer' and job['provenance']['source_layer_id']==chosen['id']
+    assert job['provenance']['processing_interval']['start']==pytest.approx(start)
+    assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json();parent=next(s for s in after if s['id']==chosen['id']);child=next(s for s in after if s.get('source_stem_id')==chosen['id'])
+    assert parent['role']=='effect' and parent['volume']==child['volume']==.6 and parent['start_offset']==child['start_offset']==chosen['start_offset']
+    assert parent['automation']==child['automation']==chosen['automation']
+    assert {s['id'] for s in before}-{chosen['id']} <= {s['id'] for s in after}
+    with connect() as db:
+        paths={r['id']:r['path'] for r in db.execute('select id,path from stems where project_id=?',(pid,))}
+    a,_=read_wav(paths[parent['id']]);b,_=read_wav(paths[child['id']]);assert np.max(np.abs(original-a-b))<1e-4
+    assert client.post('/api/candidates/'+cid+'/undo',headers=h).status_code==200
+    assert {s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}=={s['id'] for s in before}
+    # Replacement uses the same selected shifted source, with events in project time.
+    request={'source_stem_id':chosen['id'],'asset_id':aid,'effect_label':'clap','source_prompt':'ring','mode':'replace','intervals':[{'start':start,'end':start+.2}]}
+    response=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=request);assert response.status_code==202,response.text
+    rid=response.json()['candidate_id'];job=wait(client,rid,h);assert job['status']=='completed',job
+    assert job['provenance']['source_layer_id']==chosen['id'] and all(start<=t<=start+.2 for t in job['provenance']['peak_times'])
+    event=job['provenance']['events'][0]
+    adjust=client.post('/api/candidates/'+rid+'/replacement-adjust',headers=h,json={'operation':'toggle','event_id':event['id'],'enabled':False}).json()['candidate_id']
+    assert wait(client,adjust,h)['status']=='completed'
+    assert client.post('/api/candidates/'+adjust+'/apply',headers=h).status_code==200
+    assert client.post('/api/candidates/'+adjust+'/undo',headers=h).status_code==200
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    text=f'replace ring in the gong layer with a clap at {start:.6f} seconds'
+    response=client.post(f'/api/projects/{pid}/automatic-replacement',headers=h,json={'request':text})
+    assert response.status_code==202,response.text
+    auto=wait(client,response.json()['candidate_id'],h);assert auto['status']=='completed',auto
+    assert auto['provenance']['source_layer_id']==chosen['id'] and all(t>=chosen['start_offset'] for t in auto['provenance']['peak_times'])
+    # Even a backend with an aggressively suppressed remainder must not damage
+    # the chosen layer when creating an unedited split.
+    import app.candidates as candidates
+    def suppressed(source,directory,payload,report=None):
+        paths=[]
+        for name,gain in [('ring',.5),('residual',0)]:
+            path=directory/(name+'-suppressed-test.wav')
+            subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-af',f'volume={gain}','-c:a','pcm_f32le',str(path)],check=True);paths.append({'name':name,'path':path})
+        return paths
+    monkeypatch.setattr(candidates,'separate',suppressed)
+    res=client.post(url,headers=h,json={'source_stem_id':chosen['id'],'prompt':'ring'});assert res.status_code==202,res.text
+    whole=res.json()['candidate_id'];assert wait(client,whole,h)['status']=='completed';assert client.post('/api/candidates/'+whole+'/apply',headers=h).status_code==200
+    rows=client.get(f'/api/projects/{pid}/stems',headers=h).json();child=next(s for s in rows if s.get('source_stem_id')==chosen['id'])
+    with connect() as db:paths={r['id']:r['path'] for r in db.execute('select id,path from stems where project_id=?',(pid,))}
+    a,_=read_wav(paths[chosen['id']]);b,_=read_wav(paths[child['id']]);assert np.max(np.abs(original-a-b))<1e-4
+    assert client.post('/api/candidates/'+whole+'/undo',headers=h).status_code==200
+
+
 def test_group_effects_preview_apply_and_undo(client,tmp_path):
     p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
     audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'

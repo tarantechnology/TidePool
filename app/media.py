@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -45,6 +46,32 @@ def fake_music_stems(audio, directory, requested, report):
     return results
 
 
+# Stems come back as 16-bit PCM unless a caller asks otherwise: ample for editing, half the transfer of float32.
+STEM_OUTPUT_FORMAT = 'pcm_s16le'
+
+
+
+@contextmanager
+def service_upload(audio):
+    """(filename, file, content type) for posting audio to the service: a fast lossless FLAC encode
+    (a fraction of the float WAV through the tunnel; the service decodes any FFmpeg format).
+    Falls back to the original file when FFmpeg cannot encode it."""
+    import tempfile
+    handle, name = tempfile.mkstemp(suffix='.flac'); os.close(handle)
+    flac = Path(name)
+    try:
+        try:
+            run('ffmpeg', '-v', 'error', '-y', '-i', str(audio), '-vn', '-c:a', 'flac', '-compression_level', '1', str(flac))
+            encoded = flac.stat().st_size > 0
+        except Exception:
+            encoded = False
+        source, filename, ctype = (flac, 'audio.flac', 'audio/flac') if encoded else (Path(audio), 'audio' + (Path(audio).suffix or '.wav'), 'audio/wav')
+        with open(source, 'rb') as f:
+            yield (filename, f, ctype)
+    finally:
+        flac.unlink(missing_ok=True)
+
+
 def route(audio, source_kind):
     """The audio service's routing decision for this audio, without separating anything."""
     if os.getenv('INFERENCE_ADAPTER', 'http') == 'fake':
@@ -57,8 +84,8 @@ def route(audio, source_kind):
     if not url.netloc: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
     metadata = {'prompts':[], 'hints':{'source_kind':source_kind}}
     try:
-        with open(audio, 'rb') as f:
-            response = httpx.post(urlunsplit((url.scheme,url.netloc,'/v1/route','','')), files={'audio':('audio.wav',f,'audio/wav')},
+        with service_upload(audio) as upload:
+            response = httpx.post(urlunsplit((url.scheme,url.netloc,'/v1/route','','')), files={'audio':upload},
                                   data={'metadata':json.dumps(metadata)}, timeout=float(os.getenv('ROUTE_TIMEOUT_SECONDS','120')))
     except httpx.HTTPError as exc: raise InferenceError('Audio service routing is unavailable') from exc
     if response.is_error: raise InferenceError(f'Audio service routing failed (HTTP {response.status_code})')
@@ -95,9 +122,12 @@ def separate(audio, directory, payload, report=None):
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
     url = os.getenv('SAM_AUDIO_SERVICE_URL', 'http://127.0.0.1:8001/separate')
     if not url: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
+    # 16-bit stems unless the caller chose a format (same length and rate as float, so duration checks still hold).
+    options = payload.get('options') if isinstance(payload.get('options'), dict) else {}
+    if not options.get('output_format'): payload = {**payload, 'options': {**options, 'output_format': STEM_OUTPUT_FORMAT}}
     try:
-        with open(audio, 'rb') as f:
-            response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
+        with service_upload(audio) as upload:
+            response = httpx.post(url, files={'audio': upload}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
     except httpx.TimeoutException as exc:
         raise RuntimeError('Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS') from exc
     if response.is_error:

@@ -1,0 +1,105 @@
+# Profanity list for /v1/words ("bleep the swear words"). Override with AUDIO_WORDS_PROFANITY_FILE.
+#
+# One entry per line, matched against ONE transcribed word at a time (word boundaries only,
+# so "assistant" never matches "ass" and "Scunthorpe" never matches anything):
+#   word          the whole word, case-insensitive, surrounding punctuation ignored
+#   prefix:stem   any word that starts with the stem (fuck -> fucking, fucker, fucked)
+# Censored partials that Whisper sometimes writes ("f***", "sh*t") are matched only when they
+# are listed literally, as below. Lines starting with # are comments.
+#
+# The list is deliberately limited to swear words a creator would expect a "bleep" to catch.
+# Slurs are included so they are never left audible after a "bleep the swearing" request.
+
+prefix:fuck
+prefix:motherfuck
+prefix:fck
+fuk
+fuking
+fukin
+effing
+prefix:shit
+prefix:bullshit
+prefix:horseshit
+prefix:dipshit
+shite
+prefix:bitch
+prefix:sonofabitch
+ass
+asses
+asshole
+assholes
+arse
+arsehole
+arseholes
+jackass
+dumbass
+smartass
+badass
+fatass
+bastard
+bastards
+damn
+damned
+dammit
+damnit
+goddamn
+goddamned
+goddammit
+goddamnit
+hell
+crap
+crappy
+prefix:cunt
+dick
+dicks
+dickhead
+dickheads
+cock
+cocks
+cocksucker
+cocksuckers
+prefix:pussy
+pussies
+prefix:piss
+prefix:wank
+twat
+twats
+prick
+pricks
+bollocks
+bugger
+slut
+sluts
+slutty
+whore
+whores
+prefix:douche
+tits
+titties
+prefix:jerkoff
+# Slurs.
+prefix:nigger
+prefix:nigga
+prefix:faggot
+fag
+fags
+retard
+retards
+retarded
+# Censored partials as transcribed.
+f*ck
+f**k
+f***
+f***ing
+f**king
+f*cking
+fu*k
+s**t
+sh*t
+s***
+b***h
+b*tch
+a**
+a**hole
+c**t
+d**n

@@ -38,7 +38,7 @@ TidePool pairs an **audio separation model** (AudioSep) with **computer vision m
 | **Sound replacement** | Finds repeated sounds and replaces or augments them with uploaded or generated effects, each on its own layer. |
 | **Effects** | Per-layer EQ and compression; time-ranged deepen, impact, disorient and muffle; whole-mix creative treatments. |
 | **Moon pull** | Rules that give a sound a consistent role across the clip, driven by dialogue, marked moments or loudness. |
-| **Profanity filtering** | Beeps or replaces profanity using word-timed transcription. |
+| **Text-based filtering** | Transcribes speech with word-level timing so edits can target what is said: beep or replace profanity, add a sound whenever a chosen word is spoken, or drive Moon pull rules from dialogue. |
 | **Music stems** | Splits a song into vocals, drums, bass, guitar, piano and other. |
 | **Outflow** · export | MP4 with the edited audio and all video cuts, trims and rotation applied, or WAV/MP3 audio. |
 | **Projects** | Project library, save, full undo/redo history, video rotation and a responsive phone layout. |
@@ -116,7 +116,7 @@ For a single Linux NVIDIA host running every component, use `compose.cloud.yaml`
 | --- | --- |
 | Natural-language commands | Set `OPENAI_API_KEY` in `./.env` (backend only) |
 | Object detection | Installed by `scripts/dev_setup.sh`; YOLO weights (~6 MB) download on first use |
-| Profanity filtering | Local faster-whisper runtime: [setup](INTEGRATION.md#local-transcription-and-profanity-beeps) |
+| Text-based filtering | Local faster-whisper runtime: [setup](INTEGRATION.md#local-transcription-and-profanity-beeps) |
 | Sound effect generation | Stable Audio CLI via `SOUNDCANVAS_SFX_CLI`: [setup](INTEGRATION.md#add-or-replace-sound-effects) |
 | Music stem splitting | `AUDIO_STEM_SPLITTER=demucs` on the audio service: [setup](INTEGRATION.md#music-stems-song--one-track-per-instrument) |
 
@@ -168,7 +168,7 @@ The context menu offers the same actions plus **Trim to selection**. Video edits
 | Sound tied to an object | `every time person 5 appears, play a gong sound` |
 | Creative treatment | `make it more dramatic` |
 | Trim and export | `trim 3 sec to 4 sec and export as mp4` |
-| Profanity filtering | `beep the swear words` |
+| Text-based filtering | `beep the swear words` · `add a gong whenever the word "hello" is said` |
 
 Detection and separation are approximate; review each preview before applying it.
 
@@ -215,7 +215,7 @@ The language model receives only the command, layer names and timeline state, ne
 | **CLAP**, **PANNs** Cnn14 | Sound tagging, verification and song/scene routing | GPU host |
 | **SAM Audio** (small, large) | Alternative separator with time and visual prompting | GPU host, optional |
 | **YAMNet** | Sound event timing | Backend CPU, optional |
-| **faster-whisper** | Word-timed transcription | Backend, optional |
+| **faster-whisper** | Word-timed transcription for text-based filtering | Backend, optional |
 | **Stable Audio 3 Small SFX** | Sound effect generation | Configured host, optional |
 
 ### Vision
@@ -241,7 +241,7 @@ The language model receives only the command, layer names and timeline state, ne
 | Path | Contents |
 | --- | --- |
 | `frontend/` | React and TypeScript editor built with Vite: UI components, playback engine, command routing, timeline and undo state, Moon pull rules, pages |
-| `app/` | FastAPI backend: routes, job worker, FFmpeg media and export, command planner, previews, undo checkpoints, sound replacement, effects, Moon pull, profanity filtering, SAM bridge |
+| `app/` | FastAPI backend: routes, job worker, FFmpeg media and export, command planner, previews, undo checkpoints, sound replacement, effects, Moon pull, text-based filtering, SAM bridge |
 | `audio-service/` | GPU inference service: AudioSep, SAM Audio, Explode, music stems and tagging ([README](audio-service/README.md)) |
 | `vision/` | Detection, tracking and mask pipeline, `soundcanvas_cv` ([README](vision/README.md)) |
 | `scripts/` | Local setup, service launcher, GPU host setup, demo and benchmark tooling |

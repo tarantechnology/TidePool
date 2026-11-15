@@ -1,4 +1,4 @@
-# SoundCanvas audio inference service (Person 1)
+# TidePool audio inference service (Person 1)
 
 AudioSep text separation by default, with optional Meta SAM Audio text/span/visual
 separation, exposed as a small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
@@ -205,7 +205,7 @@ and removes a RoBERTa buffer that newer transformers no longer stores. To prepar
 checkout, follow upstream's environment and checkpoint instructions, then apply the patch:
 
 ```bash
-# Run from the SoundCanvas repository root; do not overwrite an existing checkout.
+# Run from the TidePool repository root; do not overwrite an existing checkout.
 git clone https://github.com/Audio-AGI/AudioSep.git /path/to/AudioSep
 git -C /path/to/AudioSep checkout 944583f18b84589dc965de3ad77525c945334252
 git -C /path/to/AudioSep apply "$PWD/audio-service/patches/audiosep-checkpoint-compat.patch"

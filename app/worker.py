@@ -251,7 +251,7 @@ def work_once():
             export(stems,p['original'],path,payload['format'],payload['include_video'],rotation=payload.get('rotation',0),trim=payload.get('trim'),clips=payload.get('clips'))
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'path':str(path)}),job['id']))
         if job['kind']=='process':
-            try: provider.send(pid, 'Your SoundCanvas video is ready to edit.')
+            try: provider.send(pid, 'Your TidePool video is ready to edit.')
             except Exception as exc: event('notification_failed', job_id=job['id'], error=str(exc))
         event('job_completed',job_id=job['id'])
     except Exception as e:

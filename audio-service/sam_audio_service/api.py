@@ -77,7 +77,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         engine.unload()
         speech.unload()
 
-    app = FastAPI(title="SoundCanvas Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
+    app = FastAPI(title="TidePool Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
     app.state.settings, app.state.engine, app.state.speech, app.state.generator = settings, engine, speech, generator
     demucs = DemucsVocals()
     voice_encoder = VoiceEncoder()

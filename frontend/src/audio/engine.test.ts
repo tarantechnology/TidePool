@@ -135,6 +135,49 @@ describe('AudioEngine', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
+  it('plays the edited clips automatically, including repeats and restart', async () => {
+    vi.useFakeTimers()
+    try {
+      engine.setSequence([{start:0,end:3},{start:7,end:10},{start:0,end:2}])
+      expect(engine.timelineDuration).toBe(8)
+      await engine.play()
+      expect(made.sources.at(-1)?.startArgs).toEqual([0,0,3])
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(engine.getTime()).toBe(7)
+      expect(engine.getTimelineTime()).toBe(3)
+      expect(made.sources.at(-1)?.startArgs).toEqual([0,7,3])
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(engine.getTime()).toBe(0)
+      expect(engine.getTimelineTime()).toBe(6)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(engine.isPlaying()).toBe(false)
+      expect(engine.getTimelineTime()).toBe(8)
+      await engine.play()
+      expect(engine.getTime()).toBe(0)
+      engine.stop()
+      expect(engine.getTimelineTime()).toBe(0)
+    } finally { engine.dispose(); vi.useRealTimers() }
+  })
+  it('restarts a finished sequence even when clip lengths do not sum exactly', async () => {
+    vi.useFakeTimers()
+    try {
+      // These lengths add up to 3.788 one way and 3.7880000000000003 the other.
+      engine.setSequence([{start:12.464,end:13.102},{start:0.802,end:3.421},{start:10.067,end:10.598}])
+      await engine.play()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(engine.isPlaying()).toBe(false)
+      await engine.play()
+      expect(engine.isPlaying()).toBe(true)
+      expect(engine.getTimelineTime()).toBe(0)
+    } finally { engine.dispose(); vi.useRealTimers() }
+  })
+  it('seeks in edited time to the right repeated source occurrence',()=>{
+    engine.setSequence([{start:0,end:3},{start:7,end:10},{start:0,end:2}])
+    engine.seekTimeline(6.5)
+    expect(engine.getTime()).toBe(.5)
+    expect(engine.getTimelineTime()).toBe(6.5)
+    engine.dispose()
+  })
   it('reports the measured duration of each stem', async () => {
     const result = await engine.replaceStems([stem('a', 7)])
     expect(result?.stems[0].duration).toBe(7)

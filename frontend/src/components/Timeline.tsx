@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent, PointerEvent } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from 'react'
 import { hasStepKeyframes } from '../api/backend'
 import type { AudioEngine } from '../audio/engine'
-import { isAudible, MAX_GAIN, MAX_KEYFRAMES, stemStart } from '../edits'
+import { gainToPos, isAudible, MAX_KEYFRAMES, posToGain, spliceAutomation, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
 import { FEATURES } from '../features'
+import { removedSourceRanges } from '../state/clipSequence'
+import type { SourceClip } from '../state/clipSequence'
 import { groupActions, timelineRows } from '../state/effectGroups'
 
 const ACCENT = '#5b9be3'
@@ -30,6 +32,23 @@ interface Props {
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
+  /** Rename a layer; absent when layers are not project stems. */
+  onRename?: (stemId: string, name: string) => Promise<void>
+  onDelete?: (stemId: string, fold: boolean) => Promise<void>
+  residualLabel?: string | null
+  /** The residual itself can't be deleted. */
+  residualId?: string | null
+  /** Shown in place of the Tide chart label, e.g. the Tide chart / Mixer switch. */
+  header?: ReactNode
+  canTrim: boolean
+  onKeepRange: (start:number, end:number) => string
+  onSplitRange: (start:number, end:number) => string
+  onCutRange: (start:number, end:number) => string
+  exportClips: SourceClip[]
+  canUndoClip: boolean
+  canRedoClip: boolean
+  onUndoClip: () => void
+  onRedoClip: () => void
 }
 
 function tickStep(duration: number): number {
@@ -76,7 +95,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
       className="absolute z-20 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none items-center justify-center active:cursor-grabbing"
       style={{
         left: `${(keyframe.t / duration) * 100}%`,
-        top: `${(1 - keyframe.value / MAX_GAIN) * 100}%`,
+        top: `${(1 - gainToPos(keyframe.value)) * 100}%`,
       }}
       onPointerDown={(e) => {
         e.stopPropagation()
@@ -107,9 +126,15 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, onRename, onDelete, residualLabel = null, residualId = null, header, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [selecting, setSelecting] = useState(false)
+  const [selection, setSelection] = useState<{stemId:string;start:number;end:number}|null>(null)
+  const [menu, setMenu] = useState<{x:number;y:number}|null>(null)
+  const draggingRange = useRef<{stemId:string;start:number}|null>(null)
+  const previewFrame = useRef<number|null>(null)
+  useEffect(() => () => { if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current) }, [])
   // Lane heights. By default the lanes share the timeline's height (fit). The size slider sets
   // every lane at once, and dragging a lane's bottom edge sizes just that lane.
   const scroller = useRef<HTMLDivElement>(null)
@@ -152,6 +177,76 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
     engine.seek(ratio * duration)
   }
+  const timeFrom = (e: PointerEvent<HTMLDivElement>) => {
+    const rect=e.currentTarget.getBoundingClientRect()
+    return rect.width > 0 ? Math.min(duration,Math.max(0,(e.clientX-rect.left)/rect.width*duration)) : 0
+  }
+  const selectedTrack = selection && tracks.find(t => t.stemId === selection.stemId)
+  const selectedStem = selection && stems.find(s => s.id === selection.stemId)
+  const removed = removedSourceRanges(exportClips,duration)
+  const validSelection = Boolean(selection && selectedTrack && selectedStem && selection.end-selection.start >= 0.01)
+  const editSelection = (scale:number) => {
+    if (!selection || !selectedTrack || !selectedStem || !validSelection) return
+    const next=spliceAutomation(selectedTrack.automation,scale === 0 ? {level:0} : {scale},selection.start,selection.end,duration)
+    if (next.length > MAX_KEYFRAMES) { setLimitMessage(`That edit exceeds the ${MAX_KEYFRAMES}-keyframe limit.`); return }
+    onAction({type:'set_automation',stemId:selectedTrack.stemId,keyframes:next})
+    setLimitMessage(`${scale === 0 ? 'Muted' : 'Lowered'} ${selectedStem.label} in the selected range. Use Undo to restore it.`)
+  }
+  const splitSelected = () => {
+    setMenu(null)
+    if (!selection) return
+    try { setLimitMessage(onSplitRange(selection.start,selection.end)) } catch (e) { setLimitMessage(e instanceof Error ? e.message : String(e)) }
+  }
+  const cutSelected = () => {
+    setMenu(null)
+    if (!selection || !validSelection || !canTrim) return
+    try { setLimitMessage(onCutRange(selection.start,selection.end)); setSelection(null) } catch (e) { setLimitMessage(e instanceof Error ? e.message : String(e)) }
+  }
+  useEffect(() => {
+    const key=(event:KeyboardEvent) => {
+      if (event.key === 'Escape') { setMenu(null); return }
+      if ((event.key !== 'Delete' && event.key !== 'Backspace') || event.metaKey || event.ctrlKey || event.altKey || event.repeat || !selection || !validSelection || !canTrim) return
+      const target=event.target as HTMLElement | null
+      if (target?.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(target?.tagName ?? '')) return
+      event.preventDefault()
+      cutSelected()
+    }
+    window.addEventListener('keydown',key)
+    return () => window.removeEventListener('keydown',key)
+  })
+  const previewSelection = async () => {
+    if (!selection || !validSelection) return
+    if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current)
+    engine.pause(); engine.seek(selection.start)
+    try { await engine.play() } catch (e) { setLimitMessage(`Playback failed: ${String(e)}`); return }
+    const stopAt=selection.end
+    const tick=() => {
+      if (!engine.isPlaying()) { previewFrame.current=null; return }
+      if (engine.getTime() >= stopAt) { engine.pause(); engine.seek(stopAt); previewFrame.current=null; return }
+      previewFrame.current=requestAnimationFrame(tick)
+    }
+    previewFrame.current=requestAnimationFrame(tick)
+  }
+  const previewSequence = async () => {
+    if (!exportClips.length) return
+    if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current)
+    const sequence=exportClips.map(clip => ({...clip}))
+    let index=0
+    engine.pause(); engine.seek(sequence[0].start)
+    try { await engine.play() } catch (e) { setLimitMessage(`Playback failed: ${String(e)}`); return }
+    const tick=() => {
+      if (!engine.isPlaying()) { previewFrame.current=null; return }
+      const current=sequence[index], time=engine.getTime()
+      if (time < current.start - .2) { previewFrame.current=null; return }
+      if (time >= current.end) {
+        index++
+        if (index >= sequence.length) { engine.pause(); engine.seek(current.end); previewFrame.current=null; return }
+        engine.seek(sequence[index].start)
+      }
+      previewFrame.current=requestAnimationFrame(tick)
+    }
+    previewFrame.current=requestAnimationFrame(tick)
+  }
 
   const setAutomation = (stemId: string, keyframes: Keyframe[], coalesceKey?: string) =>
     onAction({ type: 'set_automation', stemId, keyframes }, coalesceKey)
@@ -180,12 +275,20 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
 
   return (
     <div ref={scroller} className="flex min-h-0 flex-1 flex-col [--hdr:15rem] max-md:[--hdr:8.5rem] overflow-x-hidden overflow-y-auto">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-xs">
+        <button type="button" aria-pressed={selecting} onClick={() => {setSelecting(!selecting);setLimitMessage('')}} className={`rounded border px-2 py-1 ${selecting ? 'border-accent bg-accent-soft text-accent' : 'border-line'}`}>Select range</button>
+        <span className="text-muted">{validSelection && selection && selectedStem ? `${selectedStem.label}: ${selection.start.toFixed(2)}–${selection.end.toFixed(2)}s` : selecting ? 'Drag across a sound wave to select a range.' : 'Select a range to edit part of a sound.'}</span>
+        {exportClips.length > 0 && <button type="button" className="rounded border border-line px-2 py-1" onClick={() => void previewSequence()}>Play edited sequence</button>}
+        {(canUndoClip || canRedoClip) && <><button type="button" disabled={!canUndoClip} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={onUndoClip}>Undo clip edit</button><button type="button" disabled={!canRedoClip} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={onRedoClip}>Redo clip edit</button></>}
+        {validSelection && <><button type="button" className="rounded border border-line px-2 py-1" onClick={() => void previewSelection()}>Play selection</button><button type="button" disabled={!canTrim} title="Remove this section from the entire video and close the gap" className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={cutSelected}>Delete selection</button><button type="button" disabled={!canTrim} title="Split the video and its audio at the selection boundaries" className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={splitSelected}>Split selection</button><button type="button" disabled={!canTrim} title={canTrim ? 'Keep this range when exporting' : 'Upload media first'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => {if (!selection) return; try {setLimitMessage(onKeepRange(selection.start,selection.end))} catch(e) {setLimitMessage(e instanceof Error ? e.message : String(e))}}}>Keep selection</button><button type="button" disabled={!syncing} title={syncing ? 'Mute this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0)}>Mute selection</button><button type="button" disabled={!syncing} title={syncing ? 'Lower this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0.3)}>Lower selection</button><button type="button" className="rounded border border-line px-2 py-1" onClick={() => {setSelection(null);setMenu(null)}}>Clear selection</button></>}
+        {validSelection && !syncing && <span className="text-muted">Separate a sound first to mute or lower just that layer.</span>}
+      </div>
       {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
       <div className="relative min-h-full">
         {/* Ruler */}
         <div className={`${COLS} h-8 border-b border-line bg-tint/[0.02]`}>
           <div className="flex items-center gap-2 border-r border-line px-4 max-md:px-2">
-            <span className="font-mono max-md:hidden text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>
+            {header ?? <span className="font-mono max-md:hidden text-[10px] uppercase tracking-wider text-subtle">{FEATURES.timeline}</span>}
             <label className="ml-auto flex items-center gap-1.5 max-md:ml-0" title="Layer height">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-subtle" aria-hidden="true"><path d="M2 5h12M2 11h12" /></svg>
               <input type="range" aria-label="Layer height" min={LANE_MIN} max={LANE_MAX} step={2}
@@ -227,7 +330,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                 <div className="flex items-center gap-1"><button type="button" className="text-accent" aria-label={`${expanded.has(row.id)?'Collapse':'Expand'} ${row.label}`} aria-expanded={expanded.has(row.id)} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(row.id))next.delete(row.id);else next.add(row.id);return next})}>{expanded.has(row.id)?'▾':'▸'}</button><span className="min-w-0 flex-1 truncate text-sm font-medium">{row.label} · {row.stems.length}</span>
                   <button type="button" aria-label={`${muted?'Unmute':'Mute'} all ${row.label}`} aria-pressed={muted} className="rounded border border-line px-1 text-xs" onClick={()=>onActions(groupActions(tracks,ids,{type:'mute',value:!muted}))}>M</button>
                   <button type="button" aria-label={`${solo?'Unsolo':'Solo'} all ${row.label}`} aria-pressed={solo} className="rounded border border-line px-1 text-xs" onClick={()=>onActions(groupActions(tracks,ids,{type:'solo',value:!solo}))}>S</button></div>
-                <label className="flex items-center gap-2 text-xs text-muted">Volume<input aria-label={`${row.label} group volume`} className="fader min-w-0 flex-1" type="range" min={0} max={MAX_GAIN} step={.01} value={gain} onChange={e=>onActions(groupActions(tracks,ids,{type:'gain',value:Number(e.target.value)}),`group-gain:${row.id}`)}/></label>
+                <label className="flex items-center gap-2 text-xs text-muted">Volume<input aria-label={`${row.label} group volume`} className="fader min-w-0 flex-1" type="range" min={0} max={1} step={0.001} value={gainToPos(gain)} onChange={e=>onActions(groupActions(tracks,ids,{type:'gain',value:posToGain(Number(e.target.value))}),`group-gain:${row.id}`)}/></label>
               </div>
               <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">{row.stems.map(stem=>{const peaks=engine.getPeaks(stem.id),track=tracks.find(t=>t.stemId===stem.id);if(!peaks||!track)return null;const interval=stem.soundInterval;const clipPath=interval && stem.duration>0 ? `inset(0 ${Math.max(0,100-100*interval.end/stem.duration)}% 0 ${Math.max(0,100*interval.start/stem.duration)}%)` : undefined;return <div key={stem.id} className="absolute inset-y-0" style={{left:`${(stemStart(stem)/duration)*100}%`,width:`${(stem.duration/duration)*100}%`,clipPath}}><Waveform peaks={peaks} color={ACCENT} dimmed={!isAudible(tracks,track)}/></div>})}</div>
             </div>
@@ -251,6 +354,10 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                 audible={audible}
                 onAction={onAction}
                 onKindChange={(kind) => onKindChange(stem.id, kind)}
+                onRename={onRename ? (name) => onRename(stem.id, name) : undefined}
+                onDelete={onDelete ? (fold) => onDelete(stem.id, fold) : undefined}
+                residualLabel={residualLabel}
+                residualId={residualId}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
                 clipActions={stem.isEffectClip ? <span className="flex gap-1"><button type="button" aria-label={`Move ${stem.label} earlier`} title="Move 0.1 seconds earlier" onClick={()=>onClipEdit(stem.id,'move',Math.max(0,stemStart(stem)-.1))}>←</button><button type="button" aria-label={`Move ${stem.label} later`} title="Move 0.1 seconds later" onClick={()=>onClipEdit(stem.id,'move',Math.min(Math.max(0,duration-stem.duration),stemStart(stem)+.1))}>→</button><button type="button" aria-label={`Delete ${stem.label}`} title="Remove this effect clip" onClick={()=>onClipEdit(stem.id,'delete')}>×</button></span> : undefined}
@@ -288,7 +395,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                   <>
                     <div
                       className="absolute right-0 left-0 border-t border-dashed border-tint/20"
-                      style={{ top: `${(1 - 1 / MAX_GAIN) * 100}%` }}
+                      style={{ top: `${(1 - gainToPos(1)) * 100}%` }}
                     />
                     <svg
                       className="pointer-events-none absolute inset-0 h-full w-full"
@@ -301,7 +408,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                         strokeWidth={1.5}
                         vectorEffect="non-scaling-stroke"
                         points={track.automation
-                          .map((k) => `${(k.t / duration) * 100},${(1 - k.value / MAX_GAIN) * 100}`)
+                          .map((k) => `${(k.t / duration) * 100},${(1 - gainToPos(k.value)) * 100}`)
                           .join(' ')}
                       />
                     </svg>
@@ -314,15 +421,24 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
 
         {/* Scrub layer + playhead, aligned to the lane column (15rem header) */}
         <div
-          className="absolute top-0 right-0 bottom-0 left-[var(--hdr)] cursor-col-resize touch-none"
+          className={`absolute top-0 right-0 bottom-0 left-[var(--hdr)] touch-none ${selecting ? 'cursor-crosshair' : 'cursor-col-resize'}`}
+          onContextMenu={e => { const lane=(e.target as HTMLElement).closest<HTMLElement>('[data-lane]'); if (!validSelection || !selection || lane?.dataset.lane !== selection.stemId) return; e.preventDefault(); setMenu({x:e.clientX,y:e.clientY}) }}
           onPointerDown={(e) => {
+            setMenu(null)
+            if (e.button !== 0 || e.ctrlKey) return
             e.currentTarget.setPointerCapture(e.pointerId)
+            const lane=(e.target as HTMLElement).closest<HTMLElement>('[data-lane]')
+            if (selecting && lane?.dataset.lane) { const start=timeFrom(e); draggingRange.current={stemId:lane.dataset.lane,start}; setSelection({stemId:lane.dataset.lane,start,end:start}); return }
             seekFrom(e)
           }}
           onPointerMove={(e) => {
-            if (e.buttons & 1) seekFrom(e)
+            if (!(e.buttons & 1)) return
+            if (draggingRange.current) {const {stemId,start}=draggingRange.current, t=timeFrom(e); setSelection({stemId,start:Math.min(start,t),end:Math.max(start,t)}); return}
+            seekFrom(e)
           }}
-          onDoubleClick={addKeyframeAt}
+          onPointerUp={() => {draggingRange.current=null}}
+          onPointerCancel={() => {draggingRange.current=null; setSelection(null)}}
+          onDoubleClick={e => {if (!selecting) addKeyframeAt(e)}}
         >
           <Playhead engine={engine} duration={duration} />
           {/* Keyframe layer: one box per lane, matching the track rows above. */}
@@ -334,6 +450,9 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
               if (!track || !engine.getPeaks(stem.id)) return null
               return (
                 <div key={stem.id} data-lane={stem.id} className="relative border-b border-transparent" style={{ height: laneHeight(stem.id) }}>
+                  {removed.map((range,i) => <div key={`removed:${i}`} aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-x border-red-500/60 bg-red-500/20" style={{left:`${range.start/duration*100}%`,width:`${(range.end-range.start)/duration*100}%`}} />)}
+                  {exportClips.flatMap((clip,i) => [clip.start,clip.end].filter(t => t > 0 && t < duration).map((t,j) => <div key={`${i}:${j}`} aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-l border-dashed border-amber-600" style={{left:`${t/duration*100}%`}} />))}
+                  {selection?.stemId === stem.id && <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-x-2 border-accent bg-accent/25" style={{left:`${selection.start/duration*100}%`,width:`${(selection.end-selection.start)/duration*100}%`}} />}
                   {track.automation.map((k, idx) => (
                     <KeyframeMarker
                       key={idx}
@@ -355,6 +474,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
           </div>
         </div>
       </div>
+      {menu && validSelection && <div role="menu" style={{position:'fixed',left:menu.x,top:menu.y,zIndex:100}} className="rounded-lg border border-line bg-surface p-1 shadow-lg text-xs"><button role="menuitem" type="button" disabled={!canTrim} className="block rounded px-3 py-2 hover:bg-accent-soft disabled:opacity-40" onClick={cutSelected}>Delete selection from video</button><button role="menuitem" type="button" disabled={!canTrim} className="block rounded px-3 py-2 hover:bg-accent-soft disabled:opacity-40" onClick={splitSelected}>Split selection</button><button role="menuitem" type="button" className="block rounded px-3 py-2 hover:bg-accent-soft" onClick={() => setMenu(null)}>Close</button></div>}
     </div>
   )
 }

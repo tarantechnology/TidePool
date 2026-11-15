@@ -234,10 +234,11 @@ def work_once():
                 db.execute("UPDATE jobs SET status='completed',stage='completed',progress=100,output=? WHERE id=?",(json.dumps({'analyzed_frames':metadata['analyzed_frames'],'processed_duration_seconds':metadata['processed_duration_seconds'],'prepared':prepared}),job['id']))
         else:
             with connect() as db: stems=[dict(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
-            if not stems: raise ValueError('No stems available')
+            if not stems:
+                stems=[{'path':p['audio'],'muted':False,'solo':False,'volume':1,'automation':'[]','mute_ranges':'[]','start_offset':0}]
             path=project_dir(pid)/'exports'/(job['id']+'.'+payload['format'])
             path.parent.mkdir(parents=True,exist_ok=True)
-            export(stems,p['original'],path,payload['format'],payload['include_video'])
+            export(stems,p['original'],path,payload['format'],payload['include_video'],rotation=payload.get('rotation',0),trim=payload.get('trim'),clips=payload.get('clips'))
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'path':str(path)}),job['id']))
         if job['kind']=='process':
             try: provider.send(pid, 'Your SoundCanvas video is ready to edit.')

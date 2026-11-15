@@ -9,6 +9,18 @@ interface Entry {
   ok: boolean
 }
 
+interface SpeechResultEvent { results: ArrayLike<{isFinal:boolean; [index:number]:{transcript:string}}> }
+interface SpeechRecognizer {
+  lang: string
+  interimResults: boolean
+  onresult: ((event:SpeechResultEvent) => void) | null
+  onerror: ((event:{error:string}) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+}
+type SpeechConstructor = new () => SpeechRecognizer
+
 interface Props {
   disabled: boolean
   /** Why the bar is disabled, shown as helper text and as the tooltip. */
@@ -31,6 +43,10 @@ export function PromptBar({ disabled, disabledReason = '', onRun, split = null }
     return () => window.clearTimeout(timer)
   }, [last])
   const [pending, setPending] = useState(false)
+  const [listening, setListening] = useState(false)
+  const recognition = useRef<SpeechRecognizer|null>(null)
+  const Speech = (window as unknown as {SpeechRecognition?:SpeechConstructor; webkitSpeechRecognition?:SpeechConstructor}).SpeechRecognition ?? (window as unknown as {webkitSpeechRecognition?:SpeechConstructor}).webkitSpeechRecognition
+  useEffect(() => () => { if (recognition.current) { recognition.current.onresult=null; recognition.current.onerror=null; recognition.current.onend=null; recognition.current.stop(); recognition.current=null } }, [])
   const input = useRef<HTMLInputElement>(null)
   const reason = disabled ? disabledReason : ''
 
@@ -41,9 +57,8 @@ export function PromptBar({ disabled, disabledReason = '', onRun, split = null }
     wasPending.current = pending
   }, [pending])
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    const prompt = text.trim()
+  const submitPrompt = async (prompt: string) => {
+    prompt = prompt.trim()
     if (!prompt || pending) return
     setPending(true)
     try {
@@ -56,6 +71,21 @@ export function PromptBar({ disabled, disabledReason = '', onRun, split = null }
     } finally {
       setPending(false)
     }
+  }
+  const submit = (e: FormEvent) => { e.preventDefault(); void submitPrompt(text) }
+  const startListening = () => {
+    if (!Speech || pending || listening) return
+    const listener=new Speech(); recognition.current=listener
+    listener.lang='en-US'; listener.interimResults=false
+    listener.onresult = event => {
+      const result=event.results[0]
+      if (!result?.isFinal) return
+      recognition.current=null; setListening(false)
+      void submitPrompt(result[0].transcript)
+    }
+    listener.onerror = event => { recognition.current=null; setListening(false); setLast({prompt:'Voice input',message:`Speech recognition failed (${event.error}). Check your microphone permission or type your request.`,ok:false}) }
+    listener.onend = () => { if (recognition.current === listener) { recognition.current=null; setListening(false) } }
+    try { listener.start(); setListening(true) } catch { recognition.current=null; setListening(false); setLast({prompt:'Voice input',message:'Could not start the microphone. Check permission and try again.',ok:false}) }
   }
 
   return (
@@ -87,9 +117,10 @@ export function PromptBar({ disabled, disabledReason = '', onRun, split = null }
             value={text}
             onChange={(e) => setText(e.target.value)}
             disabled={disabled || pending}
-            placeholder={reason || 'Tell Current what to change, e.g. isolate the dog barking'}
+            placeholder={reason || 'Ask Current, e.g. trim from 3 to 4 seconds'}
             className="h-9 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
           />
+          {Speech && <button type="button" aria-label={listening ? 'Stop listening' : 'Speak a command'} title={listening ? 'Stop listening' : 'Speak a command'} disabled={disabled || pending} onClick={() => { if (listening) recognition.current?.stop(); else startListening() }} className="flex h-9 shrink-0 items-center rounded-xl border border-line px-3 text-sm text-fg hover:border-line-strong disabled:opacity-40">{listening ? 'Listening…' : '🎙'}</button>}
           {split && (
             <button
               type="button"

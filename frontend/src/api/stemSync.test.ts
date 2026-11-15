@@ -602,3 +602,46 @@ describe('optimistic concurrency', () => {
     expect(calls()[0].body).toMatchObject({ expected_revision: 3, volume: .5 })
   })
 })
+
+describe('exclusive', () => {
+  it('runs a rename between fader writes and carries its revision forward', async () => {
+    const revised = { ...target, revisions: { s1: 4 } }
+    fetchMock.mockImplementation(async (_url, init) => {
+      const sent = JSON.parse(init?.body as string) as { expected_revision: number }
+      return new Response(JSON.stringify({ revision: sent.expected_revision + 1 }), { status: 200 })
+    })
+    const sync = new StemSync(revised, [track('s1')], () => {})
+    sync.update([track('s1', { gain: 0.5 })])
+    await settle()
+    const seen: Array<number | undefined> = []
+    const rename = sync.exclusive('s1', async (revision) => {
+      seen.push(revision)
+      // A fader move while the rename is on the wire waits for it.
+      sync.update([track('s1', { gain: 2 })])
+      await vi.advanceTimersByTimeAsync(SYNC_DEBOUNCE_MS)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      return 10
+    })
+    await rename
+    await sync.flush()
+    expect(seen).toEqual([5])
+    const last = calls().at(-1)!.body as { volume: number; expected_revision: number }
+    expect(last.volume).toBe(2)
+    expect(last.expected_revision).toBe(10)
+  })
+
+  it('waits for writes already sent', async () => {
+    let release: () => void = () => {}
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(ok()) }))
+    const sync = new StemSync(target, [track('s1')], () => {})
+    sync.update([track('s1', { gain: 0.5 })])
+    await settle()
+    let ran = false
+    const rename = sync.exclusive('s1', async () => { ran = true; return undefined })
+    await Promise.resolve()
+    expect(ran).toBe(false)
+    release()
+    await rename
+    expect(ran).toBe(true)
+  })
+})

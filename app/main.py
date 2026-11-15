@@ -1,4 +1,5 @@
 import hmac
+import httpx
 import json
 import math
 import os
@@ -11,7 +12,7 @@ from typing import Literal
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, StrictBool, model_validator
-from .core import MAX_UPLOAD, connect, digest, event, init, max_passes, probe, project_dir, run, stem, uid
+from .core import MAX_GAIN, MAX_UPLOAD, connect, digest, event, init, max_passes, probe, project_dir, run, stem, uid
 from .guidance import Guidance, SoundPrompt, EditScope, Interval, validate_timing, options, description
 from .commands import parse
 from .agent import AgentRequest, AgentError, plan as agent_plan
@@ -70,11 +71,14 @@ def get_job(jid, kind, authorization):
 
 class Keyframe(BaseModel):
     time: float=Field(ge=0,allow_inf_nan=False)
-    value: float=Field(ge=0,le=2,allow_inf_nan=False)
+    value: float=Field(ge=0,le=MAX_GAIN,allow_inf_nan=False)
 class StemUpdate(BaseModel):
     expected_revision: int | None=Field(default=None,ge=0)
     name: str | None=Field(default=None,min_length=1,max_length=200)
-    volume: float | None=Field(default=None,ge=0,le=2,allow_inf_nan=False)
+    label: str | None=Field(default=None,min_length=1,max_length=200)
+    #: What the person calls the layer: sets the label, and the name too unless it is the residual.
+    rename: str | None=Field(default=None,min_length=1,max_length=200)
+    volume: float | None=Field(default=None,ge=0,le=MAX_GAIN,allow_inf_nan=False)
     muted: bool | None=None
     solo: bool | None=None
     start_offset: float | None=Field(default=None,ge=0,le=86400,allow_inf_nan=False)
@@ -96,6 +100,9 @@ class Process(BaseModel):
     edit_scope: EditScope=Field(default_factory=EditScope)
     profile: Literal["preview", "quality"]="preview"
     append: bool=False
+    explode: bool=False
+    # Explode only: split music layers into instruments with the music stem splitter.
+    split_music: bool=False
     reranking_candidates: int=Field(default=1,ge=1,le=4)
     passes: int | None=None
     # auto lets the audio service route (song -> music stems, otherwise the prompted model).
@@ -153,9 +160,14 @@ class RefineRequest(BaseModel):
 class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
     include_video: bool=True
+    rotation: Literal[0,90,180,270]=0
+    trim: Interval | None = None
+    clips: list[Interval] | None = Field(default=None, min_length=1, max_length=100)
     @model_validator(mode='after')
     def valid_format(self):
         if self.include_video != (self.format=='mp4'): raise ValueError('Use mp4 with video, or wav/mp3 without video')
+        if self.rotation and not self.include_video: raise ValueError('Rotation needs an mp4 export')
+        if self.trim and self.clips: raise ValueError('Use trim or clips, not both')
         return self
 class Message(BaseModel):
     project_id: str
@@ -375,6 +387,15 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     try: return agent_plan(body)
     except AgentError as exc: raise HTTPException(502,str(exc)) from exc
 
+@app.post('/api/projects/{pid}/suggest-sounds')
+def suggest_project_sounds(pid: str, authorization: str | None=Header(None)):
+    """What the model hears in the uploaded audio, as separation prompts for Explode."""
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    from .media import suggest_sounds
+    try: return suggest_sounds(p['audio'])
+    except (httpx.HTTPError, RuntimeError) as exc: raise HTTPException(502,f'Could not listen to the clip: {exc}') from exc
+
 @app.get('/api/projects/{pid}/capabilities')
 def service_capabilities(pid: str, authorization: str | None=Header(None)):
     auth(pid,authorization)
@@ -416,7 +437,11 @@ def process(pid: str, body: Process=Process(), authorization: str | None=Header(
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     targets=len(body.stems or []) if body.mode=='music_stems' else len(body.prompts)
     if body.edit_scope.action != 'keep' and targets!=1: raise HTTPException(422,'An edit requires exactly one sound target')
-    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes','mode','stems'})
+    if body.explode and (body.append or body.visual_prompt or body.edit_scope.action!='keep' or body.mode=='music_stems'): raise HTTPException(422,'Explode splits the whole clip: no append, visual prompt, edit or music-stems mode')
+    if body.split_music and not body.explode: raise HTTPException(422,'Splitting the music into instruments is part of Explode')
+    payload=body.model_dump(exclude={'append','reranking_candidates','guidance','profile','passes','mode','stems','explode','split_music'})
+    if body.explode: payload['explode']=True
+    if body.split_music: payload['split_music']=True
     payload['anchors']=body.guidance.model_dump()['anchors']
     payload['options']=with_passes(separation_options(body.profile,body.reranking_candidates),body.passes)
     # Only an explicit mode overrides the service's AUDIO_ROUTING_DEFAULT.
@@ -526,7 +551,8 @@ def effect_job(jid: str, authorization: str | None=Header(None)):
     return get_job(jid,'sfx_generation',authorization)
 
 @app.post('/api/projects/{pid}/sound-effects/upload')
-async def upload_effect(pid: str, file: UploadFile=File(...), authorization: str | None=Header(None)):
+async def upload_effect(pid: str, file: UploadFile=File(...), long: bool=False, authorization: str | None=Header(None)):
+    """A short effect (15 s), or with long=true a music clip of up to 3 minutes for Moon pull's added layers."""
     auth(pid,authorization)
     directory=project_dir(pid)/'effects';directory.mkdir(parents=True,exist_ok=True)
     aid=uid();temp=directory/(aid+'.upload');out=directory/(aid+'.wav');size=0
@@ -534,10 +560,10 @@ async def upload_effect(pid: str, file: UploadFile=File(...), authorization: str
         with temp.open('wb') as target:
             while chunk:=await file.read(1024*1024):
                 size+=len(chunk)
-                if size>20*1024*1024: raise HTTPException(413,'Sound effect must be under 20 MB.')
+                if size>(80 if long else 20)*1024*1024: raise HTTPException(413,'Music must be under 80 MB.' if long else 'Sound effect must be under 20 MB.')
                 target.write(chunk)
         info=probe(temp)
-        if not 0<info['duration']<=15: raise HTTPException(422,'Sound effect must be between 0 and 15 seconds.')
+        if not 0<info['duration']<=(180 if long else 15): raise HTTPException(422,'Music must be at most 3 minutes long.' if long else 'Sound effect must be between 0 and 15 seconds.')
         run('ffmpeg','-v','error','-y','-i',str(temp),'-vn','-ar','48000','-ac','2','-c:a','pcm_f32le',str(out))
         return {'asset_id':aid,'duration':probe(out)['duration'],'source':'uploaded'}
     except HTTPException:
@@ -861,12 +887,98 @@ def update_stem(pid: str,sid: str,body: StemUpdate,authorization: str | None=Hea
         db.execute('BEGIN IMMEDIATE')
         row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
         if not row: raise HTTPException(404,'Stem not found')
+        if 'rename' in values:
+            values['label']=values.pop('rename').strip()
+            if not values['label']: raise HTTPException(422,'A layer needs a name.')
+            if row['name'].lower()!='residual': values['name']=values['label']
+        # The residual is found by its name; keep exactly one stem called that. Rename it by label.
+        if 'name' in values and (row['name'].lower()=='residual') != (values['name'].strip().lower()=='residual'):
+            raise HTTPException(422,'The residual layer keeps its name; change its label instead.')
         if expected is not None and row['revision'] != expected:
             raise HTTPException(409,'Stem changed since it was loaded; reload to resolve the conflict')
         if ranges and any(end > row['duration'] + values.get('start_offset',row['start_offset']) for _,end in ranges):
             raise HTTPException(422,'Mute range extends beyond the stem')
         if values:
             db.execute('UPDATE stems SET '+','.join(k+'=?' for k in values)+',revision=revision+1 WHERE project_id=? AND id=?',(*values.values(),pid,sid))
+        row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
+    return stem(row)
+
+@app.delete('/api/projects/{pid}/stems/{sid}')
+def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=None,authorization: str | None=Header(None)):
+    """Remove a layer. fold=true (the default) adds its audio to the residual, so the mix keeps the
+    sound and only the separate layer goes; fold=false takes the sound out of the mix too.
+    The residual itself can't be removed. Returns the job to load the layers from."""
+    from .candidates import completed_job
+    from .core import discard
+    from .media import read_wav, write_wav
+    import numpy as np
+    auth(pid,authorization); refuse_during_refine(pid)
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if db.execute("SELECT 1 FROM jobs WHERE project_id=? AND kind IN ('process','normalize','refine') AND status IN ('queued','processing')",(pid,)).fetchone():
+            raise HTTPException(409,'Wait for the running separation to finish, then try again.')
+        row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
+        if not row: raise HTTPException(404,'Stem not found')
+        if expected_revision is not None and row['revision']!=expected_revision:
+            raise HTTPException(409,'Stem changed since it was loaded; reload to resolve the conflict')
+        if row['name'].lower()=='residual' or row['role']=='residual':
+            raise HTTPException(422,'The residual layer holds everything the other layers don\'t, so it stays. Mute it instead.')
+        replaced=[row['path']]
+        if fold:
+            residual=db.execute("SELECT * FROM stems WHERE project_id=? AND (lower(name)='residual' OR role='residual') ORDER BY lower(name)='residual' DESC",(pid,)).fetchone()
+            if not residual: raise HTTPException(422,'There is no residual layer to fold this one into. Remove its sound instead.')
+            # Raw samples can only be added without changing the audible mix
+            # when both layers have neutral, identical playback settings.
+            # In particular, folding a muted target would bring its audio back.
+            if any(float(layer['volume'])!=1 or layer['muted'] or json.loads(layer['automation']) or json.loads(layer['mute_ranges']) for layer in (row,residual)) or db.execute('SELECT 1 FROM stems WHERE project_id=? AND solo=1 LIMIT 1',(pid,)).fetchone():
+                raise HTTPException(409,'Folding needs both layers at unity gain with no mutes or automation and no soloed layers. Reset those edits, or remove the layer without folding.')
+            try:
+                (a,rate),(b,rate_b)=read_wav(residual['path']),read_wav(row['path'])
+            except (OSError,ValueError) as exc: raise HTTPException(500,f'Could not read the layer audio: {exc}') from exc
+            if rate!=rate_b: raise HTTPException(422,'These layers have different sample rates, so they can\'t be folded together.')
+            if a.shape[1]!=b.shape[1]:
+                a,b=(np.repeat(x,2,axis=1) if x.shape[1]==1 else x for x in (a,b))
+            # Line the two up on the timeline: each starts at its own offset.
+            start=min(residual['start_offset'],row['start_offset'])
+            at=lambda offset: int(round((offset-start)*rate))
+            ia,ib=at(residual['start_offset']),at(row['start_offset'])
+            out=np.zeros((max(ia+len(a),ib+len(b)),a.shape[1]))
+            out[ia:ia+len(a)]+=a; out[ib:ib+len(b)]+=b
+            path=project_dir(pid)/'stems'/(uid()+'.wav'); path.parent.mkdir(parents=True,exist_ok=True)
+            write_wav(path,out,rate)
+            db.execute('UPDATE stems SET path=?,start_offset=?,duration=?,revision=revision+1 WHERE project_id=? AND id=?',
+                       (str(path),start,len(out)/rate,pid,residual['id']))
+            replaced.append(residual['path'])
+        db.execute('DELETE FROM stems WHERE project_id=? AND id=?',(pid,sid))
+        jid=completed_job(db,pid)
+    # Undo (app/checkpoints.py) keeps the files its snapshots need; only unreachable ones go.
+    discard(pid,replaced)
+    return {'job_id':jid,'folded':fold}
+
+class EffectRequest(BaseModel):
+    effect: Literal['deepen','impact','disorient','muffle']
+    start: float=Field(ge=0,allow_inf_nan=False)
+    end: float=Field(gt=0,allow_inf_nan=False)
+    amount: float=Field(default=0.7,ge=0,le=1,allow_inf_nan=False)
+    expected_revision: int | None=Field(default=None,ge=0)
+
+@app.post('/api/projects/{pid}/stems/{sid}/effect')
+def stem_effect(pid: str,sid: str,body: EffectRequest,authorization: str | None=Header(None)):
+    """Apply an effect to [start, end] seconds of the stem's own timeline. The previous file is kept on disk."""
+    from .stem_fx import apply_effect
+    auth(pid,authorization); refuse_during_refine(pid)
+    row=find_stem(pid,sid)
+    if body.expected_revision is not None and row['revision']!=body.expected_revision:
+        raise HTTPException(409,'Stem changed since it was loaded; reload to resolve the conflict')
+    try: dest=apply_effect(row['path'],body.effect,body.start,body.end,body.amount)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    except RuntimeError as exc: raise HTTPException(500,str(exc)) from exc
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        cur=db.execute('SELECT revision FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
+        if cur['revision']!=row['revision']:
+            Path(dest).unlink(missing_ok=True); raise HTTPException(409,'Stem changed while the effect was rendering; try again')
+        db.execute('UPDATE stems SET path=?,revision=revision+1 WHERE project_id=? AND id=?',(str(dest),pid,sid))
         row=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,sid)).fetchone()
     return stem(row)
 
@@ -877,8 +989,10 @@ def audio(pid: str,sid: str,authorization: str | None=Header(None)):
 @app.post('/api/projects/{pid}/export',status_code=202)
 def create_export(pid: str,body: Export,authorization: str | None=Header(None)):
     p=auth(pid,authorization)
-    if not p['original'] or not list_stems(pid,authorization): raise HTTPException(409,'Processed stems required')
+    if not p['original'] or not p['audio']: raise HTTPException(409,'Upload media first')
     if body.include_video and not json.loads(p['metadata'])['has_video']: raise HTTPException(422,'Original has no video')
+    if body.trim and body.trim.end > json.loads(p['metadata'])['duration'] + 1e-6: raise HTTPException(422,'Trim extends beyond the media duration')
+    if body.clips and any(c.end > json.loads(p['metadata'])['duration'] + 1e-6 for c in body.clips): raise HTTPException(422,'Clip extends beyond the media duration')
     return {'export_id':start(pid,'export',body.model_dump()),'status':'queued'}
 
 @app.get('/api/exports/{eid}')
@@ -921,3 +1035,10 @@ def webhook(body: Message):
 def messages(pid: str,authorization: str | None=Header(None)):
     auth(pid,authorization)
     with connect() as db: return [dict(r) for r in db.execute('SELECT id,text,created_at FROM messages WHERE project_id=? ORDER BY rowid',(pid,))]
+
+# Moon pull: symbolic rules (app/moonpull.py).
+from .moonpull_routes import router as moonpull_router
+app.include_router(moonpull_router)
+
+from .checkpoints import router as checkpoints_router
+app.include_router(checkpoints_router)

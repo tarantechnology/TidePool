@@ -70,7 +70,8 @@ describe('validateActions', () => {
     rejects(kfs([{ t: -1, value: 1 }]))
     rejects(kfs([{ t: NaN, value: 1 }]))
     rejects(kfs([{ t: Infinity, value: 1 }]))
-    rejects(kfs([{ t: 1, value: 3 }]))
+    accepts(kfs([{ t: 1, value: 5 }]))
+    rejects(kfs([{ t: 1, value: 5.1 }]))
     rejects(kfs([{ t: 1, value: NaN }]))
     rejects(kfs([{ t: '1', value: 1 }]))
     rejects(kfs([null]))
@@ -84,7 +85,7 @@ describe('validateActions', () => {
     rejects({ ...base, sourceStemIds: [] })
     rejects({ ...base, sourceStemIds: 'b' })
     rejects({ ...base, sourceStemIds: [1] })
-    rejects({ ...base, minValue: 5 })
+    rejects({ ...base, minValue: 6 })
     rejects({ ...base, maxValue: NaN })
   })
 

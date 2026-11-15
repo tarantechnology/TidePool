@@ -125,15 +125,21 @@ def pick(similarity: np.ndarray, scale: float, *, max_sounds: int = 6, min_prob:
     if not keep.any():
         return []
     limits = tier_thresholds() if min_prob is None else ({t: float(min_prob) for t in TIER_MIN_PROB} if isinstance(min_prob, (int, float)) else {**TIER_MIN_PROB, **min_prob})
-    probs = softmax(sims[keep] * scale, axis=1)
+    active_sims=sims[keep]
+    probs = softmax(active_sims * scale, axis=1)
+    baseline=np.median(active_sims,axis=1)
     index = np.flatnonzero(keep)
     ranks = (-probs).argsort(axis=1).argsort(axis=1)  # 0 = top sound of that window
     best: dict[str, HeardSound] = {}
     for j, (prompt, group, tier) in enumerate(vocabulary):
         bar = limits.get(tier, 0.2)
         top_counts = tier != "hits"
+        # Do not turn tied, unsupported labels into detections. Compare the
+        # unscaled similarity to the window's median: a crowded clip can push
+        # real speech below the softmax's uniform probability baseline.
         hits = [int(index[w]) for w in range(probs.shape[0])
-                if probs[w, j] >= bar or (top_counts and ranks[w, j] == 0) or ranks[w, j] < ALWAYS_RANK.get(tier, 0)]
+                if active_sims[w, j] > baseline[w] and
+                (probs[w, j] >= bar or (top_counts and ranks[w, j] == 0) or ranks[w, j] < ALWAYS_RANK.get(tier, 0))]
         if not hits:
             continue
         sound = HeardSound(prompt, group, tier, float(probs[:, j].max()), hits)

@@ -11,10 +11,8 @@ editor as automation. The responses that change the audio itself live here:
 All times in requests are timeline seconds; they are converted to each stem's own time here.
 """
 import json
-import os
 from pathlib import Path
 
-import httpx
 import numpy as np
 import soundfile as sf
 
@@ -162,16 +160,10 @@ def previous_of(path):
     return prev if prev and Path(prev).exists() else None
 
 
-# Transcript: timed lines of a layer, from OpenAI's transcription API.
+# Transcript: timed lines of a layer from the configured local Whisper runtime.
 
 class TranscriptError(Exception):
     pass
-
-
-def _key():
-    from .agent import AgentError, _key as key
-    try: return key()
-    except AgentError as exc: raise TranscriptError(str(exc)) from exc
 
 
 def parse_transcript(data, offset):
@@ -186,33 +178,22 @@ def parse_transcript(data, offset):
 
 
 def transcribe(path, offset=0.0):
-    """Lines and words of a layer, in timeline seconds. Cached next to the audio file, so a
-    changed layer (new file) is transcribed again."""
-    cache = Path(str(path) + '.transcript.json')
-    if cache.exists():
-        try: return parse_transcript(json.loads(cache.read_text()), offset)
-        except (ValueError, OSError): pass
-    small = Path(path).with_name(uid() + '.transcribe.mp3')
+    """Read locally, without uploading media or persisting the complete transcript."""
+    from .censorship import transcribe as local_transcribe, MAX_DURATION
+    from .core import probe
     try:
-        run('ffmpeg', '-v', 'error', '-y', '-i', str(path), '-ac', '1', '-ar', '16000', '-b:a', '48k', str(small))
-        with small.open('rb') as f:
-            try:
-                response = httpx.post('https://api.openai.com/v1/audio/transcriptions',
-                    headers={'Authorization': 'Bearer ' + _key()},
-                    data={'model': os.getenv('OPENAI_TRANSCRIBE_MODEL', 'whisper-1'), 'response_format': 'verbose_json',
-                          'timestamp_granularities[]': ['segment', 'word']},
-                    files={'file': ('layer.mp3', f, 'audio/mpeg')}, timeout=180)
-            except httpx.HTTPError as exc: raise TranscriptError('Could not reach OpenAI to read the lines. Please retry.') from exc
-    finally:
-        small.unlink(missing_ok=True)
-    if response.is_error:
-        if response.status_code in (401, 403): raise TranscriptError('OpenAI rejected the API key or model access.')
-        if response.status_code == 429: raise TranscriptError('OpenAI rate limit or quota exceeded.')
-        raise TranscriptError(f'Transcription failed (HTTP {response.status_code}).')
-    data = response.json()
-    try: cache.write_text(json.dumps(data))
-    except OSError: pass
-    return parse_transcript(data, offset)
+        duration=probe(path)['duration']
+        if duration>MAX_DURATION: raise ValueError('Transcription is limited to 10 minutes per request.')
+        raw,_=local_transcribe(path,duration)
+    except (ValueError,RuntimeError,OSError) as exc: raise TranscriptError(str(exc)) from exc
+    words=[{'start':round(w['start']+offset,3),'end':round(w['end']+offset,3),'text':w['word']} for w in raw]
+    groups=[]
+    for word in words:
+        if not groups or word['start']-groups[-1][-1]['end']>.8 or groups[-1][-1]['text'].endswith(('.', '!', '?')) or word['end']-groups[-1][0]['start']>8:
+            groups.append([])
+        groups[-1].append(word)
+    lines=[{'start':g[0]['start'],'end':g[-1]['end'],'text':' '.join(w['text'] for w in g)} for g in groups]
+    return {'text':' '.join(w['text'] for w in words),'lines':lines,'words':words}
 
 
 # Layer: a sound (an uploaded clip or a generated effect) that plays during every moment, on a new

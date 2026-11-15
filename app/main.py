@@ -919,6 +919,11 @@ def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=
         if fold:
             residual=db.execute("SELECT * FROM stems WHERE project_id=? AND (lower(name)='residual' OR role='residual') ORDER BY lower(name)='residual' DESC",(pid,)).fetchone()
             if not residual: raise HTTPException(422,'There is no residual layer to fold this one into. Remove its sound instead.')
+            # Raw samples can only be added without changing the audible mix
+            # when both layers have neutral, identical playback settings.
+            # In particular, folding a muted target would bring its audio back.
+            if any(float(layer['volume'])!=1 or layer['muted'] or json.loads(layer['automation']) or json.loads(layer['mute_ranges']) for layer in (row,residual)) or db.execute('SELECT 1 FROM stems WHERE project_id=? AND solo=1 LIMIT 1',(pid,)).fetchone():
+                raise HTTPException(409,'Folding needs both layers at unity gain with no mutes or automation and no soloed layers. Reset those edits, or remove the layer without folding.')
             try:
                 (a,rate),(b,rate_b)=read_wav(residual['path']),read_wav(row['path'])
             except (OSError,ValueError) as exc: raise HTTPException(500,f'Could not read the layer audio: {exc}') from exc

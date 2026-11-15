@@ -560,6 +560,13 @@ def test_delete_layer_folds_into_residual_and_undoes(client,tmp_path):
     url=f'/api/projects/{pid}/stems/'
     assert client.delete(url+residual['id'],headers=headers).status_code==422
     assert client.delete(url+talk['id']+'?expected_revision=999',headers=headers).status_code==409
+    # Folding raw samples from edited layers would change what the user hears.
+    assert client.patch(url+talk['id'],headers=headers,json={'muted':True}).status_code==200
+    assert client.delete(url+talk['id'],headers=headers).status_code==409
+    np.testing.assert_allclose(samples(residual['id']),read_wav(paths[residual['id']])[0])
+    assert client.patch(url+talk['id'],headers=headers,json={'muted':False,'volume':0.5}).status_code==200
+    assert client.delete(url+talk['id'],headers=headers).status_code==409
+    assert client.patch(url+talk['id'],headers=headers,json={'volume':1}).status_code==200
     before=client.post(f'/api/projects/{pid}/checkpoints',headers=headers,json={'label':'Before'}).json()['id']
     r=client.delete(url+talk['id'],headers=headers); assert r.status_code==200 and r.json()['folded']
     np.testing.assert_allclose(samples(residual['id']),expected,atol=1e-6)    # the sound stays in the mix

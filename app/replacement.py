@@ -400,6 +400,50 @@ def parse_replacement(text,duration):
     return result
 
 
+def is_profanity_source(source):
+    import re
+    return bool(re.search(r'\b(?:cuss(?:ing)?|swear(?:ing)?|profanity|curse|cursing|expletives?|bad\s+words?)\b',source,re.I))
+
+
+def replace_profanity(project,payload,cid,plan,snapshot,source):
+    """Reuse word-timed censorship and add generated effects in one atomic preview."""
+    from . import censorship
+    from .worker import set_stage
+    pid=project['id'];temporary=[];keep_original=False
+    set_stage(cid,'transcribing',15)
+    censored=censorship.build(project,{'_candidate':snapshot,'source_stem_id':payload.get('source_stem_id')},cid)
+    temporary.extend([Path(censored['target']['path']),Path(censored['mix']['path']),Path(censored['original']['path'])])
+    try:
+        matches=censored['provenance']['matches'];duration=probe(source)['duration']
+        if len(matches)>100:raise ValueError('More than 100 words were found. Try a shorter clip.')
+        intervals=[{'start':w['start'],'end':min(duration,w['start']+.01)} for w in matches if 0<=w['start']<duration]
+        if not intervals:raise ValueError('No usable word timings were found. Listen and review manually.')
+        tone_path=censored['target']['path']
+        rows=[dict(r) for r in censored['proposed'] if r['path']!=tone_path]
+        staged={**snapshot,'rows':rows,'stem_hashes':{r['id']:file_sha256(candidates.safe_path(pid,r['path'])) for r in rows}}
+        set_stage(cid,'generating',35)
+        asset=prepare_effect(project,{'prompt':plan['effect']})
+        set_stage(cid,'rendering',70)
+        output=build(project,{'_candidate':staged,'asset_id':asset['asset_id'],'asset_sha256':file_sha256(asset_path(pid,asset['asset_id'])),
+               'source_prompt':'profanity','effect_label':plan['effect'],'mode':'add','intervals':intervals,'alignment':'onset'},cid)
+        prior={r['id']:json.loads(r.get('mute_ranges') or '[]') for r in snapshot['rows']}
+        changed={r['id']:prior.get(r['id'],[]) for r in rows if json.loads(r.get('mute_ranges') or '[]')!=prior.get(r['id'],[])}
+        output['_profanity_edit']={'original_ranges':changed,'word_events':{event['id']:word for event,word in zip(output['provenance']['events'],matches)}}
+        temporary.append(Path(output['original']['path']))
+        output['original']=censored['original'];output['snapshot']=snapshot;keep_original=True
+        warnings=[w.replace('during each beep','during each matched word') for w in censored['inference']['warnings']]
+        warnings.append('Detected words are muted and replaced with the generated sound. Listen for missed or misheard words and affected background audio.')
+        warnings.append('Generated sound content is approximate; listen before applying.')
+        output['inference']['warnings']=warnings+output['inference'].get('warnings',[])
+        output['provenance'].update({'request':payload.get('original_request',payload['request']),'automatic':True,
+            'detection':{'method':'local-profanity-transcription','language':censored['provenance']['language']},
+            'matches':matches,'requested_count':asset['requested_count'],'generation_prompt':asset['generation_prompt']})
+        return output
+    finally:
+        if keep_original:temporary.remove(Path(censored['original']['path']))
+        for path in temporary:path.unlink(missing_ok=True)
+
+
 def auto_build(project,payload,cid):
     from . import discovery
     from .worker import set_stage
@@ -410,6 +454,8 @@ def auto_build(project,payload,cid):
         if file_sha256(candidates.safe_path(pid,row['path']))!=snapshot['stem_hashes'][row['id']]: raise ValueError('A layer changed; please retry.')
     selected_layer=next((r for r in snapshot['rows'] if r['id']==payload.get('source_stem_id')),None)
     if payload.get('source_stem_id') and not selected_layer:raise ValueError('The selected source layer is unavailable.')
+    if plan.get('mode')!='add' and is_profanity_source(plan['source']):
+        return replace_profanity(project,payload,cid,plan,snapshot,source)
     from .effect_followup import matching_effects, replace_known_effects, resolve_effect_reference
     resolver_unavailable=False
     if plan.get('mode')!='add':
@@ -555,6 +601,14 @@ def adjust(project,payload,candidate_id):
     effect=candidates.safe_path(pid,meta['effect_path']);source=candidates.safe_path(pid,output['snapshot']['source'])
     directory=project_dir(pid)/'stems';created=[]
     try:
+        profanity=output.get('_profanity_edit')
+        if profanity:
+            from .censorship import windows
+            enabled={e['id'] for e in events if e['enabled']}
+            words=[word for event_id,word in profanity['word_events'].items() if event_id in enabled]
+            for row in output['proposed']:
+                if row['id'] in profanity['original_ranges']:
+                    row['mute_ranges']=json.dumps(profanity['original_ranges'][row['id']]+windows(words,duration))
         for group_id,group in enumerate(meta['groups']):
             if group_id not in dirty_groups:continue
             raw=candidates.safe_path(pid,group['raw_path']);row=next((r for r in output['proposed'] if r['id']==group['target_id']),None)

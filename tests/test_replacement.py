@@ -151,6 +151,72 @@ def test_add_generated_sound_after_spoken_word(client,tmp_path,monkeypatch):
     assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
 
 
+def test_replace_profanity_uses_transcription_not_sound_discovery(client,tmp_path,monkeypatch):
+    import app.censorship as censorship
+    import app.discovery as discovery
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    monkeypatch.setattr(censorship,'transcribe',lambda *a: ([{'word':'shit','start':.4,'end':.6},{'word':'fuck!','start':2.,'end':2.3}],'en'))
+    monkeypatch.setattr(discovery,'discover',lambda *a,**kw:pytest.fail('Profanity must use transcription, not sound-event classification'))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Replace all cuss words with a meow sound'}
+    assert client.post(url,json=body).status_code==401
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['detection']['method']=='local-profanity-transcription'
+    assert job['provenance']['peak_times']==pytest.approx([.4,2.])
+    assert len(job['provenance']['matches'])==2
+    assert any('muted and replaced' in warning for warning in job['inference']['warnings'])
+    first=job['provenance']['events'][0]['id']
+    changed=client.post(f'/api/candidates/{cid}/replacement-adjust',headers=h,json={'operation':'toggle','event_id':first,'enabled':False})
+    assert changed.status_code==202,changed.text
+    adjusted=wait(client,changed.json()['candidate_id'],h);assert adjusted['status']=='completed',adjusted
+    assert client.post(f"/api/candidates/{adjusted['id']}/apply",headers=h).status_code==200
+    limited=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert next(s for s in limited if s['name']=='Original audio')['mute_ranges']==[pytest.approx([1.92,2.38])]
+    assert len([s for s in limited if s['role']=='effect'])==1
+    assert client.post(f"/api/candidates/{adjusted['id']}/undo",headers=h).status_code==200
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    stems=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    original=next(s for s in stems if s['name']=='Original audio')
+    assert len(original['mute_ranges'])==2
+    assert original['mute_ranges'][0]==pytest.approx([.32,.68])
+    effects=[s for s in stems if s['role']=='effect'];assert len(effects)==2 and all('meow' in s['name'] for s in effects)
+    assert client.post(f'/api/candidates/{cid}/undo',headers=h).status_code==200
+    assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
+
+
+def test_profanity_replacement_preserves_other_layers_and_rejects_stale_preview(client,tmp_path,monkeypatch):
+    import app.censorship as censorship
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    monkeypatch.setattr(censorship,'transcribe',lambda *a: ([{'word':'shit','start':.4,'end':.6}],'en'))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=3','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    process=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['voice','music']}).json()['job_id']
+    for _ in range(200):
+        j=client.get(f'/api/jobs/{process}',headers=h).json()
+        if j['status'] in ('completed','failed'):break
+        time.sleep(.05)
+    assert j['status']=='completed',j
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();voice=next(s for s in before if s['name']=='voice');music=next(s for s in before if s['name']=='music')
+    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Replace all cuss words with a meow sound'}
+    r=client.post(url,headers=h,json=body);assert r.status_code==202,r.text
+    job=wait(client,r.json()['candidate_id'],h);assert job['status']=='completed',job
+    assert client.patch(f'/api/projects/{pid}/stems/{music["id"]}',headers=h,json={'expected_revision':music['revision'],'volume':.5}).status_code==200
+    assert client.post(f"/api/candidates/{job['id']}/apply",headers=h).status_code==409
+    r=client.post(url,headers=h,json=body);assert r.status_code==202,r.text
+    job=wait(client,r.json()['candidate_id'],h);assert job['status']=='completed',job
+    assert client.post(f"/api/candidates/{job['id']}/apply",headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert next(s for s in after if s['id']==voice['id'])['mute_ranges']
+    kept=next(s for s in after if s['id']==music['id']);assert kept['volume']==.5 and kept['mute_ranges']==[]
+    assert client.post(f"/api/candidates/{job['id']}/undo",headers=h).status_code==200
+
+
 def test_add_effect_at_tracked_object_appearances_and_reject_stale_analysis(client,tmp_path,monkeypatch):
     import json
     from app.core import connect

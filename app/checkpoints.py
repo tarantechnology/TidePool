@@ -33,7 +33,10 @@ def ensure_table(db):
 def kept_paths(db, pid):
     """Audio files a remaining checkpoint can bring back."""
     ensure_table(db)
-    return {r['path'] for c in db.execute('SELECT rows FROM checkpoints WHERE project_id=?', (pid,)) for r in json.loads(c['rows'])}
+    from .fx import dry_path
+    rows = [r for c in db.execute('SELECT rows FROM checkpoints WHERE project_id=?', (pid,)) for r in json.loads(c['rows'])]
+    # A layer with effects also keeps its dry audio, so a restored layer can still drop a chip.
+    return {p for r in rows for p in (r['path'], dry_path(r)) if p}
 
 
 def _guard(pid, authorization):

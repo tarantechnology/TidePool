@@ -155,8 +155,9 @@ def work_once():
                 group_matching_explicit_targets(db,pid)
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
+            discard(pid,replaced)  # Committed: the replaced stems' files go before the job reports completion.
+            with connect() as db:
                 db.execute("UPDATE jobs SET status='completed',progress=100,stage=NULL,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
-            discard(pid,replaced)  # Committed: the replaced stems' files can go.
         elif job['kind']=='discovery':
             from .discovery import discover
             if file_sha256(p['audio']) != payload['audio_sha256']: raise ValueError('Project audio changed; run discovery again.')
@@ -181,8 +182,12 @@ def work_once():
                 from .replacement import auto_build as build
             elif payload.get('_replacement'):
                 from .replacement import build
+            elif payload.get('_fx'):
+                from .fx import build
             elif payload.get('_effects'):
                 from .effects import build
+            elif payload.get('_sfx_insert'):
+                from .sfx_insert import build
             elif payload.get('_director_adjust'):
                 from .director import adjust as build
             elif payload.get('_director'):
@@ -195,7 +200,7 @@ def work_once():
             duration=probe(snapshot.get('source') or p['audio'])['duration']
             # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
             if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
-            creative=any(payload.get(k) for k in ('_effects','_director_adjust','_director','_cinematic','_censorship'))
+            creative=any(payload.get(k) for k in ('_fx','_effects','_director_adjust','_director','_cinematic','_sfx_insert','_censorship'))
             with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
                 output=build(p,payload,job['id'])
             with connect() as db:

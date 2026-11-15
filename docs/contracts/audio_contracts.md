@@ -38,6 +38,7 @@ Contract version string returned by the service: `contract_version: "2025-11-dra
 - [Contract C — Audio Separation Result](#contract-c--audio-separation-result)
 - [Contract D — Visual Prompt](#contract-d--visual-prompt)
 - [Contract E — Processing Errors](#contract-e--processing-errors)
+- [Contract F — Speech and rhythm tools (words, enhance, beats)](#contract-f--speech-and-rhythm-tools-words-enhance-beats)
 
 ---
 
@@ -544,3 +545,86 @@ live: `INVALID_REQUEST: at most 8 prompts per request`); `retryable` and `detail
 persisted (Open Question 3 in the handoff doc). Retry policy: Person 4 has no automatic retry ("to
 retry, submit a new processing job"), so `retryable` is advice for a human or a future
 scheduler, not a promise that we will be retried.
+
+---
+
+## Contract F — Speech and rhythm tools (words, enhance, beats)
+
+**Status: proposed (2026-11-14, `feature/chat-fx`, plan `docs/plans/chat-fx.md` Phase B).**
+Implemented by `audio-service/sam_audio_service/speech/` (`contracts.py` holds the pydantic
+models). Three multipart endpoints with the same request shape as `/separate`: an `audio`
+file part (any FFmpeg-decodable audio or video) and an optional `metadata` JSON string.
+Unknown metadata fields are ignored. Every time is seconds on the uploaded media's timeline,
+rounded to milliseconds. Errors are Contract E. Each tool is off unless its
+`AUDIO_*_BACKEND` is set; `GET /capabilities` has a `words`, `enhance` and `beats` block
+(`available`, `backend`, `model_id`, `license`, `loaded`, `load_error`, limits), and a disabled
+tool answers `400 UNSUPPORTED_OPERATION`. These tools have their own locks and never wait for
+a separation.
+
+### F.1 `POST /v1/words`: word timestamps, fillers, profanity, pauses
+
+Metadata (all optional):
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `language` | ISO 639-1 string | detect | `"en"`, `"es"`… |
+| `transcribe_fillers` | bool | `true` | Biases Whisper to write "um"/"uh" (English). Whisper drops them otherwise. |
+| `align` | bool \| null | service default | Re-times words with CTC forced alignment (English only; other languages keep Whisper's times and add a warning). |
+| `extra_profanity` | string[] (≤ 200) | `[]` | Added to the list for this request; same syntax as the list file (`word` or `prefix:stem`). |
+| `min_pause_seconds` | number 0.1-10 | 0.7 | Gap reported in `pauses`. |
+| `request_id`, `asset_id` | string | | Echoed. |
+
+Response:
+
+```json
+{
+  "request_id": "…", "language": "en", "language_probability": 0.99,
+  "words": [{"word": "fuck,", "norm": "fuck", "start": 1.234, "end": 1.502, "confidence": 0.93, "segment": 0}],
+  "segments": [{"id": 0, "start": 0.5, "end": 4.1, "text": "So, um, what the fuck,…", "word_start": 0, "word_end": 9}],
+  "fillers": [1], "profanity": [4],
+  "pauses": [{"start": 4.1, "end": 5.3, "after_word": 8}],
+  "aligned": true,
+  "model": {"backend": "faster_whisper", "model_id": "large-v3-turbo", "is_mock": false, "device": "cuda", "compute_type": "float16", "vad": true, "filler_prompt": true, "align_model": "torchaudio/WAV2VEC2_ASR_BASE_960H"},
+  "source": {"asset_id": null, "duration": 12.0, "sample_rate": 48000, "channels": 2},
+  "profanity_list": {"source": "builtin:profanity_en.txt", "entries": 91},
+  "timing": {"transcribe_seconds": 0.8, "align_seconds": 0.1},
+  "warnings": []
+}
+```
+
+- `fillers` and `profanity` are **indices into `words`**, sorted. The app turns them into
+  bleep or mute ranges from `words[i].start`/`end`. Match spoken text ("when he says 'what'")
+  on `norm`.
+- Profanity matching is per word (word boundaries only: "assume" never matches "ass"),
+  case- and punctuation-insensitive, also checking hyphen parts and the form without "'s".
+  Censored partials ("f***") match only when listed. List: `speech/profanity_en.txt` or
+  `AUDIO_WORDS_PROFANITY_FILE`.
+- Fillers are conservative: um/umm/uh/uhh/uhm/er/erm/ehm/em, plus "like" only when it is set
+  off by commas or ≥ 250 ms pauses on both sides. "hmm", "oh" and "ah" are never fillers.
+- `pauses` are gaps between consecutive words (not lead-in or tail silence).
+
+### F.2 `POST /v1/enhance`: speech enhancement
+
+Metadata: `atten_lim_db` (number in (0, 100], how much noise may be removed: about 6 is
+gentle, 12-20 moderate; omitted means the service default, which is unlimited unless
+`AUDIO_ENHANCE_ATTEN_LIMIT_DB` is set; 100 means unlimited), `output_format`
+(`pcm_f32le` default, or `pcm_s16le`), `return_mode` (`base64` default, or `file`), and
+`preserve_sample_rate` (default `true`: output at the upload's own rate; `false`: 48 kHz).
+
+Response: `audio_base64` *or* `audio_ref` (`file://…/<request_id>/enhanced.wav` under
+`AUDIO_OUTPUT_ROOT`), `format`, `sample_rate`, `channels`, `sample_count`, `duration`,
+`atten_lim_db` (omitted when unlimited), `levels`
+(`rms_dbfs_in/out`, `peak_dbfs_in/out`, `removed_rms_dbfs`), `model`, `source`, `timing`
+and `warnings`. **Guarantee:** the output has the same channel count (1 or 2) and the same
+`sample_count` as the decoded upload, at the same rate when `preserve_sample_rate` is set.
+The model runs at 48 kHz, and other rates are resampled around it. Channels are enhanced
+independently.
+
+### F.3 `POST /v1/beats`: beats, downbeats, tempo
+
+Metadata: only `request_id` and `asset_id`. Response: `beats` and `downbeats` (seconds,
+sorted), `tempo_bpm` (60 / median inter-beat interval), `beats_per_bar` (the most common
+count of beats per bar), `downbeats_available` (false for the librosa fallback, in which
+case `downbeats` is `[]`), `model`, `source`, `timing` and `warnings`. If beat_this cannot load
+or run and `AUDIO_BEATS_FALLBACK=librosa`, the response comes from librosa with a warning.
+

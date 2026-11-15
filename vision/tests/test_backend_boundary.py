@@ -47,8 +47,12 @@ def run_handoff(tmp_path, monkeypatch, video, metadata, explicit_override):
         assert payload['source']['sha256'] == metadata['source_sha256']
         assert payload['source']['asset_id'] == pid
         assert payload['source']['original_ref'].startswith((core_root/'projects'/pid/'original').as_uri())
-        assert files['audio'][0] == 'audio.wav' and files['audio'][2] == 'audio/wav'
-        raw = files['audio'][1].read()
+        # The adapter uploads a lossless FLAC encode; decode it back to WAV like the service would.
+        assert files['audio'][0] == 'audio.flac' and files['audio'][2] == 'audio/flac'
+        flac = tmp_path/'upload.flac'; flac.write_bytes(files['audio'][1].read())
+        wav = tmp_path/'upload.wav'
+        subprocess.run(['ffmpeg','-v','error','-y','-i',str(flac),'-c:a','pcm_s16le',str(wav)],check=True)
+        raw = wav.read_bytes()
         return httpx.Response(200, request=httpx.Request('POST', url), json={'stems':[{'name':'MOCK copy; not separated','audio_base64':base64.b64encode(raw).decode()}]})
     monkeypatch.setattr(media.httpx, 'post', mock_audio_post)
     # Deliberately run the worker synchronously: same work_once as the real background thread.

@@ -128,10 +128,13 @@ def refine(project, payload, job_id):
             updated = [stem(r) for r in db.execute('SELECT * FROM stems WHERE project_id=? AND id IN (?,?)', (pid, sid, rid))]
             output = {'stem_id': sid, 'residual_stem_id': rid, 'extracted_energy_db': level, 'passes': passes,
                       'refinement': record, 'stems': updated, 'stems_job_id': stems_job, 'warnings': warnings, 'inference': inference}
-            db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?", (json.dumps(output), job_id))
     except Exception:
         for path in created: path.unlink(missing_ok=True)
         shutil.rmtree(scratch, ignore_errors=True)
         raise
     shutil.rmtree(scratch, ignore_errors=True)
+    # Committed: the replaced files go before the job reports completion, so a client that sees
+    # "completed" never sees the old files still on disk.
     discard(pid, [target['path'], residual['path']])
+    with connect() as db:
+        db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?", (json.dumps(output), job_id))

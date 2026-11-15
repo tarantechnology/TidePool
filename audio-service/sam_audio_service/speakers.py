@@ -206,15 +206,24 @@ def window_pitch(mono: np.ndarray, starts: list[int], win: int) -> np.ndarray:
     n = (len(mono) - frame) // hop + 1
     if n <= 0:
         return np.full(len(starts), np.nan)
-    idx = np.arange(frame)[None, :] + hop * np.arange(n)[:, None]
-    x = mono[idx].astype(np.float64)
-    x -= x.mean(1, keepdims=True)
-    spec = np.fft.rfft(x, 2 * frame, axis=1)
-    ac = np.fft.irfft(np.abs(spec) ** 2, axis=1)[:, :frame]
-    ac /= ac[:, :1] + 1e-12
-    lag = lo + ac[:, lo:hi].argmax(1)
-    peak = ac[np.arange(n), lag]
-    energy = (x ** 2).mean(1)
+    # Do not materialize every 40 ms frame and FFT for the full recording at
+    # once: long uploads can otherwise consume hundreds of MB of temporary RAM.
+    lag = np.empty(n, dtype=np.int32)
+    peak = np.empty(n, dtype=np.float64)
+    energy = np.empty(n, dtype=np.float64)
+    offsets = np.arange(frame)[None, :]
+    for start in range(0, n, 512):
+        end = min(n, start + 512)
+        idx = offsets + hop * np.arange(start, end)[:, None]
+        x = mono[idx].astype(np.float64)
+        x -= x.mean(1, keepdims=True)
+        energy[start:end] = np.mean(x * x, axis=1)
+        spec = np.fft.rfft(x, 2 * frame, axis=1)
+        ac = np.fft.irfft(np.abs(spec) ** 2, axis=1)[:, :frame]
+        ac /= ac[:, :1] + 1e-12
+        local_lag = lo + ac[:, lo:hi].argmax(1)
+        lag[start:end] = local_lag
+        peak[start:end] = ac[np.arange(end-start), local_lag]
     voiced = (peak > 0.5) & (energy > np.percentile(energy, 50) * 0.1)
     f0 = np.where(voiced, RATE / lag, np.nan)
     out = []
@@ -233,14 +242,14 @@ def _cluster_pitch(pitch: np.ndarray, labels: np.ndarray, k: int) -> float:
 
 def _merge_close(emb: np.ndarray, labels: np.ndarray, same: float, maybe: float | None = None,
                  pitch: np.ndarray | None = None, max_ratio: float = 1.25) -> np.ndarray:
-    """Merge clusters that are one person: the clustering always proposes at least two.
+    """Heuristically merge similar clusters; the clustering proposes at least two.
 
-    Two clusters are one person when their average voices are very alike (cosine >= ``same``),
+    Merge when their average voices are very alike (cosine >= ``same``),
     or fairly alike (>= ``maybe``) and at the same pitch (medians within ``max_ratio``, about
     four semitones). Measured on the box with ECAPA on Demucs dialogue: one man over music
     0.78-0.82; a man and a woman shouting in the rain 0.63-0.72; other different people
-    0.08-0.58. Cosine alone cannot separate the first two; pitch can. The most alike pair
-    merges first, then everything is measured again."""
+    0.08-0.58. Pitch helped distinguish the first two examples but does not establish
+    identity. The most alike eligible pair merges first, then everything is measured again."""
     labels = labels.copy()
     maybe = same if maybe is None else maybe
     while True:

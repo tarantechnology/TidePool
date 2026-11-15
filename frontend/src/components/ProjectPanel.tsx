@@ -1,7 +1,8 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { HeardSound, Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
+import type { HeardSound, Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery, FxPreviewRequest, SfxPlacement } from '../api/backend'
+
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { musicCommand, separationCommand } from '../separationCommand'
@@ -9,14 +10,14 @@ import { separationSettings } from '../agent/separationSettings'
 import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
-import { replacementFollowup } from '../agent/replacementFollowup'
-import { requestsCensorship } from '../agent/censorshipIntent'
-import { requestsSoundReplacement } from '../agent/replacementIntent'
-import { extractLayerScope, resolveSourceLayer } from '../agent/layerScope'
+import { placementLines, sfxFollowup } from '../agent/sfxIntent'
+import { chatRoute } from '../agent/chatRoute'
+import { pitchShift } from '../fxCommand'
+import { resolveSourceLayer } from '../agent/layerScope'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject, processProject, renameStem, deleteStem, suggestSounds } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject, processProject, renameStem, deleteStem, suggestSounds, createSfxPreview, createFxPreview, fxRequest } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
 import { mediaCommand } from '../mediaCommand'
@@ -100,6 +101,8 @@ export interface ProjectPanelHandle {
   withLayers: <T>(label:string, work:(config:BackendConfig, projectId:string, saved:SavedStem[]) => Promise<T>, reload:boolean) => Promise<T>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
+  /** Preview a layer without one of its applied effects (a chip on its track). */
+  removeFx: (stemId: string, chipId: string, label: string) => Promise<void>
   /** Undo or redo a server step: put the layers back as a checkpoint saw them, then load them. */
   restoreTo: (checkpoint:string, label:string, how:'undo'|'redo') => Promise<void>
   /** Outflow from the top bar: save pending edits, render, and download. onStatus hears each stage. */
@@ -191,7 +194,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
   const [censorMatches,setCensorMatches]=useState<Array<{word:string;start:number;end:number}>>([])
-  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'|'censorship'>('separation')
+  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'fx'|'replacement'|'sfx'|'known-effect-replacement'|'censorship'>('separation')
+  const [sfxPlacements,setSfxPlacements]=useState<SfxPlacement[]>([])
+  const [fxInfo,setFxInfo]=useState<{label:string;op:string;targets:string[]}>({label:'',op:'',targets:[]})
   const [cinematicStyle,setCinematicStyle]=useState<CinematicStyle>('cinematic')
   const [directorRequest,setDirectorRequest]=useState('Make the whole video more cinematic')
   const [directorGoal,setDirectorGoal]=useState<DirectorIntent>('cinematic')
@@ -241,6 +246,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const mounted = useRef(true)
   const busyRef = useRef(false)
   const pendingReplacement = useRef('')
+  const pendingSfx = useRef('')
   const restored = useRef(false)
   useEffect(() => { mounted.current=true; return () => { mounted.current=false; abort.current?.abort() } }, [])
   useEffect(() => () => { if(candidateUrl) URL.revokeObjectURL(candidateUrl) },[candidateUrl])
@@ -296,7 +302,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try { const c = await createCheckpoint(cfg, p.projectId, p.label); onStep?.({label:p.label, before:p.before, after:c.id}) }
     catch { /* see beginStep */ }
   }
-  async function waitCandidate(cfg:BackendConfig, projectId:string, id:string) {
+  async function waitCandidate(cfg:BackendConfig, projectId:string, id:string, label='Preparing the preview') {
     const began=Date.now()
     for (;;) {
       if(!mounted.current)throw new Error('Preview cancelled')
@@ -304,18 +310,20 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if(job.status==='failed') { if(job.recovery) setReplacementRecovery(job.recovery); try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${projectId}`) } catch { /* Ignore unavailable storage. */ }; throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.') }
       if(job.status==='completed') {
         setReplacementRecovery(null)
-        setCensorMatches(job.provenance?.kind==='censorship' ? job.provenance.matches || [] : [])
+        setCensorMatches(job.provenance?.matches || [])
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateKind(job.provenance?.kind==='censorship' ? 'censorship' : job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
-        if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='replacement') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
+        setCandidateKind(job.provenance?.kind==='censorship' ? 'censorship' : job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='fx' ? 'fx' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='sfx_insert' ? 'sfx' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
+        setSfxPlacements(job.provenance?.kind==='sfx_insert' ? job.provenance.placements || [] : [])
+        if (job.provenance?.kind==='fx') setFxInfo({label:job.provenance.label || 'Effect',op:job.provenance.op || 'chain',targets:(job.provenance.targets || []).map(t=>t.id)})
+        if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='fx' && job.provenance?.kind!=='replacement' && job.provenance?.kind!=='sfx_insert') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
         if (job.provenance?.kind==='cinematic' || job.provenance?.kind==='director') { setCinematicSteps(job.provenance.steps || []); setCinematicStyle(job.provenance.style || 'cinematic'); if(job.provenance.kind==='director') { setDirectorRequest(job.provenance.request || 'Make the whole video more cinematic');setDirectorGoal(job.provenance.intent || 'cinematic');setDirectorChanges(job.provenance.changes || []) } }
         if(job.provenance?.kind==='replacement') {setReplacementPeaks(job.provenance.peak_times || []);setReplacementCount(job.provenance.requested_count ?? null);setReplacementMode(job.provenance.mode || 'replace');setReplacementEvents(job.provenance.events || []);setReplacementAlignment(job.provenance.alignment || 'peak')}
         setCandidateUrl(urls[0]);setMixUrl(urls[1]);setCurrentUrl(urls[2]);setCandidateId(id)
         setMessage(['Preview ready. Compare it above the timeline, then apply.',...(job.inference?.warnings || [])].join(' '));return
       }
-      setMessage(job.status === 'queued' ? 'Waiting for processing…' : job.stage==='transcribing' ? 'Listening for the spoken word…' : job.stage==='finding' ? 'Finding the sound…' : job.stage==='generating' ? 'Generating the sound effect…' : job.stage==='separating' ? 'Preparing the sound preview…' : jobProgressMessage({state:'processing',progress:job.progress,stage:job.stage ?? undefined},Date.now()-began,'Preparing the preview'));await new Promise(resolve=>setTimeout(resolve,1000))
+      setMessage(job.status === 'queued' ? 'Waiting for processing…' : job.stage==='transcribing' ? 'Listening for the spoken word…' : job.stage==='finding' ? 'Finding the sound…' : job.stage==='generating' ? 'Generating the sound effect…' : job.stage==='separating' ? 'Preparing the sound preview…' : jobProgressMessage({state:'processing',progress:job.progress,stage:job.stage ?? undefined},Date.now()-began,label));await new Promise(resolve=>setTimeout(resolve,1000))
 
     }
   }
@@ -467,6 +475,18 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`, JSON.stringify({id,sound:'Creative audio'})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(config,project.project_id,id)
   })
+  /** Render an effect plan as a candidate; it is compared, applied and undone like any preview. */
+  const previewFx = async (cfg:BackendConfig, info:ProjectInfo, body:FxPreviewRequest, label:string) => {
+    await flush()
+    setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('');setPrompt(label);setMessage('Rendering the effect…')
+    const id=await createFxPreview(cfg,info.project_id,body)
+    try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound:label})) } catch { /* Preview remains available in this tab. */ }
+    await waitCandidate(cfg,info.project_id,id)
+  }
+  const adjustFx = (direction:'more'|'less') => run(async () => {
+    if (!project || !candidateId) return
+    await previewFx(config,project,{op:'adjust',targets:fxInfo.targets.length?fxInfo.targets:['mix'],direction,base_candidate_id:candidateId},`${direction==='more'?'More':'Less'}: ${fxInfo.label}`)
+  })
   const adjustReplacement = (adjustment:ReplacementAdjustment) => run(async () => {
     if (!project || !candidateId) return
     setMessage('Updating sound placements…')
@@ -588,6 +608,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if (!project) return
     await splitInto(config, project, null)
   })
+  const removeFx = async (stemId:string, chipId:string, label:string) => {
+    if (busyRef.current) throw new Error('A project operation is already running. Please wait.')
+    if (!project) throw new Error('Open a project first.')
+    busyRef.current=true;setError('');setBusy(true)
+    try { await previewFx(config,project,{op:'remove',targets:[stemId],item_id:chipId},`Remove ${label}`) }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); throw e }
+    finally { busyRef.current=false;if(mounted.current)setBusy(false) }
+  }
   const applyClipEdit = async (stemId:string,operation:'move'|'delete',startOffset?:number) => {
     if(!project)throw new Error('Open a project first.')
     await flush();const saved=await getSavedStems(config,project.project_id);const stem=saved.find(s=>s.id===stemId)
@@ -612,7 +640,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       onStatus('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
-  useImperativeHandle(ref, () => ({ splitSong, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), exportAs: async (fmt, onStatus) => {
+  useImperativeHandle(ref, () => ({ splitSong, removeFx, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), exportAs: async (fmt, onStatus) => {
     if (!project?.metadata || !token) throw new Error('Upload a video or song first, then export.')
     if (fmt === 'mp4' && !project.metadata?.has_video) throw new Error('This project has no video. Export it as WAV or MP3.')
     if (busyRef.current) throw new Error('TidePool is still working on the last step. Export again when it finishes.')
@@ -807,16 +835,54 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         return {kind:'media',message:`Exported ${selectedFormat.toUpperCase()}.`}
       }
       const hasStems=Boolean(currentJob)
-      if (requestsCensorship(text)) {
+      const plannerInput={prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}
+      // Library sound effects ("vine boom when he says 'what'") come before "add X at 0:12" replacements; replace/swap and
+      // answers to a pending replacement question come first of all (chatRoute).
+      let prefetched:AgentPlan|null=null
+      const sfxText=sfxFollowup(pendingSfx.current,text) || text
+      pendingSfx.current=''
+      // Effects ("add reverb to the vocals") and inserts ("add a vine boom at 0:12") share words; chatRoute decides.
+      const route=chatRoute(sfxText,hasStems ? stems : [],pendingReplacement.current)
+      // Profanity beeps belong to the censorship flow (local transcription), ahead of every other route.
+      if (route.censorship) {
+        pendingReplacement.current=''
         setCandidateId(''); setPrompt('Censor profanity'); setMessage('Transcribing speech locally to find possible profanity…')
         const id=await createCensorshipPreview(cfg,current.project_id)
         await waitCandidate(cfg,current.project_id,id)
         return {kind:'censorship',description:null,remove:false,actions:[],message:'Censorship preview ready. Listen and review before applying.'}
       }
-      // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
-      const replacementText=replacementFollowup(pendingReplacement.current,text) || text
-      const replacement=requestsSoundReplacement(replacementText)
-      if (replacement) {
+      // A separate/remove ask that names one layer separates from that layer.
+      if (route.layer) {
+        pendingReplacement.current=''
+        const instruction=separationCommand(route.layer.text)
+        if(!instruction)return {kind:'clarify',description:null,remove:false,actions:[],message:'Describe the sound to isolate or remove from that layer.'}
+        const selected=resolveSourceLayer(route.layer.name,await getSavedStems(cfg,current.project_id))
+        const scope:EditScope=instruction.editScope || {action:instruction.remove?'mute':'keep'}
+        setPrompt(instruction.description);setMessage(`Separating from ${selected.name}…`)
+        await previewSound(cfg,current,instruction.description,scope,{},null,false,[],clampPasses(passes,choices),null,instruction.processingTime ?? null,undefined,selected.id)
+        return {kind:'separate',description:instruction.description,remove:instruction.remove,actions:[],message:'Layer separation preview ready. Compare before applying.'}
+      }
+      // A named library insert wins over a pending replacement question (chatRoute leaves route.replacement as its fallback).
+      if (route.sfx) {
+        const sfxPlan=await planProjectCommand(cfg,current.project_id,{...plannerInput,prompt:sfxText}).catch(()=>null)
+        if (sfxPlan?.kind==='insert' && sfxPlan.inserts?.length) {
+          pendingReplacement.current=''
+          setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effects');setMessage(sfxPlan.message || 'Placing sound effects…')
+          const id=await createSfxPreview(cfg,current.project_id,sfxPlan.inserts,sfxText)
+          try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound effects'})) } catch { /* Preview can still run. */ }
+          await waitCandidate(cfg,current.project_id,id,'Placing sound effects')
+          return {...sfxPlan,message:'Sound effect preview ready. Compare, then apply to add the new layers.'}
+        }
+        if (sfxPlan?.kind==='clarify' && !(sfxPlan.sfx_unmatched && route.replacement)) {
+          if (sfxPlan.sfx_needs_time && sfxPlan.sfx_query) pendingSfx.current=sfxPlan.sfx_query
+          setMessage(sfxPlan.message); return sfxPlan
+        }
+        if (sfxPlan && sfxPlan.kind!=='clarify') prefetched=sfxPlan
+      }
+      // chatRoute owns the precedence: censorship → layer scope → replacement (replace/swap, a pending replacement's follow-up) → insert → fx → planner/separation.
+      const fxLocal=route.fx
+      if (route.replacement) {
+        const replacementText=route.replacement
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
         const isAddition=/\b(?:add|insert|place|generate|put|trigger|cue|overlay)\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
@@ -829,24 +895,25 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         return {kind:'replacement',description:null,remove:false,actions:[],message:'Replacement preview ready. Compare before applying.'}
       }
       pendingReplacement.current=''
-      const scoped=extractLayerScope(text)
-      if (scoped) {
-        const instruction=separationCommand(scoped.text)
-        if(!instruction)return {kind:'clarify',description:null,remove:false,actions:[],message:'Describe the sound to isolate or remove from that layer.'}
-        const selected=resolveSourceLayer(scoped.name,await getSavedStems(cfg,current.project_id))
-        const scope:EditScope=instruction.editScope || {action:instruction.remove?'mute':'keep'}
-        setPrompt(instruction.description);setMessage(`Separating from ${selected.name}…`)
-        await previewSound(cfg,current,instruction.description,scope,{},null,false,[],clampPasses(passes,choices),null,instruction.processingTime ?? null,undefined,selected.id)
-        return {kind:'separate',description:instruction.description,remove:instruction.remove,actions:[],message:'Layer separation preview ready. Compare before applying.'}
-      }
       const local=separationCommand(text), music=musicCommand(text)
 
       const directCinematic = cinematicCommand(text, candidateKind==='cinematic'||candidateKind==='director')
       const directCreative = creativeCommand(text)
       const directTimestamp = local?.processingTime !== undefined
-      let result:AgentPlan=directTimestamp && local ? {kind:'separate',description:local.description,remove:local.remove,edit_scope:local.editScope || {action:local.remove?'mute':'keep'},processing_time:local.processingTime,actions:[],message:''} : directCinematic || directCreative ? {kind:'director',description:null,remove:false,actions:[],message:''} : await planProjectCommand(cfg,current.project_id,{prompt:text, stems:hasStems ? stems.map(({id,label,kind,duration:d})=>({id,label,kind,duration:d})) : [],tracks:hasStems ? tracks : [],duration:hasStems ? duration : (current.metadata?.duration || duration),has_project_stems:hasStems,selected_visual:selectedVisual ? {label:selectedVisual.label,start:selectedVisual.interval.start_seconds,end:selectedVisual.interval.end_seconds} : null}).catch((e:unknown):AgentPlan=>{
+      let result:AgentPlan=directTimestamp && local ? {kind:'separate',description:local.description,remove:local.remove,edit_scope:local.editScope || {action:local.remove?'mute':'keep'},processing_time:local.processingTime,actions:[],message:''} : directCinematic || directCreative ? {kind:'director',description:null,remove:false,actions:[],message:''} : await (prefetched ? Promise.resolve(prefetched) : planProjectCommand(cfg,current.project_id,plannerInput)).catch((e:unknown):AgentPlan=>{
+        // Without the AI planner, common effect asks still work through the rule-based parser.
+        if(fxLocal)return fxLocal.kind==='clarify' ? {kind:'clarify',description:null,remove:false,actions:[],message:fxLocal.message} : {kind:fxLocal.kind,fx:fxLocal.fx,description:null,remove:false,actions:[],message:fxLocal.message}
         if(music)return {kind:'separate',description:music.description,remove:music.remove,separation_mode:'music_stems',stems:music.stems,...(music.remove?{edit_scope:{action:'mute'}}:{}),use_visual:false,actions:[],message:''}
         if(!local)throw e;return {kind:'separate',description:local.description,remove:local.remove,...(local.editScope?{edit_scope:local.editScope}:{}),use_visual:false,actions:[],message:''}})
+      // "Make the vocals higher pitch" has a default amount (±3 semitones); never ask for one.
+      if (result.kind==='clarify' && fxLocal?.kind==='fx' && pitchShift(sfxText)!==null) result={kind:'fx',fx:fxLocal.fx,description:null,remove:false,actions:[],message:fxLocal.message}
+      if ((result.kind==='fx' || result.kind==='duck' || result.kind==='loudness') && result.fx) {
+        const plan=result.fx
+        const label=result.kind==='duck' ? 'Auto-ducking' : result.kind==='loudness' ? `Loudness ${plan.loudness_lufs ?? -14} LUFS` : plan.adjust==='remove' ? 'Remove effect' : plan.adjust ? `${plan.adjust==='more'?'More':'Less'} effect` : text
+        await previewFx(cfg,current,fxRequest(result.kind,plan,candidateKind==='fx' && candidateId ? candidateId : undefined),label)
+        result.message='Effect preview ready. Compare it, then apply or undo.'
+        return result
+      }
       if (result.kind==='sound_effect') {
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effect');setMessage('Planning the sound effect…')
         const id=await createAutomaticReplacement(cfg,current.project_id,text)
@@ -1039,21 +1106,32 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         </div>
         <button type="button" className="rounded-full px-2 py-1 text-xs text-muted hover:bg-tint/[0.06] hover:text-fg" onClick={() => { setCandidateId(''); if (project) { try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ } } setMessage('Preview discarded.') }}>Discard</button>
       </div>
-      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl} showTarget={candidateKind==='separation' || candidateKind==='replacement' || candidateKind==='known-effect-replacement'} seekTo={previewSeek}/>
+      <CandidateComparison key={candidateId} original={currentUrl} edited={mixUrl} target={candidateUrl} showTarget={candidateKind==='separation' || candidateKind==='replacement' || candidateKind==='sfx' || candidateKind==='known-effect-replacement'} seekTo={previewSeek}/>
       {candidateKind==='separation' && processingRange && <div className="mt-2 text-xs text-muted">Processed {processingRange.start.toFixed(2)}–{processingRange.end.toFixed(2)} seconds. <button type="button" className="text-accent underline" onClick={()=>{setCandidateId('');setOpenStep('sound');setMessage('Adjust the processing range, then preview again.')}}>Adjust range</button></div>}
       {candidateKind==='separation' && candidateWarnings.length>0 && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       {(candidateKind==='cinematic' || candidateKind==='director') && <div className="mt-2 text-xs text-muted"><p>{candidateKind==='director'?'Planned changes':'Whole-mix treatment'}: {cinematicSteps.join(' · ')}. No new music or sounds are added.</p>{candidateKind==='director' && directorChanges.map(change=><div key={change.target_stem_id} className="mt-2 flex items-center justify-between gap-2"><span>{change.enabled ? change.action : 'Disabled'}: {change.label} ({change.intervals.map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')})</span><button type="button" disabled={busy} className={secondary} onClick={()=>toggleDirectorChange(change)}>{change.enabled?'Disable':'Enable'}</button></div>)}{candidateWarnings.map(w=><p key={w} className="mt-1">{w}</p>)}<div className="mt-2 flex flex-wrap gap-1">{(['subtle','cinematic','dramatic'] as const).map(style=><button key={style} type="button" disabled={busy || style===cinematicStyle} className={secondary} onClick={()=>cinematic(style)}>{style==='cinematic'?'Balanced':style==='dramatic'?'More dramatic':'Subtle'}</button>)}</div></div>}
       {candidateKind==='replacement' && <div className="mt-3 space-y-2 text-xs text-muted">
-        <p>{replacementMode==='add'?'Added effects':'Detected sound placements'}: {replacementEvents.filter(e=>e.enabled).length || replacementPeaks.length} enabled.{replacementCount!==null ? ` Requested ${replacementCount} sound${replacementCount===1?'':'s'} at each placement.` : ''}</p>
+        <p>{replacementMode==='add'?'Added effects':'Detected sound placements'}: {replacementEvents.length ? replacementEvents.filter(e=>e.enabled).length : replacementPeaks.length} enabled.{replacementCount!==null ? ` Requested ${replacementCount} sound${replacementCount===1?'':'s'} at each placement.` : ''}</p>
+        {censorMatches.length>0 && <p>Detected words: {censorMatches.map((m,i)=><button key={i} type="button" className="mr-2 underline" onClick={()=>onSeek(m.start)}>{m.word} ({m.start.toFixed(2)}s)</button>)}</p>}
         {replacementEvents.length>0 && <><div className="flex flex-wrap gap-1" role="group" aria-label="Alignment"><button type="button" className={secondary} disabled={busy || replacementAlignment==='peak'} onClick={()=>adjustReplacement({operation:'alignment',alignment:'peak'})}>Align peaks</button><button type="button" className={secondary} disabled={busy || replacementAlignment==='onset'} onClick={()=>adjustReplacement({operation:'alignment',alignment:'onset'})}>Align attacks</button></div>
-          <p>Listen to each match. {replacementMode==='replace'?'Disabling it restores the separated original at that point.':'Disabling it removes the added effect.'}</p>
+          <p>Listen to each match. {censorMatches.length>0?'Disabling a detected word restores the original audio at that point.':replacementMode==='replace'?'Disabling it restores the separated original at that point.':'Disabling it removes the added effect.'}</p>
           <div className="max-h-44 space-y-1 overflow-y-auto">{replacementEvents.map((event,index)=>{const t=(replacementAlignment==='onset'?event.source_onset:event.source_peak)+event.offset;return <div key={event.id} className="flex flex-wrap items-center gap-1 rounded-lg bg-surface-2 p-1"><span className="w-16 font-mono">{t.toFixed(2)}s</span><button type="button" className={secondary} onClick={()=>setPreviewSeek({time:Math.max(0,t-.25),id:Date.now()})}>Listen</button><button type="button" className={secondary} disabled={busy || !event.enabled} aria-label={`Move sound ${index+1} earlier`} onClick={()=>adjustReplacement({operation:'move',event_id:event.id,time:Math.max(0,t-.03)})}>−30ms</button><button type="button" className={secondary} disabled={busy || !event.enabled} aria-label={`Move sound ${index+1} later`} onClick={()=>adjustReplacement({operation:'move',event_id:event.id,time:t+.03})}>+30ms</button><button type="button" className={secondary} disabled={busy} onClick={()=>adjustReplacement({operation:'toggle',event_id:event.id,enabled:!event.enabled})}>{event.enabled?'Disable':'Enable'}</button></div>})}</div>
           <div className="flex items-end gap-1"><label className="flex-1">Add placement at (seconds)<input className={field} type="number" min={0} max={durationSeconds || 0} step="0.01" value={replacementAddTime} onChange={e=>setReplacementAddTime(e.target.value)}/></label><button type="button" className={secondary} disabled={busy || !replacementAddTime.trim()} onClick={()=>adjustReplacement({operation:'add',time:Number(replacementAddTime)})}>Add</button></div>
           <p>After applying, each effect is its own timeline layer, so you can adjust its volume or timing separately.</p></>}
         {candidateWarnings.map(w=><p key={w}>{w}</p>)}{error && <p role="alert" className="text-red-600">{error}</p>}<p>Compare the mix and listen for missing background sounds before applying.</p>
       </div>}
       {candidateKind==='censorship' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}<p className="mt-1">Detected {censorMatches.length} possible {censorMatches.length===1?'match':'matches'}:</p><div className="max-h-24 overflow-auto">{censorMatches.map((m,i)=><button key={i} type="button" className="mr-2 underline" onClick={()=>onSeek(m.start)}>{m.word} ({m.start.toFixed(2)}s)</button>)}</div></div>}
+      {candidateKind==='sfx' && <div className="mt-3 space-y-1 text-xs text-muted">
+        <p>New sound layers (CC0 TidePool pack). "Just the sound" plays only the inserted effects.</p>
+        <ul className="max-h-40 space-y-1 overflow-y-auto">{placementLines(sfxPlacements).map((line,index)=><li key={sfxPlacements[index].id} className="flex items-center justify-between gap-2 rounded-lg bg-surface-2 p-1"><span>{line}</span><button type="button" className={secondary} onClick={()=>setPreviewSeek({time:Math.max(0,sfxPlacements[index].start-.5),id:Date.now()})}>Listen</button></li>)}</ul>
+        {candidateWarnings.map(w=><p key={w}>{w}</p>)}
+      </div>}
       {candidateKind==='effects' && <p className="mt-2 text-xs text-muted">Effects are rendered into the selected layer on apply. Undo restores the previous audio. Listen for clipping.</p>}
+      {candidateKind==='fx' && <div className="mt-2 space-y-1 text-xs text-muted">
+        <p><span className="font-medium text-fg">{fxInfo.label}</span>. Applying renders it into the layer; each effect shows as a chip on its track, and Undo restores the previous audio.</p>
+        {candidateWarnings.filter(w=>!/Undo restores/.test(w)).map(w=><p key={w}>{w}</p>)}
+        {(fxInfo.op==='chain' || fxInfo.op==='adjust') && <div className="flex flex-wrap gap-1 pt-1" role="group" aria-label="Effect amount"><button type="button" className={secondary} disabled={busy} onClick={()=>adjustFx('less')}>Less</button><button type="button" className={secondary} disabled={busy} onClick={()=>adjustFx('more')}>More</button></div>}
+      </div>}
       {candidateKind==='known-effect-replacement' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       <div className="mt-3 flex items-center gap-2">
         <button className={`${button} flex-1 py-2 text-sm`} disabled={busy} onClick={useRetry}>Apply to timeline</button>

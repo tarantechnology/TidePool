@@ -194,3 +194,14 @@ def test_window_pitch_reads_a_voice():
     for hz in (110, 260):
         x = sum(np.sin(2 * np.pi * hz * k * t) / k for k in range(1, 6)).astype(np.float32)
         assert abs(window_pitch(x, [0], 150)[0] - hz) < 0.05 * hz
+
+
+def test_window_pitch_handles_windows_across_batches_and_silence():
+    from sam_audio_service.speakers import window_pitch
+    sr = 16000
+    t = np.arange(sr * 16) / sr
+    x = np.sin(2 * np.pi * 220 * t).astype(np.float32)
+    x[sr * 13:] = 0
+    pitch = window_pitch(x, [0, 600, 1000, 1350], 150)
+    assert np.allclose(pitch[:3], 220, rtol=0.05)
+    assert np.isnan(pitch[3])

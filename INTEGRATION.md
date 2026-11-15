@@ -241,6 +241,24 @@ subsequent effect applications build on it. Earlier cinematic processing is
 already rendered and cannot be adjusted independently. Extreme boosts can clip;
 listen and adjust layer volume as needed.
 
+### Chat effects, ducking and loudness
+
+Command-bar asks such as "add reverb to the vocals", "make the drums sound like a
+phone", "slowed + reverb", "duck the music under the voice" or "normalize for YouTube"
+plan as `kind` `fx`, `duck` or `loudness` (OpenAI planner, or the rule-based
+`frontend/src/fxCommand.ts` without a key) and render through
+`POST /api/projects/{id}/fx-preview`, a candidate like every other preview. The body is
+`{op: chain|adjust|remove|duck|loudness, targets: [stem id…] | ["mix"], preset?, chain?,
+interval?, speed?, direction?, item_id?, base_candidate_id?, duck?: {source, depth_db?},
+loudness_lufs?}`. Effect types, presets and parameter ranges live in `app/fx_schema.py`;
+values are clamped there and never become filter strings from outside. Each applied effect
+is a chip in the stem's nullable `fx` column (API: `stem.fx.items`); the layer keeps its
+unprocessed audio so a chip can be removed or adjusted ("more"/"less") by re-rendering.
+Every render is limited to -1 dBTP and keeps length, rate and channels; the whole-song
+speed presets (slowed, nightcore, sped up) change every layer's length together and are
+refused for video projects. Ducking writes gain automation (at most 64 keyframes) and
+renders nothing; mix loudness is a linear gain capped by the mix's true peak.
+
 ## Add or replace sound effects
 
 Use **Add or replace sounds** in the editor or enter a command such as “replace every
@@ -403,6 +421,8 @@ the separated source and is restored through candidate undo, not by muting an ef
 An explicit prompt such as “beep out any cuss words” starts a preview using local word-timed speech recognition. The authenticated `POST /api/projects/{pid}/censorship-preview` creates a standard asynchronous candidate; use the existing candidate status, audio, apply, and undo endpoints. Review the highlighted matches and listen to the comparison before applying. The detector matches a limited list of English profanity by whole word; ASR can miss, mishear, or hallucinate words and timestamps, and this feature cannot guarantee complete censorship. It currently supports English profanity, not custom word lists or a general-purpose transcript editor.
 
 Requests such as `Add a gong sound after the word "quant" has been said` use the same local transcription runtime to find whole-word occurrences in the current audible mix, generate one sound effect, and preview editable copies aligned near the end of each matching word. Speech recognition, timing, and generated sound content are approximate; a missing or misheard word produces a clear error rather than an invented placement. The transcript is not persisted. Generated sounds require the separately configured Stable Audio runtime and model.
+
+`Replace all cuss words with a meow sound` uses the local English profanity transcription, mutes the detected word windows, and places a generated effect at each word in one revision-checked candidate. Disabling a placement restores the original word at that position; undo restores all original layers. If no isolated speech layer is selected or uniquely available, the audible mix is muted during those windows, including background audio. The match list and preview must be reviewed: transcription can miss or mishear words, and the profanity list is not exhaustive.
 
 After **Find objects**, a request such as `Add a gong every time we see person 5` uses the displayed track ID from the current object analysis. It generates one effect and previews a copy at the start of each contiguous detected appearance, bridging gaps of at most 0.3 seconds; automatic detection requires three observed frames per appearance. Placements are editable and apply/undo uses the normal candidate flow. Video identity and analysis revisions are checked again at apply. The automatic scan currently covers at most the first 30 seconds; the preview warns when a video is longer. Tracking can drop or switch IDs and does not establish a person's identity across cuts, so the user must review the placements.
 

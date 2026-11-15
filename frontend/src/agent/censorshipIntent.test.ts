@@ -9,5 +9,6 @@ describe('censorship requests', () => {
   it('does not infer consent from unrelated or negated requests', () => {
     expect(requestsCensorship('make the beep louder')).toBe(false)
     expect(requestsCensorship("don't censor profanity")).toBe(false)
+    expect(requestsCensorship('Replace all cuss words with a meow sound')).toBe(false)
   })
 })

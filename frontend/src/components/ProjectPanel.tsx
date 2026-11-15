@@ -593,6 +593,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         result.message='Effect preview ready. Compare it, then apply or undo.'
         return result
       }
+      // The planner may also split asks the local splitter keeps whole ("echo on the vocals and reverb on the drums").
+      if (result.kind==='multi' && result.steps?.length) {
+        await previewMulti(cfg,current,result.steps,text)
+        return {...result,message:`Preview ready: ${result.steps.length} edits. Compare, untick any you don't want, then apply.`}
+      }
       if(result.kind==='clip_edit') {
         const edit=result.clip_edit
         if(!edit || edit.operation!=='move' || !stems.some(s=>s.id===edit.stem_id && s.effectGroupId) || !Number.isFinite(edit.start_offset) || edit.start_offset<0)throw new Error('The clip edit could not be verified.')

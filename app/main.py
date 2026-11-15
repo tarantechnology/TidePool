@@ -392,6 +392,7 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
             return {'kind':'separate','description':description(name),'remove':True,'actions':[], 'guidance':{'anchors':[]},'edit_scope':{'action':'mute','interval':{'start':parsed['start'],'end':parsed['end']}},'message':'Preview the timed mute before applying it.'}
     try: result=agent_plan(body)
     except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+    if result.get('kind')=='multi': return multi.finalize(result,body.duration,service_features())
     return finalize_insert(result,body.duration,service_features()) if result.get('kind')=='insert' else result
 
 @app.get('/api/projects/{pid}/capabilities')

@@ -18,6 +18,7 @@ import type { ProjectStemsState } from '../state/projectStems'
 import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
+import { mediaCommand } from '../mediaCommand'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -63,7 +64,7 @@ export interface ProjectPanelHandle {
   separateVideo: (file: File, description: string, remove: boolean) => Promise<void>
   uploadMedia: (file:File) => Promise<void>
   visualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
-  planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan>
+  planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan | {kind:'media'; message:string}>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
 }
@@ -452,6 +453,32 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       }
       if (!current || !currentToken) throw new Error('Upload a video or song first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
+      const media=mediaCommand(text)
+      if (media) {
+        if (media.kind === 'invalid') throw new Error(media.message)
+        const selectedFormat=(media.kind === 'trim' ? media.exportFormat : media.format) ?? format
+        if (selectedFormat === 'mp4' && !current.metadata?.has_video) throw new Error('This project has no video. Export as WAV or MP3 instead.')
+        if (media.kind === 'trim') {
+          if (!current.metadata || media.end > current.metadata.duration + 1e-6) throw new Error(`That range extends beyond the ${current.metadata?.duration.toFixed(2) ?? 'unknown'}-second media duration.`)
+          setTrimStart(String(media.start)); setTrimEnd(String(media.end)); setOpenStep('export')
+          if (clips.length) { changeClips([]); setSelectedClip(null) }
+          if (media.exportFormat) setFormat(media.exportFormat)
+          const description=`Keeping ${media.start}–${media.end} seconds for export.${clips.length ? ' The clip list was cleared; use Undo clip edit to restore it.' : ''}`
+          if (!media.download) { setMessage(description); return {kind:'media',message:description} }
+          setMessage('Rendering your export…')
+          const id=await startExport(cfg,current.project_id,selectedFormat,{start:media.start,end:media.end})
+          await finishExport(id,selectedFormat)
+          return {kind:'media',message:`Exported ${media.start}–${media.end} seconds as ${selectedFormat.toUpperCase()}.`}
+        }
+        const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : current.metadata?.duration
+        if (!clips.length && (!trimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (current.metadata?.duration || 0) + 1e-6)) throw new Error('Choose a valid trim range within the media duration.')
+        if (media.format) setFormat(media.format)
+        setMessage('Rendering your export…')
+        const trim=clips.length || end === undefined || (start === 0 && !trimEnd.trim()) ? undefined : {start,end}
+        const id=await startExport(cfg,current.project_id,selectedFormat,trim,clips.length ? clips : undefined)
+        await finishExport(id,selectedFormat)
+        return {kind:'media',message:`Exported ${selectedFormat.toUpperCase()}.`}
+      }
       const hasStems=Boolean(currentJob)
       // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
       const replacementText=replacementFollowup(pendingReplacement.current,text) || text

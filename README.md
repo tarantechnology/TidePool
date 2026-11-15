@@ -33,6 +33,8 @@ Open **http://localhost:5173**. The API documentation is at http://localhost:800
 
 Open **Trim and export** to keep a start/end range, either by entering seconds or setting each boundary at the playhead. Reset restores the full range. Trimming is applied to the exported copy, with the mixed audio and video kept together; the timeline and original media remain intact. You can also export a trimmed original before separating sounds.
 
+In the Current command bar, say or type “trim from 3 seconds to 4 seconds” to keep that range, then “export the video” to download it. You can also say “trim 3 to 4 seconds and export as MP4”. The microphone button appears in browsers that support speech recognition and requires microphone permission; recognition is provided by the browser. Natural-language trim replaces the clip sequence (use Undo clip edit to restore it). The source timeline still plays in full; the chosen trim applies to export.
+
 For a sequence, use **Add range as clip**, select a clip, and copy/paste, split at the source playhead, delete, or move it. Clip undo/redo buttons cover these sequence edits; the header undo/redo controls cover layer settings. Exports use the clips in the listed order and preserve the audio mix at the original source times. Clearing the list returns to exporting the single trim range. Clip sequences and their history are kept in the open browser session only; they are not restored after a refresh. The player and timeline still show the original, so review the exported file to see the assembled sequence.
 4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
 

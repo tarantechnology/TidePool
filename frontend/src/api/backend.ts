@@ -488,7 +488,20 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'fx'|'duck'|'loudness'|'clarify'; fx?:FxPlan|null; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'fx'|'duck'|'loudness'|'insert'|'clarify'; fx?:FxPlan|null; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
+  /** kind 'insert': library sound effects to place as new layers. */
+  inserts?:SfxInsert[]|null
+  /** A clarify because no library sound matched; another flow (generation) may still handle it. */
+  sfx_unmatched?:boolean
+  /** A clarify because the anchor (a word, beat or moment) cannot be found without a timestamp. */
+  sfx_needs_time?:boolean
+  /** The sound a clarify was about, so a bare timestamp reply can complete the request. */
+  sfx_query?:string }
+
+/** Where an inserted sound plays. Word and beat anchors need the audio service's timing endpoints. */
+export interface SfxAnchor { type:'time'|'start'|'end'|'word'|'beat'|'pause'; value:number|string|null; relation:'at'|'before'|'after'; occurrence:number|null }
+export interface SfxInsert { sfx_query:string; sfx_id?:string; title?:string; anchor:SfxAnchor; offset:number; gain_db:number; duck:boolean }
+export interface SfxPlacement { id:string; sfx_id:string; title:string; anchor_time:number; start:number; end:number; gain_db:number; duck:boolean }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -565,7 +578,7 @@ export async function adjustReplacementPreview(config:BackendConfig,candidateId:
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/replacement-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adjustment)})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{op?:string;label?:string;item?:{id:string;label:string}|null;targets?:Array<{id:string;name:string}>;speed?:number;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{placements?:SfxPlacement[];licences?:Array<{id:string;title:string;licence:string;author:string;source_url:string}>;op?:string;label?:string;item?:{id:string;label:string}|null;targets?:Array<{id:string;name:string}>;speed?:number;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})
@@ -616,4 +629,10 @@ export async function createReplacementPreview(config:BackendConfig,projectId:st
 
 export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string):Promise<string> {
   return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text})})).json()) as {candidate_id:string}).candidate_id
+}
+
+/** Preview library sound effects as new layers; apply and undo like any candidate. */
+export async function createSfxPreview(config:BackendConfig,projectId:string,inserts:SfxInsert[],prompt?:string):Promise<string> {
+  const body={inserts:inserts.map(({sfx_query,sfx_id,anchor,offset,gain_db,duck})=>({sfx_query,sfx_id,anchor,offset,gain_db,duck})),request:prompt ?? null}
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/sfx-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()) as {candidate_id:string}).candidate_id
 }

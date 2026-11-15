@@ -1,6 +1,4 @@
 import type { FxChip, FxPlan } from './api/backend'
-import { replacementFollowup } from './agent/replacementFollowup'
-import { requestsSoundReplacement } from './agent/replacementIntent'
 
 /**
  * Rule-based reading of common effect asks, so layer effects work without the AI planner:
@@ -93,8 +91,9 @@ function findPreset(text: string, anywhere: boolean): string | null {
   return null
 }
 
-/** Asks that belong to sound replacement or separation, never to the effect parser. */
-const REPLACEMENT_ASK = /\b(?:replace|replacing|swap|substitute)\b|\badd\s+.+?\s+at\s+\d/
+/** Asks that belong to sound replacement or separation, never to the effect parser. ("Add a monster roar at 12"
+ * falls out because "monster" names a sound there; "add reverb to the vocals at 0:12" is still an effect.) */
+const REPLACEMENT_ASK = /\b(?:replace|replacing|swap|substitute)\b|\binstead of\b/
 const SEPARATION_ASK = /\b(?:isolate|separate|extract|split|solo)\b|\bpull out\b|\bkeep only\b/
 
 const MUSIC_WORDS = /\b(?:music|instrumental|backing track|bgm|beat)\b/
@@ -242,20 +241,3 @@ export function fxCommand(raw: string, stems: FxStem[] = []): FxCommand | null {
   }
 }
 
-export type CommandRoute =
-  | { kind: 'replacement'; text: string }
-  | { kind: 'fx'; command: FxCommand }
-  | null
-
-/**
- * How the command bar routes an ask before the planner: an answer to a pending replacement question
- * ("at 12") stays a replacement; effect-shaped asks ("make the drums sound like a phone") are layer
- * effects; replace/swap/"add X at N"/"turn X into Y" asks are sound replacements; anything else is null.
- */
-export function routeCommand(text: string, pendingReplacement: string, stems: FxStem[] = []): CommandRoute {
-  const followup = replacementFollowup(pendingReplacement, text)
-  if (followup) return { kind: 'replacement', text: followup }
-  const fx = fxCommand(text, stems)
-  if (fx) return { kind: 'fx', command: fx }
-  return requestsSoundReplacement(text) ? { kind: 'replacement', text } : null
-}

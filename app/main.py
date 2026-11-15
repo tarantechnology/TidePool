@@ -333,6 +333,12 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .fx_schema import mentions_effect
     if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or (re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I) and not mentions_effect(body.prompt)):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
+    # SFX inserts ("vine boom when he says 'what'") parse offline first; see app/sfx_plan.py.
+    from .sfx_plan import finalize as finalize_insert, rule_plan
+    from .sfx_insert import service_features
+    quick=rule_plan(body.prompt)
+    if quick is not None:
+        return finalize_insert(quick,body.duration,service_features()) if quick['kind']=='insert' else quick
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -344,15 +350,21 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
             if matches:
                 return {'kind':'edit','description':None,'remove':False,'actions':[{'type':'mute_range','stemId':matches[0]['id'],'start':parsed['start'],'end':parsed['end']}],'message':'Timed mute ready.'}
             return {'kind':'separate','description':description(name),'remove':True,'actions':[], 'guidance':{'anchors':[]},'edit_scope':{'action':'mute','interval':{'start':parsed['start'],'end':parsed['end']}},'message':'Preview the timed mute before applying it.'}
-    try: return agent_plan(body)
+    try: result=agent_plan(body)
     except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+    return finalize_insert(result,body.duration,service_features()) if result.get('kind')=='insert' else result
 
 @app.get('/api/projects/{pid}/capabilities')
 def service_capabilities(pid: str, authorization: str | None=Header(None)):
     auth(pid,authorization)
     from .media import capabilities
     from .detector import status
-    return {**capabilities(),'vision':status()}
+    from .sfx_insert import service_features
+    from .sfx_library import sounds
+    result={**capabilities(),'vision':status()}
+    for key,value in service_features().items(): result.setdefault(key,value)
+    result['sfx_library']={'available':True,'sounds':len(sounds())}
+    return result
 
 def source_kind(p):
     """Routing tie-breaker for the audio service: an upload without a video stream is likely a song."""
@@ -526,6 +538,49 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':body.request}),'status':'queued'}
+
+class SfxInsertRequest(BaseModel):
+    inserts: list[dict] = Field(min_length=1,max_length=10)
+    request: str | None = Field(default=None,max_length=2000)
+    duck_db: float = Field(default=6.0,ge=1,le=18,allow_inf_nan=False)
+
+@app.post('/api/projects/{pid}/sfx-preview',status_code=202)
+def sfx_preview(pid: str, body: SfxInsertRequest, authorization: str | None=Header(None)):
+    """Preview library sound effects as new layers (see app/sfx_insert.py); apply/undo as any candidate."""
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    from .sfx_insert import service_features, validate_request
+    features=service_features()
+    try:
+        source=safe_path(pid,p['audio']);duration=probe(source)['duration']
+        inserts=validate_request(body.inserts,duration,features)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    try:
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_sfx_insert':True,'_candidate':snapshot,'_features':features,'inserts':inserts,'request':body.request,'duck_db':body.duck_db}),'status':'queued'}
+
+@app.get('/api/sfx')
+def sfx_catalog():
+    """The CC0 sound library (metadata only). Static and project-independent."""
+    from .sfx_library import manifest, public, sounds
+    return {'pack':manifest()['pack'],'version':manifest()['version'],'sounds':[public(s) for s in sounds()]}
+
+@app.get('/api/sfx/search')
+def sfx_search(q: str, limit: int = 5):
+    from .sfx_library import search
+    if not q.strip() or len(q)>200: raise HTTPException(422,'Enter a sound to search for.')
+    return {'results':search(q,max(1,min(limit,20)))}
+
+@app.get('/api/sfx/{sid}/audio')
+def sfx_audio(sid: str):
+    from .sfx_library import asset_file
+    try: return FileResponse(asset_file(sid),media_type='audio/flac')
+    except ValueError as exc: raise HTTPException(404,str(exc)) from exc
 
 class LayerEffectsRequest(BaseModel):
     stem_id: str | None = Field(default=None,max_length=100)

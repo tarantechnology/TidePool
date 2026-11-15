@@ -675,6 +675,22 @@ class DirectorRequest(BaseModel):
     intent: Literal['cinematic','dramatic','cool','funny'] = 'cinematic'
     style: Literal['subtle','cinematic','dramatic'] = 'cinematic'
 
+@app.post('/api/projects/{pid}/censorship-preview',status_code=202)
+def censorship_preview(pid: str, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    from .censorship import available
+    if not available(): raise HTTPException(503,'Local transcription is not configured. Install faster-whisper and configure a local model.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    try:
+        source=safe_path(pid,p['audio'])
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_censorship':True,'_candidate':snapshot}),'status':'queued'}
+
 @app.post('/api/projects/{pid}/director-preview',status_code=202)
 def director_preview(pid: str, body: DirectorRequest, authorization: str | None=Header(None)):
     p=auth(pid,authorization)

@@ -11,12 +11,13 @@ import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
 import { replacementFollowup } from '../agent/replacementFollowup'
+import { requestsCensorship } from '../agent/censorshipIntent'
 import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { extractLayerScope, resolveSourceLayer } from '../agent/layerScope'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -108,7 +109,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [candidateWarnings,setCandidateWarnings]=useState<string[]>([])
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
-  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'>('separation')
+  const [censorMatches,setCensorMatches]=useState<Array<{word:string;start:number;end:number}>>([])
+  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'|'censorship'>('separation')
   const [cinematicStyle,setCinematicStyle]=useState<CinematicStyle>('cinematic')
   const [directorRequest,setDirectorRequest]=useState('Make the whole video more cinematic')
   const [directorGoal,setDirectorGoal]=useState<DirectorIntent>('cinematic')
@@ -197,10 +199,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if(job.status==='failed') { if(job.recovery) setReplacementRecovery(job.recovery); try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${projectId}`) } catch { /* Ignore unavailable storage. */ }; throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.') }
       if(job.status==='completed') {
         setReplacementRecovery(null)
+        setCensorMatches(job.provenance?.kind==='censorship' ? job.provenance.matches || [] : [])
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
+        setCandidateKind(job.provenance?.kind==='censorship' ? 'censorship' : job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
         if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='replacement') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
         if (job.provenance?.kind==='cinematic' || job.provenance?.kind==='director') { setCinematicSteps(job.provenance.steps || []); setCinematicStyle(job.provenance.style || 'cinematic'); if(job.provenance.kind==='director') { setDirectorRequest(job.provenance.request || 'Make the whole video more cinematic');setDirectorGoal(job.provenance.intent || 'cinematic');setDirectorChanges(job.provenance.changes || []) } }
         if(job.provenance?.kind==='replacement') {setReplacementPeaks(job.provenance.peak_times || []);setReplacementCount(job.provenance.requested_count ?? null);setReplacementMode(job.provenance.mode || 'replace');setReplacementEvents(job.provenance.events || []);setReplacementAlignment(job.provenance.alignment || 'peak')}
@@ -464,6 +467,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (!current || !currentToken) throw new Error('Upload a video or song first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
       const hasStems=Boolean(currentJob)
+      if (requestsCensorship(text)) {
+        setCandidateId(''); setPrompt('Censor profanity'); setMessage('Transcribing speech locally to find possible profanity…')
+        const id=await createCensorshipPreview(cfg,current.project_id)
+        await waitCandidate(cfg,current.project_id,id)
+        return {kind:'censorship',description:null,remove:false,actions:[],message:'Censorship preview ready. Listen and review before applying.'}
+      }
       // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
       const replacementText=replacementFollowup(pendingReplacement.current,text) || text
       const replacement=requestsSoundReplacement(replacementText)
@@ -708,6 +717,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <p>After applying, each effect is its own timeline layer, so you can adjust its volume or timing separately.</p></>}
         {candidateWarnings.map(w=><p key={w}>{w}</p>)}{error && <p role="alert" className="text-red-600">{error}</p>}<p>Compare the mix and listen for missing background sounds before applying.</p>
       </div>}
+      {candidateKind==='censorship' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}<p className="mt-1">Detected {censorMatches.length} possible {censorMatches.length===1?'match':'matches'}:</p><div className="max-h-24 overflow-auto">{censorMatches.map((m,i)=><button key={i} type="button" className="mr-2 underline" onClick={()=>onSeek(m.start)}>{m.word} ({m.start.toFixed(2)}s)</button>)}</div></div>}
       {candidateKind==='effects' && <p className="mt-2 text-xs text-muted">Effects are rendered into the selected layer on apply. Undo restores the previous audio. Listen for clipping.</p>}
       {candidateKind==='known-effect-replacement' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       <div className="mt-3 flex items-center gap-2">

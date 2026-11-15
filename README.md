@@ -165,3 +165,5 @@ separate even when they have the same name.
 Repeated separated sounds such as chopping also appear together when they came from
 the same operation or use the same explicit sound description. Grouping uses project
 history and prompts; it does not prove that the separator identified a source correctly.
+
+SoundCanvas can preview English profanity beeps from an explicit natural-language request using optional local word-timed transcription. This needs a separately installed faster-whisper runtime and local model; setup, privacy, and accuracy limitations are documented in [INTEGRATION.md](INTEGRATION.md#local-transcription-and-profanity-beeps).

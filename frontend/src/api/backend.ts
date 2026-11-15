@@ -439,7 +439,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -526,7 +526,7 @@ export async function adjustReplacementPreview(config:BackendConfig,candidateId:
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/replacement-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adjustment)})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{matches?:Array<{word:string;start:number;end:number}>;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})
@@ -577,4 +577,8 @@ export async function createReplacementPreview(config:BackendConfig,projectId:st
 
 export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string,sourceStemId?:string):Promise<string> {
   return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text,...(sourceStemId ? {source_stem_id:sourceStemId} : {})})})).json()) as {candidate_id:string}).candidate_id
+}
+
+export async function createCensorshipPreview(config:BackendConfig,projectId:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/censorship-preview`,{method:'POST'})).json()) as {candidate_id:string}).candidate_id
 }

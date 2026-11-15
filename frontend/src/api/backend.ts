@@ -497,7 +497,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'fx'|'duck'|'loudness'|'insert'|'clip_edit'|'clarify'; fx?:FxPlan|null; clip_edit?:{stem_id:string;operation:'move';start_offset:number}; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'fx'|'duck'|'loudness'|'insert'|'sound_effect'|'clip_edit'|'clarify'; fx?:FxPlan|null; clip_edit?:{stem_id:string;operation:'move';start_offset:number}; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null
   /** kind 'insert': library sound effects to place as new layers. */
   inserts?:SfxInsert[]|null
   /** A clarify because no library sound matched; another flow (generation) may still handle it. */

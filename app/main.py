@@ -368,18 +368,26 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     # object-appearance additions ("add a gong every time we see person 5") are always the generator's.
     from .sfx_plan import _FX_WORDS
     from .fx_schema import PRESET_WORDS
-    addition=None
-    if re.search(r'\b(?:add|play)\b',body.prompt,re.I) and not _FX_WORDS.search(body.prompt) and not PRESET_WORDS.search(body.prompt):
-        from .replacement import parse_replacement
-        try: addition=parse_replacement(body.prompt,body.duration)
-        except ValueError: addition=None
-        if not (addition and addition.get('mode')=='add'): addition=None
     stale={'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
-    if addition and addition.get('object_track_id') is not None: return stale
+    sound_ask=(re.search(r'\b(?:add|play|insert|place|generate|put|trigger|cue|overlay)\b',body.prompt,re.I) and re.search(r'\b(?:sound|sounds|effect|sfx|when|whenever|time|word|see|appears?)\b',body.prompt,re.I)
+               and not _FX_WORDS.search(body.prompt) and not PRESET_WORDS.search(body.prompt))
+    from .replacement import parse_replacement
+    def addition():
+        try: return parse_replacement(body.prompt,body.duration)
+        except ValueError:
+            from .sound_intent import resolve  # May ask the model; only reached once the offline planners pass.
+            try: return resolve(body.prompt,body.duration)
+            except ValueError: return None
+    if sound_ask:
+        try: early=parse_replacement(body.prompt,body.duration)
+        except ValueError: early=None
+        if early and early.get('mode')=='add' and early.get('object_track_id') is not None: return stale
     quick=rule_plan(body.prompt)
     if quick is not None:
         return finalize_insert(quick,body.duration,service_features()) if quick['kind']=='insert' else quick
-    if addition: return stale
+    if sound_ask:
+        found=addition()
+        if found and found.get('mode') in ('add','replace'): return stale
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -635,7 +643,10 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         selected=resolve_layer(layer_name,rows) if layer_name else next((r for r in rows if r['id']==body.source_stem_id),None)
         if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
         if body.source_stem_id and selected and selected['id']!=body.source_stem_id:raise HTTPException(422,'The named layer and selected layer do not match.')
-        plan=parse_replacement(request,probe(source)['duration'])
+        try: plan=parse_replacement(request,probe(source)['duration'])
+        except ValueError:
+            from .sound_intent import resolve
+            plan=resolve(request,probe(source)['duration'])
         visual_snapshot={}
         if plan.get('object_track_id') is not None:
             from .object_selection import appearances
@@ -647,7 +658,7 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         if plan.get('mode')!='add' and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows},**visual_snapshot}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None}),'status':'queued'}
+    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None,'_resolved_plan':plan}),'status':'queued'}
 
 class SfxInsertRequest(BaseModel):
     inserts: list[dict] = Field(min_length=1,max_length=10)

@@ -404,7 +404,7 @@ def auto_build(project,payload,cid):
     from . import discovery
     from .worker import set_stage
     pid=project['id'];snapshot=payload['_candidate'];source=candidates.safe_path(pid,snapshot['source']);duration=probe(source)['duration']
-    plan=parse_replacement(payload['request'],duration)
+    plan=payload.get('_resolved_plan') or parse_replacement(payload['request'],duration)
     if file_sha256(source)!=snapshot['source_sha256']: raise ValueError('Source changed; please retry.')
     for row in snapshot['rows']:
         if file_sha256(candidates.safe_path(pid,row['path']))!=snapshot['stem_hashes'][row['id']]: raise ValueError('A layer changed; please retry.')
@@ -440,6 +440,7 @@ def auto_build(project,payload,cid):
         if not intervals:raise ValueError('No appearances were found inside the audio timeline.')
         detection_meta={'method':'visual-track','analysis_id':found['analysis_id'],'label':found['label'],'track_id':found['track_id'],'processed_duration':found['processed_duration']}
         note=f"Found {len(intervals)} appearance(s) of {found['label']} #{found['track_id']}. Tracking can miss appearances or switch identities; review each placement."
+        if plan.get('pan_approximation'): note+=' Camera pans are not detected; these placements approximate them using visible appearances.'
         if found['processed_duration']+0.1<duration: note+=f" Only the first {found['processed_duration']:.1f} seconds were analyzed."
     elif plan.get('spoken_word'):
         from .censorship import transcribe, MAX_DURATION

@@ -544,7 +544,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const replacementText=route.replacement
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
-        const isAddition=/\badd\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
+        const isAddition=/\b(?:add|insert|place|generate|put|trigger|cue|overlay)\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
         const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,isAddition ? undefined : sourceLayerId || undefined)
         try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
         try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
@@ -572,6 +572,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         await previewFx(cfg,current,fxRequest(result.kind,plan,candidateKind==='fx' && candidateId ? candidateId : undefined),label)
         result.message='Effect preview ready. Compare it, then apply or undo.'
         return result
+      }
+      if (result.kind==='sound_effect') {
+        setCandidateId('');setReplacementRecovery(null);setPrompt('Sound effect');setMessage('Planning the sound effect…')
+        const id=await createAutomaticReplacement(cfg,current.project_id,text)
+        await waitCandidate(cfg,current.project_id,id)
+        return {kind:'replacement',description:null,remove:false,actions:[],message:'Sound effect preview ready. Compare before applying.'}
       }
       if(result.kind==='clip_edit') {
         const edit=result.clip_edit

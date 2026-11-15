@@ -193,7 +193,7 @@ def test_planner_schema_lists_both_features_strictly():
     from app.agent import SCHEMA
     assert set(SCHEMA['required'])==set(SCHEMA['properties'])
     assert {'separation_mode','stems','processing_time'} <= set(SCHEMA['required'])
-    assert SCHEMA['properties']['kind']['enum']==['edit','separate','cinematic','director','fx','duck','loudness','insert','clarify']
+    assert SCHEMA['properties']['kind']['enum']==['edit','separate','cinematic','director','fx','duck','loudness','insert','sound_effect','clarify']
     assert {'fx','inserts'} <= set(SCHEMA['required'])
 
 

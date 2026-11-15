@@ -203,15 +203,17 @@ def energy_db(samples):
     return round(max(-120.0, 10 * math.log10(power)) if power > 0 else -120.0, 3)
 
 
-def export(stems, original, destination, fmt, include_video):
+def export(stems, original, destination, fmt, include_video, trim=None, clips=None):
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
     # A silent source maintains duration for an all-muted mix.
     duration = probe(original)['duration']
     args = ['ffmpeg','-v','error','-y']
-    if include_video: args += ['-i',str(original)]
+    # Clip exports read video through one seeked input per clip (added below), not the whole file.
+    whole_video = include_video and not clips
+    if whole_video: args += ['-i',str(original)]
     for s in active: args += ['-i',s['path']]
     args += ['-f','lavfi','-t',str(duration),'-i','anullsrc=r=48000:cl=stereo']
-    filters=[]; labels=[]; base = 1 if include_video else 0
+    filters=[]; labels=[]; base = 1 if whole_video else 0
     for i,s in enumerate(active):
         points=json.loads(s['automation']); ranges=json.loads(s['mute_ranges'])
         expr=str(float(s['volume']))
@@ -228,9 +230,34 @@ def export(stems, original, destination, fmt, include_video):
         labels.append(f'[a{i}]')
     silent=base+len(active)
     labels.append(f'[{silent}:a]')
-    filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0[mix]')
+    mixed=''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0'
+    if clips:
+        if len(clips)>100: raise ValueError('Too many clips')
+        for clip in clips:
+            if not 0 <= float(clip['start']) < float(clip['end']) <= duration + 1e-6: raise ValueError('Invalid clip interval')
+        filters.append(mixed+'[fullmix]')
+        filters.append(f"[fullmix]asplit={len(clips)}"+''.join(f'[as{i}]' for i in range(len(clips))))
+        # Splitting one decoded video would buffer every frame a later clip needs until concat reaches it.
+        for i,clip in enumerate(clips):
+            start,end=float(clip['start']),float(clip['end'])
+            filters.append(f'[as{i}]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[ac{i}]')
+            if include_video:
+                args += ['-ss',str(start),'-t',str(end-start),'-i',str(original)]
+                filters.append(f'[{silent+1+i}:v]setpts=PTS-STARTPTS[vc{i}]')
+        if include_video:
+            filters.append(''.join(f'[vc{i}][ac{i}]' for i in range(len(clips)))+f'concat=n={len(clips)}:v=1:a=1[video][mix]')
+        else:
+            filters.append(''.join(f'[ac{i}]' for i in range(len(clips)))+f'concat=n={len(clips)}:v=0:a=1[mix]')
+    elif trim:
+        start,end=float(trim['start']),float(trim['end'])
+        if not 0 <= start < end <= duration + 1e-6: raise ValueError('Invalid trim interval')
+        mixed+=f',atrim=start={start}:end={end},asetpts=PTS-STARTPTS'
+        if include_video: filters.append(f'[0:v]setpts=PTS-STARTPTS,trim=start={start}:end={end},setpts=PTS-STARTPTS[video]')
+    if not clips: filters.append(mixed+'[mix]')
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
-    if include_video: args += ['-map','0:v:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',str(duration),'-movflags','+faststart']
+    if include_video:
+        output_duration=sum(float(c['end'])-float(c['start']) for c in clips) if clips else end-start if trim else duration
+        args += ['-map','[video]' if trim or clips else '0:v:0','-c:v','libx264' if trim or clips else 'copy','-c:a','aac','-b:a','192k','-t',str(output_duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
     else: args += ['-c:a','pcm_f32le']
     run(*args,str(destination))

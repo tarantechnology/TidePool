@@ -147,6 +147,15 @@ Config: `AUDIO_STEM_SPLITTER` (`off|mock|demucs|chain`), `AUDIO_STEM_MODEL`,
 
 ## Phase 4: "Separate the rest" (nested split of the residual instrument stem)
 
+**Status: dropped (2026-11-14).** It was built and benchmarked on the A40, then removed before
+merge because it was not useful enough to ship. Of the licence-clean models, only Demucs
+`htdemucs_6s` separated anything from the `other` stem, and only guitar and piano/keys, at
+roughly +2 dB SDR over the input; organ, synth, strings, brass and woodwinds were not
+separable. Banquet (the strongest query-based option) has CC BY-NC-SA weights, AudioSep
+returned phantom instruments, and SAM Audio was never evaluated. The per-stem instrument
+tags that came out of this work were kept (see the evaluation below). The plan is kept for
+reference.
+
 The main split stays as is (vocals, drums, bass, guitar…, plus a named "other"). The user can
 ask to split *that one track* further. A nested model separates the instruments inside it.
 
@@ -177,3 +186,34 @@ Endpoint: `POST /api/projects/{pid}/stems/{sid}/split` (202, `{job_id}`), body `
 
 Editor: a "Separate the rest" action on the track; the children render grouped under the
 parent's name; undo works as for other replacements.
+
+## Stem labels / instrument ID evaluation (2026-11-14)
+
+Data: 20 BabySlakh songs (CC-BY 4.0, 16 kHz, per-instrument stems + MIDI programs) mixed and
+separated by our chain (BS-RoFormer vocals -> htdemucs); 144 MUSDB18 previews (separated the
+same way); 240 synthetic "other" stems (1-4 BabySlakh instruments + drums/bass, through the
+chain) for presence calibration. Scripts were run ad hoc on the pod (`/workspace/instid`).
+
+Why tags were poor: (1) one free-for-all whitelist, so artefacts became "Gong"/"Didgeridoo" on
+bass stems and isolated vocals (which AudioSet reads as "A capella"/"Mantra"/"Chant"/"Speech",
+generic "Singing" ~0.07) came out as "Chant"/"Humming"/"Yodeling" or nothing; (2) the trivial
+filter removed the only confident class on many stems ("Drum" on drums: 38/140 MUSDB drum stems
+had no tags); (3) one global 0.1 threshold, while family scales differ by 10x (Guitar 0.3-0.9,
+Brass/Mallets 0.02-0.2 when audible).
+
+| PANNs, old -> new | old | new |
+|---|---|---|
+| MUSDB vocals: top tag is a singing/rap label (not none/Chant/Humming/Yodeling) | 101/140 | 140/140 (31 plain "Singing", 8 "Spoken word") |
+| MUSDB drums / bass stems with a tag | 106 / 114 of 144 | 144 / 141 |
+| BabySlakh other: name's family is in the song | 17/20 | 17/20 (AST: 16 -> 19/20) |
+| BabySlakh other presence (P / R, 9 families) | 0.81 / 0.39 | 0.82 / 0.40 (AST 0.82 / 0.46) |
+| BabySlakh bass subtype | 18/19 | 18/19 |
+
+Taggers compared (clean BabySlakh sources, top-1 family of 9): PANNs 0.74, AST 0.78,
+CLAP music+speech 0.80, CLAP music-only 0.11 (collapses to "woodwinds"). Synthetic presence F1
+(per-family thresholds, 2-fold CV): PANNs 0.59, AST 0.63, CLAP 0.57, ensembles <= 0.63. CLAP is
+poor on separated vocals ("rapping"/"synth vocals" bias) and bass (9/19). Gender on MUSDB vocals
+has no reliable ground truth (F0 does not separate high male rock singers from women); PANNs
+Male-vs-Female with a 0.05 margin looked right on ~22/27 songs whose singer we could name.
+Default stays PANNs (already loaded, ~0.8 s warm for 4 stems of a 4-min song on a busy A40;
+AST ~2.6 s). Essentia's instrument models were not used: CC BY-NC-ND.

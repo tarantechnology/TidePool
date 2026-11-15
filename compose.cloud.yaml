@@ -26,11 +26,14 @@ services:
   audio-service:
     build:
       context: ./audio-service
-      target: sam
+      target: audiosep
     environment:
-      AUDIO_BACKEND: sam
+      AUDIO_BACKEND: audiosep
       AUDIO_DEVICE: cuda
-      AUDIO_MODEL_ID: ${AUDIO_MODEL_ID:-facebook/sam-audio-large}
+      AUDIO_MODEL_ID: ${AUDIO_MODEL_ID:-audiosep-base-4M}
+      AUDIO_AUDIOSEP_ROOT: /opt/audiosep
+      AUDIO_SUPPRESSION: ${AUDIO_SUPPRESSION:-conservative}
+      AUDIO_SUPPRESSION_STRENGTH: ${AUDIO_SUPPRESSION_STRENGTH:-0.9}
       AUDIO_LOAD_SPAN_PREDICTOR: ${AUDIO_LOAD_SPAN_PREDICTOR:-false}
       AUDIO_LOAD_RANKERS: ${AUDIO_LOAD_RANKERS:-true}
       AUDIO_LOAD_VISUAL_RANKER: ${AUDIO_LOAD_VISUAL_RANKER:-false}
@@ -42,7 +45,7 @@ services:
       # windows instead of threading them (audio-service/docs/chunk_concurrency.md).
       AUDIO_CHUNK_BATCH: ${AUDIO_CHUNK_BATCH:-1}
       AUDIO_MEDIA_ROOT: /data
-      HF_TOKEN: ${HF_TOKEN:?Set HF_TOKEN to a token with approved model access}
+      HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ./storage:/data:ro
       - sam-audio-models:/models

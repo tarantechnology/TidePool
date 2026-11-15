@@ -45,22 +45,31 @@ PLANNER_NOTE = ("Use kind=generate when the user asks to ADD a new musical part 
                 "Never invent notes, keys or tempos: the audio service analyses the song.")
 
 _VERB = re.compile(r'^\s*(?:please\s+)?(?:can you\s+)?(add|put|layer|throw in|bring in)\s+', re.I)
-_TAIL = re.compile(r'\s+(?:to|in|into|under|over|on|during|for|behind|throughout)\b.*$', re.I)
+_TAIL = re.compile(r'\s+(?:to|in|into|under|over|on|during|for|behind|throughout|at|from|after|before|starting|when)\b.*$', re.I)
 # The planner only routes asks that name a playable part; everything else keeps its existing flow.
 _INSTRUMENTS = re.compile(r'\b(violins?|viola|cellos?|strings?|string pad|orchestra(?:l)?|fiddle|double bass|upright bass|contrabass|pizzicato|piano|keys|rhodes|'
                           r'organ|harpsichord|celesta|glockenspiel|music box|vibraphone|marimba|xylophone|harp|guitars?|riff|bass(?:line| line| guitar)?|'
                           r'synths?|arp(?:eggio)?|pad|lead|pluck|trumpets?|trombones?|horns?|brass|tuba|sax(?:ophone)?|flutes?|clarinet|oboe|bassoon|'
                           r'choir|voices|aahs|oohs|banjo|accordion|harmonica|sitar|ukulele|mandolin|kalimba|steel drums?|countermelody|counter-melody|melody|chords|bells)\b', re.I)
-_EFFECTS = re.compile(r'\b(reverb|echo|delay|effect|eq|filter|boom|sfx|sound effect|laugh|compress|distortion)\b', re.I)
+# Effect / mix / sound-effect words: "add reverb to the strings", "add compression to the bass" stay fx, "add a
+# vine boom" stays an insert. Kept in step with frontend/src/agent/generateIntent.ts.
+_EFFECTS = re.compile(r'\b(reverb\w*|echo\w*|delay|effects?|eq|filter\w*|fade\w*|boom|sfx|sound effects?|laugh\w*|compress\w*|'
+                      r'distort\w*|saturat\w*|overdrive|flanger|phaser|tremolo|auto-?tune|lo-?fi|vinyl|bitcrush\w*|duck\w*|limiter|'
+                      r'riser|whoosh|swell|impact|applause|crickets|air\s*horn|rimshot|record scratch|sad trombone)\b', re.I)
+# "add more bass", "add some extra low end": an EQ ask, not a bass part.
+_EQ_ASK = re.compile(r'^(?:some\s+)?(?:more|less|extra)\s+(?:bass|treble|low[- ]end|lows|highs|top end)\b', re.I)
 
 
 def rule_plan(prompt: str) -> dict | None:
     """Offline fallback for the common "add <instrument> ..." asks; None when it is not one."""
     text = prompt.strip()
     m = _VERB.match(text)
-    if not m or _EFFECTS.search(text) or not _INSTRUMENTS.search(text[m.end():]):
+    if not m or _EFFECTS.search(text) or _EQ_ASK.match(text[m.end():]):
         return None
     rest = _TAIL.sub('', text[m.end():])
+    # The instrument must be the thing being added, not a target: "add chorus to the guitar" is an effect.
+    if not _INSTRUMENTS.search(rest):
+        return None
     rest = re.sub(r'^(?:an?|some|the|more)\s+', '', rest, flags=re.I)
     rest = re.sub(r'\s+(?:part|track|layer)$', '', rest, flags=re.I).strip(' .!')
     if not rest:

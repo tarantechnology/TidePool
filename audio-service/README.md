@@ -1,7 +1,7 @@
 # SoundCanvas audio inference service (Person 1)
 
-Text-, span- and visually-prompted sound separation with Meta's SAM Audio, exposed as a
-small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
+AudioSep text separation by default, with optional Meta SAM Audio text/span/visual
+separation, exposed as a small HTTP service that Person 4's backend calls. See `docs/audio_integration_handoff.md`
 at the repository root for the cross-team contract and open questions.
 
 ## Run locally (mock backend, no GPU)
@@ -9,7 +9,7 @@ at the repository root for the cross-team contract and open questions.
 ```bash
 cd audio-service
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m sam_audio_service        # http://localhost:8001/docs
+AUDIO_BACKEND=mock .venv/bin/python -m sam_audio_service  # http://localhost:8001/docs
 .venv/bin/python -m pytest -q
 ```
 
@@ -184,15 +184,15 @@ provenance, fixed splits/seeds, metrics, regression gate and staged rollback pro
 Visual selection intervals no longer become sound anchors. Explicit anchors remain supported;
 invalid visual guidance fails instead of silently changing to text-only inference.
 
-## AudioSep backend
+## Default AudioSep backend
 
-AudioSep is the default **text-only** separator when `AUDIO_BACKEND` is unset. It uses the AudioSep base checkpoint and
+AudioSep is the default **text-only** separator. It uses the AudioSep base checkpoint and
 CLAP text encoder; it is not SAM Audio and has no visual conditioning, time-anchor
 conditioning, independent candidates or judge-ranked retries. The editor reports those
 limitations. A timed mute is still an edit applied after separation. AudioSep may also
 extract speech, music or other sounds; review the target and edited mix before applying.
 
-The runtime must be installed separately and is not installed by the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
+Install its pinned inference dependencies with `pip install -e ".[audiosep]". The runtime is separate from the `sam` extra. Use Python 3.11 or newer; the upstream Conda environment file targets Python 3.10 and must be adapted. It requires a separately
 prepared [upstream AudioSep checkout](https://github.com/Audio-AGI/AudioSep), its Python
 and PyTorch/torchaudio dependencies, and the official AudioSep and CLAP checkpoints. The
 upstream repository is MIT licensed; check the terms for model weights and dependencies
@@ -238,6 +238,25 @@ residual retains the original channels. The service default mask refinement is o
 latency and memory vary by recording; sample-accurate reconstruction does not guarantee
 correct isolation. Do not mistake the optional experimental spectral repairs for the
 standard AudioSep backend.
+
+### TidePool voice preservation
+
+AudioSep defaults to `AUDIO_SUPPRESSION=conservative` and
+`AUDIO_SUPPRESSION_STRENGTH=0.9`. The engine rebuilds the target from the original
+mixture phase through a selective ratio mask and limits processing when the target
+estimate is weak. This runs once after chunk reconstruction, preserving the full
+stereo timeline. The returned target is what is removed; target + residual still
+reconstruct the original. An additional legacy refinement mask is skipped in this mode.
+
+Request `options.suppression=off` for raw comparisons. `suppression_strength=1`
+uses stronger cleanup; `.9` retains some target to ease damage to other sounds.
+`model.suppression` and `/capabilities.defaults.suppression` report the effective
+settings. No source-separation method guarantees unchanged voices during overlap.
+
+The official AudioSep/CLAP checkpoints are reused from the checkout when present.
+Otherwise the adapter uses the Hugging Face cache and verified Space revision
+`0807a713283035d8b0d0628f1b8e3d6580459f7b`. Explicit missing checkpoint paths fail
+clearly. No SAM model or mock fallback is loaded by the AudioSep path.
 
 ## Music stems and model routing
 
@@ -286,9 +305,10 @@ split returns no residual; a subset returns one `residual` (the sum of the other
 | `AUDIO_ROUTING_DEFAULT` | `auto` | `options.mode` when a request sets none: `auto`, `prompted`, `music_stems` (the last needs a splitter). |
 | `AUDIO_ROUTER_CLASSIFIER` | `panns` with `demucs`/`chain`/`roformer`, else `off` | `off`, `mock` (everything is music; tests), `panns` (PANNs Cnn14 via `panns-inference`, 32 kHz; checkpoint `AUDIO_ROUTER_PANNS_CHECKPOINT`, default `~/panns_data/Cnn14_mAP=0.431.pth`), `ast` (`MIT/ast-finetuned-audioset-10-10-0.4593`, 16 kHz). Both score up to eight 10 s windows across the file and load on first use. A classifier that cannot load is disabled for the process and `/health` reports why; routing then uses the prompt rules alone (`scores: null`). |
 | `AUDIO_ROUTER_MUSIC_THRESHOLD` | per classifier: `panns` 0.4, `ast` 0.2 | Minimum "song" score (median over up to 8 10 s windows of AudioSet Music minus Speech) for stem-name prompts to go to the splitter. Speech over music (vlogs, soundtracks) scores ~0 and stays on the prompted model; full songs score ~0.8 (PANNs). |
-| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever the router classifier can tag (`panns`, `ast`); it reuses that model under its lock, no second load. `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
-| `AUDIO_STEM_LABEL_MIN_SCORE` | `0.1` | Minimum mean AudioSet probability for a tag (and for naming `other`). Picked on 50 MUSDB clips: 0.1 named 31/33 guitar-dominated "other" stems with a guitar and left 8/50 as "Other"; 0.2 drops to 28/33 and 14/50. |
-| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). 4 stems of a 4-min song: ~0.6 s warm with PANNs on an A40. |
+| `AUDIO_STEM_LABELS` | `auto` | `auto` tags every music stem and names the `other` stem after what it sounds like ("Guitar", "Synth & Strings"; `stems[].tags`, see `labeling.py`) whenever a tagger can run. Each stem is described only with its own vocabulary (vocals: Male/Female singing, Rapping, Choir, Synth vocals, Spoken word, else "Singing"; drums: Drum kit/Drum machine + details; bass: Bass guitar/Synth bass/Double bass; other: melodic instruments). `off` leaves `tags: null` and `"Other"`. Labeling failures only add a warning. |
+| `AUDIO_STEM_LABEL_MODEL` | `router` | Tagger for stem labels: `router` reuses the router's AudioSet classifier (PANNs; no second model, ~0.8 s warm for 4 stems of a 4-min song on a busy A40), `panns`/`ast` load their own copy when the router uses another, `clap` loads LAION-CLAP zero-shot (`AUDIO_STEM_LABEL_CLAP_MODEL`, default `laion/larger_clap_music_and_speech`, Apache-2.0). PANNs is the default: AST is ~3x slower and weaker on vocals; CLAP is strong on clean strings but mislabels separated vocals ("Synth vocals") and bass (2026-11-14 evaluation, docs/plans/music-stems.md). |
+| `AUDIO_STEM_LABEL_MIN_SCORE` | `0` | Floor on the per-family presence thresholds (`labeling.PRESENCE`, calibrated per tagger on synthetic BabySlakh stems) and on drum detail tags; `0` = calibrated thresholds only. |
+| `AUDIO_STEM_LABEL_MAX_WINDOWS` | `12` | Active 10 s windows tagged per stem (silent and bleed-only windows are skipped). |
 
 The splitter and classifier load lazily on first use (not at startup), share the GPU and
 the inference lock with the prompted model, and are reported under `splitter` and
@@ -343,3 +363,74 @@ MIT safetensors export `safe-models/beat-this-final0`); Basic Pitch Apache-2.0; 
 VSCO-2 CE CC0; FluidR3_GM MIT; FluidSynth LGPL-2.1 (run as a separate process); MusicGen weights
 CC-BY-NC-4.0; Stable Audio Open is gated behind a licence agreement and not installed. Evaluation:
 `benchmarks/generate_parts.py --stems <musdb track dir> --start 0 --seconds 75 --out <dir> --engines symbolic,amt,musicgen`.
+
+## Speech and rhythm tools (`/v1/words`, `/v1/enhance`, `/v1/beats`)
+
+These are the machine-learning operations behind the chat edits in `docs/plans/chat-fx.md`
+(Phase B): "bleep the swear words", "cut the ums", "clean up the voice", "add X when he
+says 'what'" and "on the beat drop". The endpoints are multipart, like `/separate`. The
+contract is Contract F in `docs/contracts/audio_contracts.md`. Each tool is **off** until
+its backend variable is set. Each loads on first use (or at startup with
+`AUDIO_LOAD_ON_STARTUP`) and has its **own lock**, so these tools never queue behind a
+separation, and a separation never queues behind them.
+
+| Tool | Model | Licence |
+| --- | --- | --- |
+| `/v1/words` | faster-whisper `large-v3-turbo` (CTranslate2 fp16, Silero VAD, `word_timestamps`), then WhisperX-style CTC forced alignment with torchaudio `WAV2VEC2_ASR_BASE_960H` (English) | faster-whisper MIT; Whisper weights MIT; wav2vec2 weights MIT (fairseq) |
+| `/v1/enhance` | DeepFilterNet3 (48 kHz) | code and weights MIT OR Apache-2.0 |
+| `/v1/beats` | beat_this `final0` (CPJKU, ISMIR 2024), with librosa as the fallback | code and weights MIT; librosa ISC |
+
+```bash
+# CI / local, no weights: deterministic mocks (NOT real models).
+AUDIO_WORDS_BACKEND=mock AUDIO_ENHANCE_BACKEND=mock AUDIO_BEATS_BACKEND=mock .venv/bin/python -m sam_audio_service
+curl -F audio=@clip.wav -F 'metadata={"language":"en"}' localhost:8001/v1/words
+curl -F audio=@dialogue.wav -F 'metadata={"atten_lim_db":12}' localhost:8001/v1/enhance
+curl -F audio=@song.wav localhost:8001/v1/beats
+```
+
+**Install (GPU host, Python 3.12, torch 2.8.0+cu128).** Two of the packages cannot be
+resolved normally, so they are installed with `--no-deps`. `deepfilternet` 0.5.6 pins
+`numpy<2`, and its Rust feature library (DeepFilterLib) only has wheels up to CPython 3.11.
+The service replaces that library with `speech/libdf_shim.py`, a NumPy port that matches
+the real wheel within 1.5e-6 (`benchmarks/speech.py check-libdf`).
+
+```bash
+uv pip install -e ".[speech-words,speech-enhance,speech-beats]"
+uv pip install --no-deps deepfilternet==0.5.6   # the model code only; no DeepFilterLib needed
+```
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AUDIO_WORDS_BACKEND` | `off` | `off`, `mock` (one fixed word per voiced region; tests), or `faster_whisper`. |
+| `AUDIO_WORDS_MODEL` | `large-v3-turbo` | Any faster-whisper name (`large-v3`, `distil-large-v3`…), a CTranslate2 directory or an HF repo. |
+| `AUDIO_WORDS_COMPUTE_TYPE` | `auto` | `auto` means `float16` on CUDA and `int8` on CPU. |
+| `AUDIO_WORDS_BEAM_SIZE` / `AUDIO_WORDS_BATCH_SIZE` | `5` / `8` | A batch size above 1 uses faster-whisper's batched VAD pipeline. 1 uses sequential decoding. |
+| `AUDIO_WORDS_VAD` | `true` | Silero VAD filter (it cuts hallucinations in silence and music). |
+| `AUDIO_WORDS_ALIGN` | `wav2vec2` | `off` keeps Whisper's own word times. `wav2vec2` re-times English words (see benchmarks). Per request, use `metadata.align`. |
+| `AUDIO_WORDS_PROFANITY_FILE` | bundled `speech/profanity_en.txt` | One `word` or `prefix:stem` per line, matched per word. Per request, use `metadata.extra_profanity`. |
+| `AUDIO_WORDS_MIN_PAUSE_SECONDS` | `0.7` | Gap reported in `pauses`. |
+| `AUDIO_ENHANCE_BACKEND` | `off` | `off`, `mock` (a spectral gate; tests), or `deepfilternet`. |
+| `AUDIO_ENHANCE_MODEL` | `DeepFilterNet3` | `DeepFilterNet3`, `DeepFilterNet2` or `DeepFilterNet` (downloaded to `~/.cache/DeepFilterNet`). |
+| `AUDIO_ENHANCE_ATTEN_LIMIT_DB` | unlimited | Default strength. Per request, use `metadata.atten_lim_db` (6 is gentle, 12-20 moderate). |
+| `AUDIO_ENHANCE_CHUNK_SECONDS` | `60` | Window length for long inputs, with 2 s of context on each side (0 = whole file). |
+| `AUDIO_BEATS_BACKEND` | `off` | `off`, `mock` (a 120 BPM grid; tests), `beat_this`, or `librosa`. |
+| `AUDIO_BEATS_MODEL` | `final0` | A beat_this checkpoint name, path or URL. If the official host (cloud.cp.jku.at) fails, `final0` falls back to the byte-identical HF mirror `Audante/beat-this-final0`, pinned by SHA-256. |
+| `AUDIO_BEATS_DBN` | `false` | madmom DBN post-processing (needs madmom; not installed). |
+| `AUDIO_BEATS_FALLBACK` | `librosa` | Tracker used when beat_this cannot load or run. It gives beats and tempo but no downbeats. Set `off` to fail instead. |
+| `AUDIO_SPEECH_DEVICE` | `auto` (= `AUDIO_DEVICE`) | Device for these models. |
+
+Benchmarks (A40, 2026-11-14): `benchmarks/speech.py`, with raw JSON in
+`benchmarks/results/2026-11-14-speech/raw/`.
+
+| Tool | Measure | Result |
+| --- | --- | --- |
+| words (turbo fp16, beam 5, batch 8, VAD) | LibriSpeech test-clean, 100 utterances: WER | 3.65% |
+| | word boundary error against MFA references (3914 words): Whisper only → with alignment (wav2vec2 plus a 50 ms start shift) | median 50 → 23 ms, p90 180 → 82 ms, within 80 ms 66% → 90% (starts alone: 95% within 80 ms). Without the shift, aligned starts ran +62 ms late: `words_turbo_noshift.json` |
+| | spliced TTS target words (sample-exact references), word starts | median 16 ms, 84% within 80 ms. Ends are not scored: the reference keeps about 150 ms of TTS decay |
+| | 4-min speech, warm: Whisper only / with alignment | 3.4 s / 4.3 s; process VRAM 5.7 / 6.9 GB peak (CTranslate2 cache and CUDA context included), of which torch 0.86 GB |
+| | Scripted Piper TTS, 6 voices × 25 lines: profanity / filler recall, false positives on 204 trap words | 63/78 (81%; 12 of the 15 misses are TTS "shit" heard as "it"/"hit") / 29/42 (69%; "uh" is often dropped) / 0 |
+| enhance (DeepFilterNet3) | SI-SDR, 20 LibriSpeech utterances + ESC-50 noise at 0/5/10 dB SNR | −0.0/5.0/10.0 → 14.5/16.7/19.1 dB (12 dB limit: 9.5/13.6/17.3) |
+| | same with pink noise; clean pass-through | 0.2/5.2/10.2 → 8.1/11.4/14.6 dB; clean speech kept at 31.3 dB |
+| | 4-min stereo, 48 kHz, warm | 3.7 s, process VRAM 2.9 GB (torch 1.4 GB) |
+| beats (beat_this final0) | synthetic drum loops, 8 tempos and meters: beat F (70 ms) / downbeat F | 0.988 (librosa: 0.948) / 0.74 (3/4 is weak) |
+| | 230 s song, warm | 0.49 s, process VRAM 0.7 GB; 125 BPM, 4/4 |

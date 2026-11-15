@@ -5,6 +5,8 @@ import pytest
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    monkeypatch.setenv('INFERENCE_ADAPTER','fake')
+    monkeypatch.setenv('AUDIO_BACKEND','mock')
     monkeypatch.setenv('STORAGE_ROOT',str(tmp_path/'storage'))
     import app.core as core
     core.ROOT=tmp_path/'storage'; core.ROOT.mkdir(exist_ok=True); core.DB=core.ROOT/'db.sqlite'

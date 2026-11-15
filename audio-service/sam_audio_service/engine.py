@@ -35,10 +35,11 @@ from .audio_io import DecodedAudio, sanitise, to_mono
 from .backends import Backend, create_backend
 from .backends.base import Anchor, BackendOptions, BackendPrompt, BackendResult, VisualInput
 from .candidates import choose, choose_residual
-from .classifier import ContentClassifier, create_classifier
+from .classifier import ContentClassifier, create_classifier, create_stem_tagger
 from .config import Settings
 from .contracts import InferenceOptions, PromptSpec, SeparationMetadata
 from .refine import mask_refine
+from .suppression import suppress_target
 from .labeling import FALLBACK_NAME, label_stems
 from .errors import (
     AudioServiceError,
@@ -133,6 +134,9 @@ class Engine:
         # Both optional and loaded on first use; the splitter is None when AUDIO_STEM_SPLITTER=off.
         self.splitter = splitter or create_splitter(settings)
         self.classifier = classifier or create_classifier(settings)
+        # Stem labels (AUDIO_STEM_LABEL_MODEL): the router's classifier by
+        # default, else its own lazily loaded tagger (CLAP, or the other AudioSet model).
+        self.stem_tagger = create_stem_tagger(settings, self.classifier)
         self._lock = threading.Lock()  # serialises separation (prompted model and splitter)
         # The content classifier is a separate small model with its own lock, so /v1/route (and
         # the routing step of /separate) never waits behind a long split. Never held together
@@ -141,6 +145,7 @@ class Engine:
         self._load_error: str | None = None
         self._splitter_error: str | None = None
         self._classifier_error: str | None = None
+        self._stem_tagger_error: str | None = None  # a separate tagger's own cached failure
 
     # ------------------------------------------------------------------ lifecycle
     def load(self) -> None:
@@ -182,6 +187,8 @@ class Engine:
         if self.splitter is not None:
             self.splitter.unload()
         self.classifier.unload()
+        if self.stem_tagger is not self.classifier:
+            self.stem_tagger.unload()
 
     def status(self) -> dict[str, Any]:
         return {"backend": self.backend.name, "is_mock": self.backend.is_mock, "loaded": self.backend.loaded, "load_error": self._load_error, **self.backend.info()}
@@ -190,6 +197,11 @@ class Engine:
         if self.splitter is None:
             return None
         return {"backend": self.splitter.name, "is_mock": self.splitter.is_mock, "loaded": self.splitter.loaded, "load_error": self._splitter_error, "stems": list(self.splitter.stems), **self.splitter.info()}
+
+    def _tagger_error(self) -> str | None:
+        """Why stem labels cannot run: the router classifier's error when labels use that same
+        model, else the separate tagger's own cached failure."""
+        return self._classifier_error if self.stem_tagger is self.classifier else self._stem_tagger_error
 
     def classifier_status(self) -> dict[str, Any]:
         return {**self.classifier.info(), "load_error": self._classifier_error}
@@ -284,6 +296,16 @@ class Engine:
             "residual_threshold": float(pick(options.refine_residual_threshold, s.refine_residual_threshold)),
             "gate_db": float(pick(options.refine_gate_db, s.refine_gate_db)),
         }
+
+    def _resolve_suppression(self, options: InferenceOptions) -> dict[str, Any] | None:
+        mode = options.suppression or self.settings.suppression
+        if mode == 'off':
+            return None
+        if self.backend.name != 'audiosep':
+            raise UnsupportedOperation('Conservative suppression requires AudioSep')
+        strength = self.settings.suppression_strength if options.suppression_strength is None else options.suppression_strength
+        return {'mode':'conservative', 'strength':strength, 'mask_threshold':.85,
+                'activity_low_db':-36., 'activity_high_db':-24., 'n_fft':2048}
 
     @staticmethod
     def _refine_target(mixture: np.ndarray, target: np.ndarray, cfg: dict[str, Any], stereo_mode: str) -> np.ndarray:
@@ -385,16 +407,16 @@ class Engine:
         the title-cased canonical "Other"); a caller's own wording is kept. Any failure leaves
         tags null and names unchanged, with a warning: labeling never fails a split.
         """
-        if self.settings.stem_labels == "off" or not self.classifier.can_tag or not stems:
+        if self.settings.stem_labels == "off" or not getattr(self.stem_tagger, "can_tag", False) or not stems:
             return
-        if self._classifier_error:
-            warnings.append(f"stem labeling unavailable: the content classifier failed earlier ({self._classifier_error})")
+        if self._tagger_error():
+            warnings.append(f"stem labeling unavailable: the stem tagger failed earlier ({self._tagger_error()})")
             return
         started = time.perf_counter()
         try:
             with self._classifier_lock:
                 labels = label_stems(
-                    self.classifier,
+                    self.stem_tagger,
                     [(s.label if s.role == "target" else "residual", s.samples) for s in stems],
                     mixture,
                     sample_rate,
@@ -405,6 +427,10 @@ class Engine:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("stem labeling failed: %s: %s", type(exc).__name__, exc)
+            # Like the router classifier: a separate tagger that fails (missing package, weights
+            # not downloadable) is disabled for the process instead of retrying every request.
+            if self.stem_tagger is not self.classifier and not is_out_of_memory(exc):
+                self._stem_tagger_error = f"{type(exc).__name__}: {exc}"
             warnings.append(f"stem labeling failed ({type(exc).__name__}); tracks keep their default names")
             return
         for stem, label in zip(stems, labels):
@@ -424,7 +450,10 @@ class Engine:
         backend_options, stereo_mode, chunk_seconds = self._resolve_options(metadata.options)
         batch = metadata.options.chunk_batch or self.settings.chunk_batch
         passes = metadata.options.passes or 1
-        refine_cfg = self._resolve_refine(metadata.options)
+        suppression_cfg = self._resolve_suppression(metadata.options)
+        # The conservative AudioSep path already rebuilds a source-phase mask.
+        # Applying the older mask again would alter the tested processing.
+        refine_cfg = None if suppression_cfg else self._resolve_refine(metadata.options)
         k_cands = backend_options.candidates
         if (batch > 1 or k_cands > 1) and backend_options.seed is not None:
             warnings.append(
@@ -534,7 +563,9 @@ class Engine:
                         stopped_early, stop_reason = True, "silent_residual"
                         break
                 target = cumulative
-                if refine_cfg is not None:
+                if suppression_cfg is not None:
+                    target = mixture - suppress_target(mixture, target, **{k:v for k,v in suppression_cfg.items() if k != 'mode'})
+                elif refine_cfg is not None:
                     # Post-processing on the summed target only: passes above ran on the
                     # raw model residual chain, and the residual stem is still derived as
                     # mixture - sum(targets) below, so stems keep summing to the mixture.
@@ -604,6 +635,7 @@ class Engine:
             "effective_chunk_batch": effective_batch if chunked else 1,
             "passes": max_passes_run,
             "refine": refine_cfg,
+            "suppression": suppression_cfg,
             "candidates": k_cands,
             "candidate_select": backend_options.candidate_select if k_cands > 1 else "first",
             "elapsed_seconds": round(elapsed, 3),

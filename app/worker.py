@@ -149,10 +149,13 @@ def work_once():
                         row=db.execute('SELECT * FROM stems WHERE id=?',(item[0],)).fetchone()
                         edited=edit_target(row,payload['edit_scope'])
                         db.execute('UPDATE stems SET volume=?,muted=?,mute_ranges=? WHERE id=?',(edited['volume'],edited['muted'],edited['mute_ranges'],item[0]))
+                from .core import group_matching_explicit_targets
+                group_matching_explicit_targets(db,pid)
                 output=[stem(s) for s in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
                 db.execute("UPDATE projects SET status='completed' WHERE id=?",(pid,))
+            discard(pid,replaced)  # Committed: the replaced stems' files go before the job reports completion.
+            with connect() as db:
                 db.execute("UPDATE jobs SET status='completed',progress=100,stage=NULL,output=? WHERE id=?",(json.dumps({'stems':output,'inference':inference}),job['id']))
-            discard(pid,replaced)  # Committed: the replaced stems' files can go.
         elif job['kind']=='discovery':
             from .discovery import discover
             if file_sha256(p['audio']) != payload['audio_sha256']: raise ValueError('Project audio changed; run discovery again.')
@@ -167,14 +170,20 @@ def work_once():
             output=prepare_effect(p,payload)
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps(output),job['id']))
         elif job['kind']=='candidate':
-            if payload.get('_replacement_adjust'):
+            if payload.get('_clip_edit'):
+                from .effect_clip import build
+            elif payload.get('_replacement_adjust'):
                 from .replacement import adjust as build
             elif payload.get('_auto_replacement'):
                 from .replacement import auto_build as build
             elif payload.get('_replacement'):
                 from .replacement import build
+            elif payload.get('_fx'):
+                from .fx import build
             elif payload.get('_effects'):
                 from .effects import build
+            elif payload.get('_sfx_insert'):
+                from .sfx_insert import build
             elif payload.get('_director_adjust'):
                 from .director import adjust as build
             elif payload.get('_director'):
@@ -189,7 +198,7 @@ def work_once():
             duration=probe(snapshot.get('source') or p['audio'])['duration']
             # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
             if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
-            creative=any(payload.get(k) for k in ('_effects','_director_adjust','_director','_cinematic','_generate'))
+            creative=any(payload.get(k) for k in ('_fx','_effects','_director_adjust','_director','_cinematic','_sfx_insert','_generate'))
             with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
                 output=build(p,payload,job['id'])
             with connect() as db:
@@ -202,6 +211,9 @@ def work_once():
             normalize(pid,p,finish)
         elif job['kind']=='vision':
             prepared=False
+            selection_only=payload.get('object_selection') is True
+            if selection_only and file_sha256(p['original'])!=payload['source_sha256']:
+                raise ValueError('Project video changed; find objects again.')
             if payload.get('prepare'):
                 try: validate_timeline(p['original'],json.loads(p['metadata'])['frame_rate'])
                 except ValueError:
@@ -210,11 +222,17 @@ def work_once():
             set_stage(job['id'],'detecting',30)
             directory=project_dir(pid)/'extracted'/('vision-'+job['id'])
             from .detector import detect
-            metadata=detect(p['original'],directory,pid)
+            if selection_only:
+                from .object_selection import detect as select_objects
+                metadata=select_objects(p['original'],directory,pid,payload['concept'])
+            else:
+                metadata=detect(p['original'],directory,pid)
             with connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 if db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original'] != p['original']:
                     raise ValueError('Project media changed during object detection; run detection again.')
+                if selection_only and file_sha256(p['original'])!=payload['source_sha256']:
+                    raise ValueError('Project video changed during detection; find objects again.')
                 db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(metadata),pid))
                 db.execute("UPDATE jobs SET status='completed',stage='completed',progress=100,output=? WHERE id=?",(json.dumps({'analyzed_frames':metadata['analyzed_frames'],'processed_duration_seconds':metadata['processed_duration_seconds'],'prepared':prepared}),job['id']))
         else:

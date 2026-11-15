@@ -105,3 +105,28 @@ def test_generate_preview_adds_a_layer_apply_undo(client, tmp_path, monkeypatch)
     assert sorted(s['name'] for s in stems) == ['Original audio', 'Violins']
     assert client.post(f'/api/candidates/{cid}/undo', headers=h).status_code == 200
     assert client.get(f'/api/projects/{pid}/stems', headers=h).json() == []
+
+
+# ---------------------------------------------------------------- agent-route precedence (matches frontend chatRoute.ts)
+@pytest.mark.parametrize("prompt", ["add reverb to the vocals", "add chorus to the guitar", "add compression to the bass",
+                                    "add more bass", "add a fade", "add a vine boom at 0:12", "add a laugh track",
+                                    "put a riser before the drop", "add a sad trombone at the end"])
+def test_rule_plan_leaves_fx_eq_and_sfx_alone(prompt):
+    assert rule_plan(prompt) is None
+
+
+def test_rule_plan_trims_time_tail():
+    assert rule_plan("add a piano at 0:12")["instrument"] == "piano"
+
+
+def test_agent_route_precedence_insert_then_generate(client, tmp_path, monkeypatch):
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    pid, h = _uploaded(client, tmp_path)
+    ask = lambda prompt: client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': prompt, 'stems': [], 'tracks': [], 'duration': 30}).json()
+    for prompt in ("add a vine boom at 0:01", "add a sad trombone at the end"):  # the test clip is 2 s
+        plan = ask(prompt); assert plan['kind'] == 'insert', (prompt, plan.get('message'))
+    for prompt, instrument in (("add a piano part", "piano"), ("add violins", "violins"), ("add a funky bassline", "funky bassline"),
+                               ("add an 80s synth arpeggio", "80s synth arpeggio"), ("add a piano at 0:12", "piano")):
+        plan = ask(prompt)
+        assert plan['kind'] == 'generate' and plan['generate']['instrument'] == instrument, prompt
+    assert ask("replace the piano with violins")['kind'] == 'clarify'

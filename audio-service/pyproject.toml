@@ -14,6 +14,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-timeout>=2.3"]
+audiosep = [
+    "torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0",
+    "numpy>=1.26,<2", "transformers==4.37.2", "huggingface_hub>=0.25,<1",
+    "lightning==2.5.6", "pytorch-lightning==2.5.6", "torchmetrics==0.11.4",
+    "torchlibrosa==0.1.0", "librosa>=0.10,<0.12", "timm==0.9.16",
+    "pandas==2.3.3", "h5py>=3.8,<4", "scipy>=1.11,<2", "soundfile",
+    "einops", "ftfy", "regex", "pyyaml", "webdataset", "braceexpand", "wget",
+]
 # Real model runtime. SAM Audio is not on PyPI; it is installed from GitHub and pulls
 # several git dependencies itself (dacvae, perception_models, ImageBind, CLAP).
 sam = [
@@ -34,7 +42,8 @@ sam = [
 music = [
     "torch>=2.4",
     "demucs>=4.0.1",
-    "transformers>=4.25",
+    # AST tagger, and ClapModel for AUDIO_STEM_LABEL_MODEL=clap (LAION-CLAP, Apache-2.0; 4.27+; 5.23 tested).
+    "transformers>=4.27",
     # PANNs Cnn14, the default router classifier (AUDIO_ROUTER_CLASSIFIER=panns); 0.1.1 tested.
     "panns-inference>=0.1.1",
 ]
@@ -49,6 +58,41 @@ music-roformer = [
     "pyyaml>=6",
 ]
 
+# Speech and rhythm tools (/v1/words, /v1/enhance, /v1/beats). Pins are the versions tested on
+# the A40 (torch 2.8.0+cu128, Python 3.12, numpy 2.5; benchmarks/speech.py, 2026-11-14).
+# faster-whisper: AUDIO_WORDS_BACKEND=faster_whisper (CTranslate2 needs CUDA 12 + cuDNN 9; the
+# torch cu128 wheels provide both). Forced alignment uses torchaudio's wav2vec2 bundle.
+speech-words = [
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.9.0",
+    "av==19.0.2",
+    "onnxruntime==1.32.0",  # Silero VAD
+    "torch>=2.4",
+    "torchaudio>=2.4",
+]
+# AUDIO_ENHANCE_BACKEND=deepfilternet. Installed with --no-deps: deepfilternet 0.5.6 pins
+# numpy<2 and DeepFilterLib (Rust, wheels only for CPython <= 3.11); the service replaces
+# DeepFilterLib with speech/libdf_shim.py, which needs scipy. loguru/appdirs/packaging/requests
+# are deepfilternet's runtime imports.
+speech-enhance = [
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "scipy>=1.10",
+    "loguru>=0.7",
+    "appdirs>=1.4",
+    "requests>=2.27",
+]
+# AUDIO_BEATS_BACKEND=beat_this (MIT code + weights; checkpoints download on first use) with the
+# librosa fallback. beat_this 1.1.0 is not on PyPI: installed from the pinned GitHub commit.
+speech-beats = [
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "einops>=0.8",
+    "rotary-embedding-torch>=0.6",
+    "soxr>=0.3",
+    "librosa>=0.10",
+    "beat_this @ https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip",  # main, 2026-05-28 (1.1.0)
+]
 # Phase E (generate a part that fits the song). The pipeline itself is numpy-only (numpy beat
 # tracker, chroma chords, rule-based composer, built-in synth); these add the model backends.
 # Tested 2026-11-14 on the A40 with torch 2.8.0+cu128 / transformers 5.23 (see README "Generate parts").
@@ -66,7 +110,7 @@ generate = [
     "soxr>=0.3",           # beat_this resampling
     "einops>=0.7",
     "rotary-embedding-torch>=0.5",
-    "beat_this @ git+https://github.com/CPJKU/beat_this@b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c",
+    "beat_this @ https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip",  # same pin as speech-beats
     "anticipation @ git+https://github.com/jthickstun/anticipation@af37397922665a0fb8d474d7988b0f3755a38d45",
     "midiutil>=1.2",
 ]
@@ -77,6 +121,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["sam_audio_service*"]
+
+[tool.setuptools.package-data]
+"sam_audio_service.speech" = ["*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

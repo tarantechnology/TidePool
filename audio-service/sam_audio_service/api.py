@@ -9,6 +9,9 @@ POST /v1/separate    JSON body with ``audio_ref`` instead of uploaded bytes (pro
 POST /v1/route       multipart, same as /separate: the routing decision only (dry run).
 POST /v1/analyze-music   tempo/beats/key/chords/sections/melody from a mix and/or its stems.
 POST /v1/generate-part   a new part (instrument, role, sections) that fits the song (generation/api.py).
+POST /v1/words       multipart: word timestamps, fillers, profanity, pauses (faster-whisper).
+POST /v1/enhance     multipart: speech enhancement of a dialogue/vocal layer (DeepFilterNet3).
+POST /v1/beats       multipart: beats, downbeats and tempo (beat_this; librosa fallback).
 GET  /health         liveness + model status.
 GET  /capabilities   prompting modes, limits, error codes, contract version.
 
@@ -26,6 +29,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -34,7 +38,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from pydantic import ValidationError
 
 from . import CONTRACT_VERSION, __version__
-from .audio_io import DecodedAudio, decode, encode_wav_pcm16, encode_wav_float32
+from .audio_io import DecodedAudio, decode, encode_wav_pcm16, encode_wav_float32, resample
 from .config import Settings, load_settings
 from .contracts import ModelInfo, RouteInfo, RouteResponse, SeparationMetadata, SeparationRequest, SeparationResponse, SourceInfo, StemResult
 from .engine import Engine, write_stem_file
@@ -43,15 +47,20 @@ from .generation import Generator
 from .generation.api import register as register_generate_routes
 from .generation.settings import GenSettings
 from .media import resolve_ref, to_file_ref
+from .speech import SpeechTools
+from .speech.contracts import BeatsMetadata, BeatsResponse, EnhanceMetadata, EnhanceResponse, WordsMetadata, WordsResponse
+from .speech.service import BEATS_SAMPLE_RATE, ENHANCE_SAMPLE_RATE, WORDS_SAMPLE_RATE
 from .stems import STEM_ALIASES
 from .stems.vocabulary import requestable
 
 log = logging.getLogger("sam_audio_service")
 
 
-def create_app(settings: Settings | None = None, engine: Engine | None = None, generator: Generator | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, engine: Engine | None = None, speech: SpeechTools | None = None,
+               generator: Generator | None = None) -> FastAPI:
     settings = settings or load_settings()
     engine = engine or Engine(settings)
+    speech = speech or SpeechTools(settings)
     generator = generator or Generator(GenSettings())
 
     @asynccontextmanager
@@ -61,11 +70,15 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
                 engine.load()
             except Exception:  # noqa: BLE001 - keep serving /health; requests return MISSING_MODEL
                 log.warning("model did not load on startup; will retry on first request")
+            speech.load()
         yield
         engine.unload()
+        speech.unload()
 
     app = FastAPI(title="SoundCanvas Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
-    app.state.settings, app.state.engine, app.state.generator = settings, engine, generator
+    app.state.settings, app.state.engine, app.state.speech, app.state.generator = settings, engine, speech, generator
+    from .objects import register
+    register(app, engine)
 
     @app.exception_handler(AudioServiceError)
     async def _service_error(_: Request, exc: AudioServiceError):
@@ -85,7 +98,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
     def health() -> dict[str, Any]:
         status = engine.status()
         return {"status": "ok" if status["loaded"] else "degraded", "service": "sam-audio-service", "version": __version__, "contract_version": CONTRACT_VERSION, "model": status,
-                "splitter": engine.splitter_status(), "classifier": engine.classifier_status()}
+                "splitter": engine.splitter_status(), "classifier": engine.classifier_status(), "speech": speech.status()}
 
     @app.get("/ready")
     def ready():
@@ -112,12 +125,14 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
             "input": {"sample_rate": backend.sample_rate, "accepted": "any FFmpeg-decodable audio or video; WAV PCM preferred", "max_duration_seconds": settings.max_duration_seconds, "max_input_bytes": settings.max_input_bytes, "max_prompts": settings.max_prompts},
             "output": {"format": "wav/pcm_f32le (default), wav/pcm_s16le (lossy)", "sample_rate": backend.sample_rate, "channels": "matches source (1 or 2)", "residual_modes": ["mixture_minus_targets", "model", "none"], "return_modes": ["base64", "file"]},
             "defaults": {"predict_spans": settings.predict_spans, "reranking_candidates": settings.reranking_candidates, "stereo_mode": settings.stereo_mode, "chunk_seconds": settings.chunk_seconds, "chunk_batch": settings.chunk_batch, "chunk_workers": settings.chunk_batch, "passes": 1,
+                         "suppression": {"mode": settings.suppression, "strength": settings.suppression_strength},
                          "refine": {"mode": settings.refine, "p": settings.refine_p, "n_fft": settings.refine_n_fft, "floor": settings.refine_floor, "blend": settings.refine_blend, "threshold": settings.refine_threshold, "residual_threshold": settings.refine_residual_threshold, "gate_db": settings.refine_gate_db},
                          "candidates": settings.candidates, "candidate_select": settings.candidate_select},
             "limits": {"max_passes": settings.max_passes, "max_prompts": settings.max_prompts, "max_duration_seconds": settings.max_duration_seconds},
             "music_stems": _music_stems_capabilities(),
             "routing": {"default_mode": settings.routing_default, "modes": ["auto", "prompted", "music_stems"], "classifier": engine.classifier.name, "music_threshold": settings.router_music_threshold},
             "generate": generator.capabilities(),
+            **speech.capabilities(),
             "error_codes": ERROR_CODES,
         }
 
@@ -174,6 +189,10 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
 
     def _separate_upload(audio: StarletteUploadFile, metadata: str, handle=_respond):
         meta = _parse_metadata(metadata)
+        return _spool(audio, lambda upload, workdir: handle(decode(path=upload, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout), meta, workdir))
+
+    def _spool(audio: StarletteUploadFile, handle):
+        """Write the upload to a temp file (bounded), then ``handle(path, workdir)``."""
         # Spool to a real file: MP4/MOV with a trailing moov atom cannot be demuxed from a pipe.
         with tempfile.TemporaryDirectory(prefix="sam-audio-req-") as tmp:
             workdir = Path(tmp)
@@ -191,12 +210,11 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
                 raise StorageFailure(f"could not spool upload: {exc.strerror or exc}") from exc
             if size == 0:
                 raise InvalidMedia("audio upload is empty")
-            decoded = decode(path=upload, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
-            return handle(decoded, meta, workdir)
+            return handle(upload, workdir)
 
     multipart_body = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {"type": "object", "required": ["audio"], "properties": {"audio": {"type": "string", "format": "binary"}, "metadata": {"type": "string"}}}}}}}
 
-    async def _read_multipart(request: Request, handle):
+    async def _read_multipart(request: Request, handle, upload_handler=None):
         # Detection RLE masks routinely exceed Starlette's 1 MiB default form-field limit.
         # Bound metadata explicitly; uploaded files have a separate streaming size limit.
         limit = int(os.getenv("AUDIO_MAX_METADATA_BYTES", str(64 * 1024 * 1024)))
@@ -204,7 +222,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
             audio, metadata = form.get("audio"), form.get("metadata", "{}")
             if not isinstance(audio, StarletteUploadFile) or not isinstance(metadata, str):
                 raise InvalidRequest("multipart request requires an audio file and metadata string")
-            return await run_in_threadpool(_separate_upload, audio, metadata, handle)
+            return await run_in_threadpool(upload_handler or _separate_upload, audio, metadata, handle)
 
     @app.post("/separate", response_model=SeparationResponse, response_model_exclude_none=True,
               openapi_extra=multipart_body)
@@ -226,7 +244,82 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, g
             decoded = decode(path=Path(path), ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
             return _respond(decoded, SeparationMetadata.model_validate(body.model_dump(exclude={"audio_ref"})), workdir)
 
+    # ------------------------------------------------------------------ speech / rhythm tools
+    def _speech_meta(raw: str, model):
+        try:
+            payload = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise InvalidRequest(f"metadata is not valid JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise InvalidRequest("metadata must be a JSON object")
+        try:
+            return model.model_validate(payload)
+        except ValidationError as exc:
+            raise InvalidRequest("invalid metadata", details={"errors": json.loads(exc.json())}) from exc
+
+    def _decode(path: Path, rate: int, max_channels: int = 2) -> DecodedAudio:
+        return decode(path=path, target_rate=rate, max_channels=max_channels, ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
+
+    def _speech_upload(model, rate: int, max_channels: int, fn):
+        def handler(audio: StarletteUploadFile, metadata: str, _handle):
+            meta = _speech_meta(metadata, model)
+            return _spool(audio, lambda path, workdir: fn(path, _decode(path, rate, max_channels), meta, workdir))
+        return handler
+
+    def _words(path: Path, audio: DecodedAudio, meta: WordsMetadata, workdir: Path) -> WordsResponse:
+        return WordsResponse(**speech.transcribe(audio, meta, meta.request_id or uuid.uuid4().hex))
+
+    def _enhance(path: Path, audio: DecodedAudio, meta: EnhanceMetadata, workdir: Path) -> EnhanceResponse:
+        request_id = meta.request_id or uuid.uuid4().hex
+        out, report = speech.enhance(audio, meta)
+        rate = ENHANCE_SAMPLE_RATE
+        if meta.preserve_sample_rate and audio.source_sample_rate != ENHANCE_SAMPLE_RATE:
+            # Same rate and length as the upload: resample back and fit to the original frame count.
+            original = _decode(path, audio.source_sample_rate, 2)
+            out = resample(out, ENHANCE_SAMPLE_RATE, audio.source_sample_rate, ffmpeg=settings.ffmpeg, timeout=settings.ffmpeg_timeout)
+            n = original.frames
+            out = out[:, :n] if out.shape[1] >= n else np.pad(out, ((0, 0), (0, n - out.shape[1])))
+            rate = audio.source_sample_rate
+        wav = (encode_wav_float32 if meta.output_format == "pcm_f32le" else encode_wav_pcm16)(out, rate)
+        item = EnhanceResponse(request_id=request_id, format="wav/" + meta.output_format, sample_rate=rate, channels=int(out.shape[0]),
+                               sample_count=int(out.shape[1]), duration=round(out.shape[1] / rate, 6), atten_lim_db=report["atten_lim_db"],
+                               levels=report["levels"], model=report["model"], source=report["source"], timing=report["timing"], warnings=report["warnings"])
+        if meta.return_mode == "file":
+            root = settings.output_root.resolve()
+            directory = (root / request_id).resolve()
+            if directory.parent != root:
+                raise InvalidRequest("request_id must be a single path segment")
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                target = directory / "enhanced.wav"
+                target.write_bytes(wav)
+            except OSError as exc:
+                raise StorageFailure(f"could not write enhanced audio: {exc}") from exc
+            item.audio_ref = to_file_ref(target)
+        else:
+            item.audio_base64 = base64.b64encode(wav).decode("ascii")
+        return item
+
+    def _beats(path: Path, audio: DecodedAudio, meta: BeatsMetadata, workdir: Path) -> BeatsResponse:
+        return BeatsResponse(**speech.track_beats(audio, meta, meta.request_id or uuid.uuid4().hex))
+
+    @app.post("/v1/words", response_model=WordsResponse, openapi_extra=multipart_body)
+    async def words(request: Request) -> WordsResponse:
+        """Word-level transcript with timestamps, plus filler / profanity indices and pauses."""
+        return await _read_multipart(request, None, _speech_upload(WordsMetadata, WORDS_SAMPLE_RATE, 1, _words))
+
+    @app.post("/v1/enhance", response_model=EnhanceResponse, response_model_exclude_none=True, openapi_extra=multipart_body)
+    async def enhance(request: Request) -> EnhanceResponse:
+        """Denoised speech, same length, channels and (by default) sample rate as the upload."""
+        return await _read_multipart(request, None, _speech_upload(EnhanceMetadata, ENHANCE_SAMPLE_RATE, 2, _enhance))
+
+    @app.post("/v1/beats", response_model=BeatsResponse, openapi_extra=multipart_body)
+    async def beats(request: Request) -> BeatsResponse:
+        """Beat and downbeat times (seconds) with tempo and beats per bar."""
+        return await _read_multipart(request, None, _speech_upload(BeatsMetadata, BEATS_SAMPLE_RATE, 1, _beats))
+
     register_generate_routes(app, settings, generator)
+
     return app
 
 

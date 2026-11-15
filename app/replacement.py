@@ -27,7 +27,11 @@ def generate(project, payload):
     directory=project_dir(project['id'])/'effects';directory.mkdir(parents=True,exist_ok=True)
     aid=uid();out=directory/(aid+'.wav')
     try:
-        subprocess.run([executable,'--model','small-sfx','-p',payload['prompt'],'--duration','3','-o',str(out)],check=True,capture_output=True,text=True,timeout=900,env=os.environ.copy())
+        env=os.environ.copy()
+        # The generator has its own environment and may use a different Python version.
+        # Inheriting the editor's PYTHONPATH can load incompatible binary modules.
+        env.pop('PYTHONPATH',None)
+        subprocess.run([executable,'--model','small-sfx','-p',payload['prompt'],'--duration','3','-o',str(out)],check=True,capture_output=True,text=True,timeout=900,env=env)
         info=probe(out)
         if not 0<info['duration']<=15: raise ValueError('Generated sound duration is invalid.')
         return {'asset_id':aid,'duration':info['duration'],'source':'generated','model':'stable-audio-3-small-sfx'}
@@ -156,7 +160,7 @@ def render_effect(normalized, output, events, rate, channels, count, alignment):
     return warnings,peak_offset,onset_offset
 
 
-def effect_layers(pid, label, normalized, events, rate, count, alignment, solo=False):
+def effect_layers(pid, label, normalized, events, rate, count, alignment, solo=False, group_id=None, asset_id=None):
     """Persist one short clip per event so placements stay editable after apply."""
     from .media import read_wav,write_wav
     samples,sr=read_wav(normalized)
@@ -172,7 +176,7 @@ def effect_layers(pid, label, normalized, events, rate, count, alignment, solo=F
             if not 0<=position<count or end<=trim:raise ValueError('A placement falls outside the audio timeline.')
             path=directory/(uid()+'-effect-clip.wav');created.append(path);write_wav(path,samples[trim:end],rate)
             name=label[:100] if index==0 else f'{label[:90]} {index+1}'
-            rows.append({'id':event['id'],'project_id':pid,'name':name,'label':name,'path':str(path),'duration':(end-trim)/rate,'start_offset':position/rate,'volume':1,'muted':0,'solo':int(solo),'automation':'[]','mute_ranges':'[]','revision':0,'role':'effect'})
+            rows.append({'id':event['id'],'project_id':pid,'name':name,'label':name,'path':str(path),'duration':(end-trim)/rate,'start_offset':position/rate,'volume':1,'muted':0,'solo':int(solo),'automation':'[]','mute_ranges':'[]','revision':0,'role':'effect','effect_group_id':group_id,'effect_asset_id':asset_id,'effect_label':label})
         return rows
     except Exception:
         for path in created:path.unlink(missing_ok=True)
@@ -189,7 +193,7 @@ def build(project,payload,cid):
     original=directory/(uid()+'.wav');mix=directory/(uid()+'.wav');placed=directory/(uid()+'.wav')
     if rows: export(rows,source,original,'wav',False)
     else: shutil.copyfile(source,original)
-    warnings=[];is_mock=False;peak_samples=[];events=[];groups=[];rate=probe(source)['sample_rate']
+    warnings=[];is_mock=False;peak_samples=[];events=[];groups=[];rate=probe(source)['sample_rate'];sound_group_id=uid()
     if payload['mode']=='replace':
         for span in payload['intervals']:
             residuals=[r for r in rows if r['name'].lower()=='residual']
@@ -236,7 +240,7 @@ def build(project,payload,cid):
             for point in peaks:
                 events.append({'id':uid(),'group':group,'source_peak':point/rate,'source_onset':onset_before_peak(target,rate,point)/rate,'offset':0,'enabled':True})
             processed=directory/(uid()+'-ducked.wav');duck_events(raw_path,processed,events,group,rate)
-            next(row for row in next_rows if row['id']==target_id)['path']=str(processed)
+            next(row for row in next_rows if row['id']==target_id).update(path=str(processed),sound_group_id=sound_group_id,sound_group_label=payload['source_prompt'],sound_start=span['start'],sound_end=span['end'])
             rows=next_rows
             is_mock=is_mock or mock
             warnings.extend(inference.get('warnings') or [])
@@ -257,9 +261,10 @@ def build(project,payload,cid):
     alignment='peak'
     notices,peak_offset,onset_offset=render_effect(normalized,placed,events,rate,channels,count,alignment)
     warnings.extend(notices)
-    rows.extend(effect_layers(pid,payload['effect_label'],normalized,events,rate,count,alignment,any(row['solo'] for row in rows)))
+    effect_group_id=uid()
+    rows.extend(effect_layers(pid,payload['effect_label'],normalized,events,rate,count,alignment,any(row['solo'] for row in rows),effect_group_id,payload['asset_id']))
     export(rows,source,mix,'wav',False)
-    return {'_replacement_edit':{'effect_path':str(normalized),'effect_ids':[e['id'] for e in events],'effect_label':payload['effect_label'],'groups':groups,'rate':rate,'channels':channels,'count':count},'target':{'path':str(placed)},'mix':{'path':str(mix)},'original':{'path':str(original)},'snapshot':snapshot,'proposed':rows,
+    return {'_replacement_edit':{'effect_path':str(normalized),'effect_ids':[e['id'] for e in events],'effect_label':payload['effect_label'],'effect_group_id':effect_group_id,'effect_asset_id':payload['asset_id'],'groups':groups,'rate':rate,'channels':channels,'count':count},'target':{'path':str(placed)},'mix':{'path':str(mix)},'original':{'path':str(original)},'snapshot':snapshot,'proposed':rows,
             'inference':{'model':{'backend':'sound-replacement','is_mock':is_mock},'warnings':warnings},
             'provenance':{'kind':'replacement','mode':payload['mode'],'intervals':payload['intervals'],'effect_label':payload['effect_label'],'source_prompt':payload['source_prompt'],'peak_times':[round(x/rate,6) for x in peak_samples], 'events':events,'alignment':alignment,'effect_peak_offset':round(peak_offset/rate,6),'effect_onset_offset':round(onset_offset/rate,6)}}
 
@@ -277,6 +282,8 @@ def effect_request(text):
         single_name=re.sub(r'\bquacks?(?:\s+sounds?)?\b','quack',name,flags=re.I)
         description=f'One single short sound: {single_name}. A clearly audible duck quack, with silence before and after. No speech, no music, no repeated quacks.'
         return {'prompt':description,'count':count,'kind':'quack'}
+    if count==1:
+        name=re.sub(r'\b([a-z]{3,}?)(?<!s)s\b$',r'\1',name,flags=re.I)
     return {'prompt':f'Exactly {count} distinct occurrence(s) of this isolated sound effect: {name}. Silence before and after. No speech or music.', 'count':count,'kind':'generic'}
 
 
@@ -328,6 +335,11 @@ def parse_replacement(text,duration):
     text=' '.join(text.strip().split())
     prefix=re.match(r"^(?:i\s+(?:would\s+like|want|need)|i['’]d\s+like)\s+(?:you\s+)?to\s+",text,re.I)
     if prefix: text=text[prefix.end():]
+    # A trailing example clause describes the source, not the generated effect.
+    # Normalize only this explicit form so additional commands still require clarification.
+    example=re.search(r'\s*[;,]\s*(?:use|using)\s+(?:the|that)\s+sound\s+((?:at|around|near)\s+\d+(?:\.\d+)?\s*(?:seconds?|secs?|s))\s+as\s+(?:an?\s+)?example[.!?]?\s*$',text,re.I)
+    if example:
+        text=text[:example.start()].rstrip()+' '+example.group(1)
     addition=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+at\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)[.!?]?',text,re.I)
     if addition:
         effect=addition.group(1).strip();point=float(addition.group(2))
@@ -366,6 +378,19 @@ def auto_build(project,payload,cid):
     if file_sha256(source)!=snapshot['source_sha256']: raise ValueError('Source changed; please retry.')
     for row in snapshot['rows']:
         if file_sha256(candidates.safe_path(pid,row['path']))!=snapshot['stem_hashes'][row['id']]: raise ValueError('A layer changed; please retry.')
+    from .effect_followup import matching_effects, replace_known_effects, resolve_effect_reference
+    resolver_unavailable=False
+    if plan.get('mode')!='add':
+        known=matching_effects(snapshot['rows'],plan['source'])
+        if not known and any(row.get('role')=='effect' for row in snapshot['rows']):
+            known=resolve_effect_reference(plan['source'],snapshot['rows'])
+            if known is None:
+                import re
+                resolver_unavailable=True
+                if re.search(r'\b(?:it|them|that|those|added|generated|placed)\b',plan['source'],re.I):
+                    raise ValueError('The sound reference assistant is unavailable. Use the exact name of the effect layer.')
+        if known:
+            return replace_known_effects(project,payload,plan,snapshot['rows'],source,cid,known)
     event_hints=None;detection_meta={};detector_unavailable=False
     residuals=[r for r in snapshot['rows'] if r['name'].lower()=='residual']
     detection_source=candidates.safe_path(pid,residuals[0]['path']) if residuals else source
@@ -413,6 +438,8 @@ def auto_build(project,payload,cid):
     output=build(project,{'_candidate':snapshot,'asset_id':asset['asset_id'],'asset_sha256':file_sha256(asset_path(pid,asset['asset_id'])),
                           'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints},cid)
     output['inference']['warnings'].insert(0,note)
+    if resolver_unavailable:
+        output['inference']['warnings'].append('Could not check for a similarly named effect layer; searched the residual audio instead.')
     if detector_unavailable:
         output['inference']['warnings'].append('The experimental text-conditioned detector was unavailable; the other detection method was used. Review the suggested placements.')
     output['inference']['warnings'].append('Generated sound count and content are approximate; listen to the effect before applying.')
@@ -466,7 +493,7 @@ def adjust(project,payload,candidate_id):
         placed=directory/(uid()+'.wav');mix=directory/(uid()+'.wav');created.extend([placed,mix])
         notices,_,_=render_effect(effect,placed,events,meta['rate'],meta['channels'],meta['count'],provenance['alignment'])
         prior_ids=set(meta['effect_ids']);base=[r for r in output['proposed'] if r['id'] not in prior_ids]
-        clips=effect_layers(pid,meta['effect_label'],effect,events,meta['rate'],meta['count'],provenance['alignment'],any(r['solo'] for r in base))
+        clips=effect_layers(pid,meta['effect_label'],effect,events,meta['rate'],meta['count'],provenance['alignment'],any(r['solo'] for r in base),meta.get('effect_group_id'),meta.get('effect_asset_id'))
         created.extend(Path(r['path']) for r in clips)
         output['proposed']=base+clips;meta['effect_ids']=[e['id'] for e in events]
         export(output['proposed'],source,mix,'wav',False)

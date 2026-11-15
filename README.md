@@ -141,7 +141,7 @@ their edits are preserved. Preview and undo work as usual.
 
 
 For repeated effects, try **“Replace every punch with a quack”**. If the detector
-cannot find the sound, provide an example time; SoundCanvas can look for similar
+cannot find the sound, provide an example time; TidePool can look for similar
 sounds, separate short candidate windows, and preview suggested placements. The
 experimental text detector and example matching may miss or misidentify events. In
 the preview you can listen, disable or nudge individual placements, add a placement
@@ -166,4 +166,4 @@ Repeated separated sounds such as chopping also appear together when they came f
 the same operation or use the same explicit sound description. Grouping uses project
 history and prompts; it does not prove that the separator identified a source correctly.
 
-SoundCanvas can preview English profanity beeps from an explicit natural-language request using optional local word-timed transcription. This needs a separately installed faster-whisper runtime and local model; setup, privacy, and accuracy limitations are documented in [INTEGRATION.md](INTEGRATION.md#local-transcription-and-profanity-beeps).
+TidePool can preview English profanity beeps from an explicit natural-language request using optional local word-timed transcription. This needs a separately installed faster-whisper runtime and local model; setup, privacy, and accuracy limitations are documented in [INTEGRATION.md](INTEGRATION.md#local-transcription-and-profanity-beeps).

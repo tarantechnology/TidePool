@@ -3,7 +3,7 @@ import type { Keyframe, MuteRange, Refinement, Stem, TrackState } from '../types
 import { readRotation } from '../rotation'
 
 // Client for the upstream FastAPI backend. Paths and shapes come from
-// INTEGRATION.md and app/main.py at AkhilNam/SoundCanvas commit 9fc2216. They
+// INTEGRATION.md and app/main.py at commit 9fc2216. They
 // are DOCUMENTED there, but this code has only run against mocks, not a live
 // server. Project tokens are sent in bearer headers, never in env vars or the bundle.
 

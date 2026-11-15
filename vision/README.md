@@ -1,4 +1,4 @@
-# SoundCanvas Part 2 — Vision
+# TidePool Part 2 — Vision
 
 **Runpod update (2026-11-13):** official SAM 3.1 and SAM 2.1 video inference now run on the L4, preserving schema 1.0 and YOLO fallback. Real SAM Audio Small TV text/visual/temporal comparisons also ran. [GPU results, adapters and reproduction](docs/RUNPOD.md) distinguish execution from unverified isolation quality.
 
@@ -8,7 +8,7 @@ Independent, working CV pipeline: MP4/image decoding, real YOLO detection, ByteT
 
 ## Setup
 
-From the SoundCanvas repository root, with Python 3.11 or 3.12:
+From the TidePool repository root, with Python 3.11 or 3.12:
 
 ```bash
 python3 -m venv .venv

@@ -1,11 +1,11 @@
 # Contracts
 
-What the SoundCanvas editor (Person 3) expects from, and offers to, the other workstreams.
+What the TidePool editor (Person 3) expects from, and offers to, the other workstreams.
 
 Each contract below has one of three labels:
 
 - **SHARED**: defined in this repo, in `src/types.ts`.
-- **DOCUMENTED**: read from upstream `INTEGRATION.md` and `app/main.py` at AkhilNam/SoundCanvas commit 9fc2216. This client has only run against mocks of it, not a live server.
+- **DOCUMENTED**: read from upstream `INTEGRATION.md` and `app/main.py` at commit 9fc2216. This client has only run against mocks of it, not a live server.
 - **ASSUMED**: invented here because nothing documents it yet. Needs confirmation.
 
 ## Shared types (SHARED)

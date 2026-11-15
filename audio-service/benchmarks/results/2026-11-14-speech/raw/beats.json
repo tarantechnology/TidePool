@@ -1,0 +1,206 @@
+{
+ "beat_this": {
+  "load_seconds": 7.93,
+  "synthetic": [
+   {
+    "bpm": 90,
+    "meter": 4,
+    "beat_f": 0.9888,
+    "downbeat_f": 0.9167,
+    "tempo_est": 90.91,
+    "beats_per_bar_est": 4
+   },
+   {
+    "bpm": 100,
+    "meter": 4,
+    "beat_f": 0.9899,
+    "downbeat_f": 0.9286,
+    "tempo_est": 100.0,
+    "beats_per_bar_est": 4
+   },
+   {
+    "bpm": 120,
+    "meter": 4,
+    "beat_f": 0.9831,
+    "downbeat_f": 0.8333,
+    "tempo_est": 120.0,
+    "beats_per_bar_est": 2
+   },
+   {
+    "bpm": 128,
+    "meter": 4,
+    "beat_f": 0.992,
+    "downbeat_f": 0.8,
+    "tempo_est": 130.43,
+    "beats_per_bar_est": 2
+   },
+   {
+    "bpm": 140,
+    "meter": 4,
+    "beat_f": 0.9855,
+    "downbeat_f": 0.9714,
+    "tempo_est": 142.86,
+    "beats_per_bar_est": 4
+   },
+   {
+    "bpm": 174,
+    "meter": 4,
+    "beat_f": 0.9884,
+    "downbeat_f": 0.8302,
+    "tempo_est": 176.47,
+    "beats_per_bar_est": 2
+   },
+   {
+    "bpm": 96,
+    "meter": 3,
+    "beat_f": 0.9895,
+    "downbeat_f": 0.619,
+    "tempo_est": 96.77,
+    "beats_per_bar_est": 2
+   },
+   {
+    "bpm": 150,
+    "meter": 3,
+    "beat_f": 0.9865,
+    "downbeat_f": 0.0,
+    "tempo_est": 150.0,
+    "beats_per_bar_est": 3
+   }
+  ],
+  "mean_beat_f": 0.988,
+  "mean_downbeat_f": 0.7374,
+  "song": {
+   "file": "fullsong.wav",
+   "duration": 230.7,
+   "tempo_bpm": 125.0,
+   "beats_per_bar": 4,
+   "beats": 507,
+   "downbeats": 191
+  },
+  "latency_song": [
+   {
+    "wall_seconds": 0.49,
+    "process_vram_peak_mib": 692,
+    "torch_peak_mib": 265
+   },
+   {
+    "wall_seconds": 0.49,
+    "process_vram_peak_mib": 692,
+    "torch_peak_mib": 265
+   },
+   {
+    "wall_seconds": 0.49,
+    "process_vram_peak_mib": 692,
+    "torch_peak_mib": 265
+   }
+  ],
+  "model": {
+   "backend": "beat_this",
+   "model_id": "final0",
+   "is_mock": false,
+   "device": "cuda",
+   "dbn": false
+  }
+ },
+ "librosa": {
+  "load_seconds": 0.03,
+  "synthetic": [
+   {
+    "bpm": 90,
+    "meter": 4,
+    "beat_f": 0.9885,
+    "downbeat_f": null,
+    "tempo_est": 89.15,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 100,
+    "meter": 4,
+    "beat_f": 0.9792,
+    "downbeat_f": null,
+    "tempo_est": 99.34,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 120,
+    "meter": 4,
+    "beat_f": 0.9913,
+    "downbeat_f": null,
+    "tempo_est": 117.65,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 128,
+    "meter": 4,
+    "beat_f": 0.9919,
+    "downbeat_f": null,
+    "tempo_est": 129.31,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 140,
+    "meter": 4,
+    "beat_f": 0.9926,
+    "downbeat_f": null,
+    "tempo_est": 143.54,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 174,
+    "meter": 4,
+    "beat_f": 0.6614,
+    "downbeat_f": null,
+    "tempo_est": 86.21,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 96,
+    "meter": 3,
+    "beat_f": 0.9892,
+    "downbeat_f": null,
+    "tempo_est": 95.69,
+    "beats_per_bar_est": null
+   },
+   {
+    "bpm": 150,
+    "meter": 3,
+    "beat_f": 0.9931,
+    "downbeat_f": null,
+    "tempo_est": 151.9,
+    "beats_per_bar_est": null
+   }
+  ],
+  "mean_beat_f": 0.9484,
+  "mean_downbeat_f": null,
+  "song": {
+   "file": "fullsong.wav",
+   "duration": 230.7,
+   "tempo_bpm": 122.95,
+   "beats_per_bar": null,
+   "beats": 460,
+   "downbeats": 0
+  },
+  "latency_song": [
+   {
+    "wall_seconds": 0.59,
+    "process_vram_peak_mib": 692,
+    "torch_peak_mib": 8
+   },
+   {
+    "wall_seconds": 0.51,
+    "process_vram_peak_mib": 692,
+    "torch_peak_mib": 8
+   },
+   {
+    "wall_seconds": 0.52,
+    "process_vram_peak_mib": 692,
+    "torch_peak_mib": 8
+   }
+  ],
+  "model": {
+   "backend": "librosa",
+   "model_id": "librosa.beat.beat_track",
+   "is_mock": false
+  }
+ }
+}

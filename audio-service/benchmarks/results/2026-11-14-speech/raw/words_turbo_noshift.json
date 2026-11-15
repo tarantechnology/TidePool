@@ -1,0 +1,503 @@
+{
+ "model": "large-v3-turbo",
+ "batch_size": 8,
+ "compute_type": "float16",
+ "beam_size": 5,
+ "load_seconds": 9.49,
+ "variants": {
+  "off": {
+   "librispeech": {
+    "utterances": 100,
+    "ref_words": 2027,
+    "wer": 0.0365,
+    "start": {
+     "n": 1957,
+     "mean_ms": 88.0,
+     "median_ms": 50.0,
+     "p90_ms": 230.0,
+     "within_50ms": 0.5238,
+     "within_80ms": 0.6582,
+     "within_100ms": 0.7466
+    },
+    "end": {
+     "n": 1957,
+     "mean_ms": 69.4,
+     "median_ms": 50.0,
+     "p90_ms": 160.0,
+     "within_50ms": 0.5222,
+     "within_80ms": 0.6622,
+     "within_100ms": 0.7634
+    },
+    "boundary": {
+     "n": 3914,
+     "mean_ms": 78.7,
+     "median_ms": 50.0,
+     "p90_ms": 180.0,
+     "within_50ms": 0.523,
+     "within_80ms": 0.6602,
+     "within_100ms": 0.755
+    },
+    "rtf": 0.0629,
+    "signed_mean_start_ms": -79.1
+   },
+   "tts": {
+    "clips": 150,
+    "profanity_recall": 0.8077,
+    "profanity_targets": 78,
+    "filler_recall": 0.6905,
+    "filler_targets": 42,
+    "trap_false_positives": 0,
+    "trap_words": 204,
+    "target_boundary": {
+     "n": 184,
+     "mean_ms": 161.6,
+     "median_ms": 151.5,
+     "p90_ms": 274.0,
+     "within_50ms": 0.0489,
+     "within_80ms": 0.1087,
+     "within_100ms": 0.1739
+    },
+    "target_start": {
+     "n": 92,
+     "mean_ms": 161.1,
+     "median_ms": 148.8,
+     "p90_ms": 320.0,
+     "within_50ms": 0.0978,
+     "within_80ms": 0.1957,
+     "within_100ms": 0.3043
+    },
+    "target_end": {
+     "n": 92,
+     "mean_ms": 162.2,
+     "median_ms": 153.4,
+     "p90_ms": 222.7,
+     "within_50ms": 0.0,
+     "within_80ms": 0.0217,
+     "within_100ms": 0.0435
+    },
+    "target_signed_median_ms": {
+     "start": -148.8,
+     "end": -153.4
+    },
+    "misses": [
+     {
+      "id": "spk0_03",
+      "missed": "shit",
+      "heard": "Oh, it, I forgot my keys."
+     },
+     {
+      "id": "spk0_08",
+      "missed": "uh",
+      "heard": "Well, I'm not really sure."
+     },
+     {
+      "id": "spk0_17",
+      "missed": "uh",
+      "heard": "I might be late tomorrow."
+     },
+     {
+      "id": "spk108_03",
+      "missed": "shit",
+      "heard": "Oh, hit, I forgot my keys."
+     },
+     {
+      "id": "spk108_10",
+      "missed": "uh",
+      "heard": "I lost the remote again."
+     },
+     {
+      "id": "spk108_16",
+      "missed": "shit",
+      "heard": "Holy, kit, look at that."
+     },
+     {
+      "id": "spk108_17",
+      "missed": "uh",
+      "heard": "I might be late tomorrow."
+     },
+     {
+      "id": "spk108_18",
+      "missed": "jackass",
+      "heard": "Do not be a, kerkass, about it."
+     },
+     {
+      "id": "spk15_03",
+      "missed": "shit",
+      "heard": "Oh, it, I forgot my keys."
+     },
+     {
+      "id": "spk15_06",
+      "missed": "Damn",
+      "heard": "Yeah, that was close."
+     },
+     {
+      "id": "spk15_08",
+      "missed": "uh",
+      "heard": "Well, huh, I'm not really sure."
+     },
+     {
+      "id": "spk15_16",
+      "missed": "shit",
+      "heard": "Holy, it, look at that."
+     },
+     {
+      "id": "spk15_18",
+      "missed": "jackass",
+      "heard": "Do not be a, deckass, about it."
+     },
+     {
+      "id": "spk230_03",
+      "missed": "shit",
+      "heard": "Oh, yeah, I forgot my keys."
+     },
+     {
+      "id": "spk230_08",
+      "missed": "uh",
+      "heard": "Well, I'm not really sure."
+     },
+     {
+      "id": "spk230_10",
+      "missed": "uh",
+      "heard": "I lost the remote again."
+     },
+     {
+      "id": "spk230_12",
+      "missed": "dick",
+      "heard": "That guy is a total. Thick."
+     },
+     {
+      "id": "spk230_16",
+      "missed": "shit",
+      "heard": "Holy. Hit. Look at that."
+     },
+     {
+      "id": "spk230_17",
+      "missed": "uh",
+      "heard": "I might be late tomorrow."
+     },
+     {
+      "id": "spk401_03",
+      "missed": "shit",
+      "heard": "Oh, hit, I forgot my keys."
+     },
+     {
+      "id": "spk401_08",
+      "missed": "uh",
+      "heard": "Well, I am not really sure."
+     },
+     {
+      "id": "spk401_10",
+      "missed": "uh",
+      "heard": "I, huh, lost the remote again."
+     },
+     {
+      "id": "spk401_16",
+      "missed": "shit",
+      "heard": "Holy, it, look at that."
+     },
+     {
+      "id": "spk401_17",
+      "missed": "uh",
+      "heard": "Hi, might be late tomorrow."
+     },
+     {
+      "id": "spk640_03",
+      "missed": "shit",
+      "heard": "Oh, it. I forgot my keys."
+     },
+     {
+      "id": "spk640_07",
+      "missed": "bitch",
+      "heard": "Let up you little itch."
+     },
+     {
+      "id": "spk640_08",
+      "missed": "uh",
+      "heard": "Well, I am not really sure."
+     },
+     {
+      "id": "spk640_10",
+      "missed": "uh",
+      "heard": "I... lost the remote again."
+     }
+    ]
+   },
+   "latency_4min": {
+    "duration": 240.0,
+    "runs": [
+     {
+      "wall_seconds": 3.54,
+      "transcribe_seconds": 3.532,
+      "align_seconds": 0.0,
+      "words": 643,
+      "process_vram_peak_mib": 5716,
+      "torch_peak_mib": 368
+     },
+     {
+      "wall_seconds": 5.05,
+      "transcribe_seconds": 5.038,
+      "align_seconds": 0.0,
+      "words": 643,
+      "process_vram_peak_mib": 5716,
+      "torch_peak_mib": 368
+     },
+     {
+      "wall_seconds": 4.94,
+      "transcribe_seconds": 4.928,
+      "align_seconds": 0.0,
+      "words": 643,
+      "process_vram_peak_mib": 5716,
+      "torch_peak_mib": 368
+     }
+    ]
+   }
+  },
+  "on": {
+   "librispeech": {
+    "utterances": 100,
+    "ref_words": 2027,
+    "wer": 0.0365,
+    "start": {
+     "n": 1957,
+     "mean_ms": 68.6,
+     "median_ms": 60.0,
+     "p90_ms": 110.0,
+     "within_50ms": 0.3643,
+     "within_80ms": 0.7389,
+     "within_100ms": 0.8692
+    },
+    "end": {
+     "n": 1957,
+     "mean_ms": 46.5,
+     "median_ms": 28.0,
+     "p90_ms": 111.0,
+     "within_50ms": 0.7169,
+     "within_80ms": 0.8452,
+     "within_100ms": 0.8815
+    },
+    "boundary": {
+     "n": 3914,
+     "mean_ms": 57.6,
+     "median_ms": 46.0,
+     "p90_ms": 110.7,
+     "within_50ms": 0.5406,
+     "within_80ms": 0.792,
+     "within_100ms": 0.8753
+    },
+    "rtf": 0.0605,
+    "signed_mean_start_ms": 62.3
+   },
+   "tts": {
+    "clips": 150,
+    "profanity_recall": 0.8077,
+    "profanity_targets": 78,
+    "filler_recall": 0.6905,
+    "filler_targets": 42,
+    "trap_false_positives": 0,
+    "trap_words": 204,
+    "target_boundary": {
+     "n": 184,
+     "mean_ms": 112.4,
+     "median_ms": 114.3,
+     "p90_ms": 181.6,
+     "within_50ms": 0.1793,
+     "within_80ms": 0.3533,
+     "within_100ms": 0.4185
+    },
+    "target_start": {
+     "n": 92,
+     "mean_ms": 75.5,
+     "median_ms": 54.7,
+     "p90_ms": 145.2,
+     "within_50ms": 0.3587,
+     "within_80ms": 0.6196,
+     "within_100ms": 0.6957
+    },
+    "target_end": {
+     "n": 92,
+     "mean_ms": 149.4,
+     "median_ms": 147.9,
+     "p90_ms": 208.4,
+     "within_50ms": 0.0,
+     "within_80ms": 0.087,
+     "within_100ms": 0.1413
+    },
+    "target_signed_median_ms": {
+     "start": 54.7,
+     "end": -147.9
+    },
+    "misses": [
+     {
+      "id": "spk0_03",
+      "missed": "shit",
+      "heard": "Oh, it, I forgot my keys."
+     },
+     {
+      "id": "spk0_08",
+      "missed": "uh",
+      "heard": "Well, I'm not really sure."
+     },
+     {
+      "id": "spk0_17",
+      "missed": "uh",
+      "heard": "I might be late tomorrow."
+     },
+     {
+      "id": "spk108_03",
+      "missed": "shit",
+      "heard": "Oh, hit, I forgot my keys."
+     },
+     {
+      "id": "spk108_10",
+      "missed": "uh",
+      "heard": "I lost the remote again."
+     },
+     {
+      "id": "spk108_16",
+      "missed": "shit",
+      "heard": "Holy, kit, look at that."
+     },
+     {
+      "id": "spk108_17",
+      "missed": "uh",
+      "heard": "I might be late tomorrow."
+     },
+     {
+      "id": "spk108_18",
+      "missed": "jackass",
+      "heard": "Do not be a, kerkass, about it."
+     },
+     {
+      "id": "spk15_03",
+      "missed": "shit",
+      "heard": "Oh, it, I forgot my keys."
+     },
+     {
+      "id": "spk15_06",
+      "missed": "Damn",
+      "heard": "Yeah, that was close."
+     },
+     {
+      "id": "spk15_08",
+      "missed": "uh",
+      "heard": "Well, huh, I'm not really sure."
+     },
+     {
+      "id": "spk15_16",
+      "missed": "shit",
+      "heard": "Holy, it, look at that."
+     },
+     {
+      "id": "spk15_18",
+      "missed": "jackass",
+      "heard": "Do not be a, deckass, about it."
+     },
+     {
+      "id": "spk230_03",
+      "missed": "shit",
+      "heard": "Oh, yeah, I forgot my keys."
+     },
+     {
+      "id": "spk230_08",
+      "missed": "uh",
+      "heard": "Well, I'm not really sure."
+     },
+     {
+      "id": "spk230_10",
+      "missed": "uh",
+      "heard": "I lost the remote again."
+     },
+     {
+      "id": "spk230_12",
+      "missed": "dick",
+      "heard": "That guy is a total. Thick."
+     },
+     {
+      "id": "spk230_16",
+      "missed": "shit",
+      "heard": "Holy. Hit. Look at that."
+     },
+     {
+      "id": "spk230_17",
+      "missed": "uh",
+      "heard": "I might be late tomorrow."
+     },
+     {
+      "id": "spk401_03",
+      "missed": "shit",
+      "heard": "Oh, hit, I forgot my keys."
+     },
+     {
+      "id": "spk401_08",
+      "missed": "uh",
+      "heard": "Well, I am not really sure."
+     },
+     {
+      "id": "spk401_10",
+      "missed": "uh",
+      "heard": "I, huh, lost the remote again."
+     },
+     {
+      "id": "spk401_16",
+      "missed": "shit",
+      "heard": "Holy, it, look at that."
+     },
+     {
+      "id": "spk401_17",
+      "missed": "uh",
+      "heard": "Hi, might be late tomorrow."
+     },
+     {
+      "id": "spk640_03",
+      "missed": "shit",
+      "heard": "Oh, it. I forgot my keys."
+     },
+     {
+      "id": "spk640_07",
+      "missed": "bitch",
+      "heard": "Let up you little itch."
+     },
+     {
+      "id": "spk640_08",
+      "missed": "uh",
+      "heard": "Well, I am not really sure."
+     },
+     {
+      "id": "spk640_10",
+      "missed": "uh",
+      "heard": "I... lost the remote again."
+     }
+    ]
+   },
+   "latency_4min": {
+    "duration": 240.0,
+    "runs": [
+     {
+      "wall_seconds": 6.16,
+      "transcribe_seconds": 4.967,
+      "align_seconds": 1.187,
+      "words": 643,
+      "process_vram_peak_mib": 5808,
+      "torch_peak_mib": 857
+     },
+     {
+      "wall_seconds": 6.11,
+      "transcribe_seconds": 4.927,
+      "align_seconds": 1.175,
+      "words": 643,
+      "process_vram_peak_mib": 6864,
+      "torch_peak_mib": 857
+     },
+     {
+      "wall_seconds": 6.23,
+      "transcribe_seconds": 5.062,
+      "align_seconds": 1.164,
+      "words": 643,
+      "process_vram_peak_mib": 6864,
+      "torch_peak_mib": 857
+     }
+    ]
+   }
+  }
+ }
+}

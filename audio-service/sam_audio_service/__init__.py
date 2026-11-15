@@ -1,4 +1,4 @@
-"""SoundCanvas audio inference service (workstream: Person 1, Audio AI Pipeline).
+"""TidePool audio inference service (workstream: Person 1, Audio AI Pipeline).
 
 Owns SAM Audio model loading and inference, audio preprocessing for the model,
 target/residual stem generation and the audio inference HTTP API. It does not own

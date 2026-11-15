@@ -142,6 +142,8 @@ export interface ObjectTrack {
   firstFrameIndex: number
   lastFrameIndex: number
   frames: number
+  /** A name the user gave it, such as the character's name. */
+  name?: string
 }
 
 /** Only tracked objects with a mask can guide separation, so only those are listed and drawn. */
@@ -164,6 +166,8 @@ export function objectTracks(metadata: VisualMetadata): ObjectTrack[] {
       row.labels.set(object.label, (row.labels.get(object.label) ?? 0) + 1)
       if (frame.timestamp_seconds < row.firstSeconds) { row.firstSeconds = frame.timestamp_seconds; row.firstFrameIndex = frame.frame_index }
       if (frame.timestamp_seconds > row.lastSeconds) { row.lastSeconds = frame.timestamp_seconds; row.lastFrameIndex = frame.frame_index }
+      const name = objectName(object)
+      if (name) row.name = name
     }
   }
   return [...byTrack.values()]
@@ -257,7 +261,7 @@ export function overlayBoxes(frame: VisualFrame | undefined, selectedTrack: numb
     .map((object) => ({
       object,
       trackId: object.track_id,
-      label: `${object.label} #${object.track_id}`,
+      label: trackTitle(object),
       box: object.bbox_normalized as [number, number, number, number],
       color: trackColor(object.track_id).css,
       selected: object.track_id === selectedTrack,
@@ -281,4 +285,68 @@ export function readShowObjects(store: Store | undefined = defaultStore()): bool
 
 export function writeShowObjects(value: boolean, store: Store | undefined = defaultStore()): void {
   try { store?.setItem(SHOW_OBJECTS_KEY, value ? '1' : '0') } catch { /* a preference, not data */ }
+}
+
+// ---- Fixing detections ------------------------------------------------------
+// The tracker can be wrong: a shadow becomes a person, or one person gets a new
+// number after a cut. These edits rewrite the stored detections, so the list, the
+// overlay, Moon pull and Current all see the corrected version.
+
+/** The user's name for an object, if they gave one. */
+export function objectName(object: VisualObject): string {
+  return typeof object.name === 'string' ? object.name.trim() : ''
+}
+
+/** How an object is titled in the list and on the video: its name, or "person #8". */
+export function trackTitle(object: { label: string; track_id: number | null; name?: unknown }): string {
+  const name = typeof object.name === 'string' ? object.name.trim() : ''
+  return name || `${object.label} #${object.track_id}`
+}
+
+function mapObjects(metadata: VisualMetadata, edit: (objects: VisualObject[]) => VisualObject[]): VisualMetadata {
+  return { ...metadata, frames: metadata.frames.map((frame) => ({ ...frame, objects: edit(frame.objects) })) }
+}
+
+/** Remove a track from every frame: it was never a real object. */
+export function removeTrack(metadata: VisualMetadata, trackId: number): VisualMetadata {
+  return mapObjects(metadata, (objects) => objects.filter((o) => o.track_id !== trackId))
+}
+
+/**
+ * Fold track `from` into track `into`: one entry whose on-screen time is both.
+ * In a frame where both were seen, the kept track's observation wins, so each
+ * frame still holds at most one observation per track. A name on either survives.
+ */
+export function mergeTracks(metadata: VisualMetadata, into: number, from: number): VisualMetadata {
+  if (into === from) return metadata
+  const keptName = trackName(metadata, into) || trackName(metadata, from)
+  return mapObjects(metadata, (objects) => {
+    const hasInto = objects.some((o) => o.track_id === into)
+    return objects
+      .filter((o) => !(o.track_id === from && hasInto))
+      .map((o) => {
+        if (o.track_id !== into && o.track_id !== from) return o
+        const next: VisualObject = { ...o, track_id: into }
+        if (keptName) next.name = keptName
+        else delete next.name
+        return next
+      })
+  })
+}
+
+/** Give a track a name (empty clears it). The detector's label stays, since sounds are matched by it. */
+export function renameTrack(metadata: VisualMetadata, trackId: number, name: string): VisualMetadata {
+  const clean = name.trim().slice(0, 40)
+  return mapObjects(metadata, (objects) => objects.map((o) => {
+    if (o.track_id !== trackId) return o
+    const next: VisualObject = { ...o }
+    if (clean) next.name = clean
+    else delete next.name
+    return next
+  }))
+}
+
+function trackName(metadata: VisualMetadata, trackId: number): string {
+  for (const frame of metadata.frames) for (const o of frame.objects) if (o.track_id === trackId && objectName(o)) return objectName(o)
+  return ''
 }

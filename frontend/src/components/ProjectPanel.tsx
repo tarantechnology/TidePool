@@ -124,7 +124,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [resumeVisual, setResumeVisual] = useState<{projectId:string;jobId:string}|null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [prompt, setPrompt] = useState('')
-  const [explodeText, setExplodeText] = useState(DEFAULT_EXPLODE)
+  const [explodeText, setExplodeText] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [exploded, setExploded] = useState('')
   const [smartOrder, setSmartOrder] = useState(true)
   const [splitMusic, setSplitMusic] = useState(false)
@@ -405,7 +406,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     // Same render as setProject, so the save effect never writes this reset under the previous project.
     setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
-    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setConfirmExplode(false); setHeard(null); explodeEdited.current=false; setExplodeText(DEFAULT_EXPLODE); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
+    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setConfirmExplode(false); setHeard(null); explodeEdited.current=false; setExplodeText(''); setAdvancedOpen(false); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
@@ -538,7 +539,13 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
    */
   const explode = () => run(async () => {
     if (!project) return
-    const listed = parseExplodeList(explodeText)
+    let listed = parseExplodeList(explodeText)
+    if (listed.length === 0 && canListen) {
+      // An empty box means "you choose": listen to the clip, show what was heard, then explode into that.
+      setMessage('Listening to the clip to choose the layers…')
+      listed = await listen()
+      if (listed.length === 0) throw new Error('TidePool could not pick out distinct sounds in this clip. Type the sounds you want, separated by commas.')
+    }
     const recipe = capabilities?.explode === true
     const sounds = smartOrder ? orderForExplode(listed, recipe) : listed
     if (sounds.length === 0) throw new Error('List at least one sound, separated by commas.')
@@ -579,21 +586,26 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     setMessage(`Exploded into ${sounds.join(', ')} and one background layer. Double-click a layer name to rename it.`)
   })
   /** Let the model listen to the clip and fill Explode with the sounds it hears. */
-  const listen = async (auto=false) => {
-    if (!project || !token || listening) return
+  const listen = async (auto=false): Promise<string[]> => {
+    if (!project || !token || listening) return []
     const pid = project.project_id
     setListening(true)
     try {
       const result = await suggestSounds({baseUrl, token}, pid)
-      if (!mounted.current) return
+      if (!mounted.current) return []
       const note = result.sounds.length ? '' : (result.reason || 'It did not recognise any sounds; type them instead.')
       setHeard({projectId:pid, sounds:result.sounds, note})
-      if (result.sounds.length && (!auto || !explodeEdited.current)) { setExplodeText((focusSounds(result.sounds).length ? focusSounds(result.sounds) : result.sounds.map(s => s.prompt)).join(', ')); explodeEdited.current = false }
+      const picked = focusSounds(result.sounds).length ? focusSounds(result.sounds) : result.sounds.map(s => s.prompt)
+      if (picked.length && (!auto || !explodeEdited.current)) { setExplodeText(picked.join(', ')); explodeEdited.current = false }
+      return picked
     } catch (e) {
       if (mounted.current) setHeard({projectId:pid, sounds:[], note:`Could not listen to the clip: ${e instanceof Error ? e.message : String(e)}`})
+      return []
     } finally { if (mounted.current) setListening(false) }
   }
   const canListen = capabilities?.suggest === true
+  // A range or sound list set from elsewhere (Current, Discover) lives in Advanced options: show it.
+  useEffect(() => { if (processingRange || suggestions.length) setAdvancedOpen(true) }, [processingRange, suggestions.length])
   const heardHere = heard && heard.projectId === project?.project_id ? heard : null
   // Listen once per uploaded clip, before anything is separated.
   const listenedFor = useRef('')
@@ -1166,14 +1178,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <div className="space-y-3">
             {project && <div className="rounded-xl border border-line bg-surface p-3 text-xs">
               <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">✺</span>Explode the whole clip<span className="ml-auto rounded-full bg-accent-soft px-1.5 py-px text-[10px] font-normal text-accent">Start here</span></p>
-              <p className="mt-0.5 text-muted">One layer per sound you list, plus a background layer for everything else. Each layer is named after its sound, and you can rename it later. {canListen ? 'TidePool listens to the clip and fills in what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
+              <p className="mt-0.5 text-muted">One layer per sound, plus a background layer for everything else. {canListen ? 'Leave the box empty and TidePool listens to the clip and picks the sounds, or type your own.' : 'List the sounds separated by commas.'} You can rename layers later.</p>
               {canListen && <div className="mt-2 flex items-center gap-2 text-[11px]">
                 {listening ? <span className="flex items-center gap-1.5 text-accent"><DropLoader size={16}/>Listening to the clip…</span>
                   : heardHere?.sounds.length ? <span className="text-muted">Heard: {heardHere.sounds.map(h=>`${h.prompt} (${h.windows.map(w=>`${w*10}–${w*10+10}s`).slice(0,2).join(', ')}${h.windows.length>2?'…':''})`).join(' · ')}</span>
                   : heardHere?.note ? <span className="text-muted">{heardHere.note}</span> : null}
                 <button type="button" className="ml-auto shrink-0 text-accent hover:underline disabled:opacity-40" disabled={busy || listening} onClick={()=>void listen()}>{heardHere ? 'Listen again' : 'Listen'}</button>
               </div>}
-              <input className={`${field} mt-2`} aria-label="Sounds to explode into" value={explodeText} onChange={e=>{explodeEdited.current=true;setExplodeText(e.target.value)}} placeholder={DEFAULT_EXPLODE} disabled={busy}/>
+              <input className={`${field} mt-2`} aria-label="Sounds to explode into" value={explodeText} onChange={e=>{explodeEdited.current=true;setExplodeText(e.target.value)}} placeholder={canListen ? (listening ? 'Listening…' : 'Empty: TidePool picks what it hears') : 'e.g. dialogue, rain, footsteps'} disabled={busy}/>
               {explodeOrder.length > 0 && <ol className="mt-2 flex flex-wrap items-center gap-1" aria-label="Explode order">{explodeOrder.map((sound,i)=><li key={sound} title={smartOrder ? `${TIER_LABEL[tierOf(sound)]}: ${(recipeMode ? RECIPE_WHY : TIER_WHY)[tierOf(sound)]}` : 'Your order'} className="flex items-center gap-1 rounded-full bg-accent-soft py-0.5 pr-2 pl-1 text-[11px] font-medium text-accent"><span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[9px] text-white">{i+1}</span>{sound}{smartOrder && <span className="font-normal text-accent/70">· {TIER_LABEL[tierOf(sound)]}</span>}</li>)}<li className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-subtle" title="Score, impacts and everything not listed stay together here.">background</li></ol>}
               <label className="mt-2 flex items-center gap-1.5 text-[11px] text-muted" title={recipeMode ? 'Dialogue first with a speech model on the full mix, then rain and thunder from one storm pass split by pitch, then music, then short sounds from the cleanest leftovers.' : 'Background beds first, then short hits, then music, then voices last, so the most important layer comes from the cleanest leftovers.'}><input type="checkbox" className="accent-accent" checked={smartOrder} onChange={e=>setSmartOrder(e.target.checked)} disabled={busy}/>{recipeMode ? 'Smart order: dialogue, weather, music, then short sounds' : 'Smart order: backgrounds, hits, music, then voices'}</label>
               {recipeMode && capabilities?.musicStems?.available && <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted" title="After the music is pulled out, the song splitter breaks it into its instruments (drums, bass, piano, guitar, voices and the rest), one layer each. Quiet instruments fold into the loudest so nothing is lost."><input type="checkbox" className="accent-accent" checked={splitMusic} onChange={e=>setSplitMusic(e.target.checked)} disabled={busy}/>Split the music into instruments</label>}
@@ -1181,45 +1193,47 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
                 <p><span className="font-medium">This replaces your current layers</span>, along with their volume changes and names. Undo (⌘Z) brings the old layers back.</p>
                 <div className="mt-2 flex gap-2"><button className={`${button} flex-1`} disabled={busy} onClick={()=>{setConfirmExplode(false);void explode()}}>Replace and explode</button><button className={secondary} onClick={()=>setConfirmExplode(false)}>Keep my layers</button></div>
               </div>
-              : <button className={`${jobId ? secondary : button} mt-2 w-full py-2 font-medium`} disabled={busy || !project.metadata || parseExplodeList(explodeText).length === 0} onClick={()=>jobId ? setConfirmExplode(true) : void explode()}>Explode into {explodeOrder.length + 1} layers</button>}
+              : <button className={`${jobId ? secondary : button} mt-2 w-full py-2 font-medium`} disabled={busy || listening || !project.metadata || (explodeOrder.length === 0 && !canListen)} onClick={()=>jobId ? setConfirmExplode(true) : void explode()}>{explodeOrder.length ? `Explode into ${explodeOrder.length + 1} layers` : canListen ? 'Listen and explode' : 'Type a sound to explode'}</button>}
               {jobId && !confirmExplode && <p className="mt-1 text-[11px] text-subtle">This project already has layers. Exploding again starts over from the original audio.</p>}
             </div>}
-            {project && <p className="flex items-center gap-2 pt-1 text-[11px] font-medium text-subtle"><span className="h-px flex-1 bg-line"/>or pull out one sound<span className="h-px flex-1 bg-line"/></p>}
-            {sourceLayers.length>0 && <label className="block text-xs">Search within<select aria-label="Source layer" className={`${field} mt-1`} value={sourceLayerId} disabled={busy} onChange={e=>setSourceLayerId(e.target.value)}><option value="">Current remaining audio</option>{sourceLayers.map(layer=><option key={layer.id} value={layer.id}>{layer.name}{layer.start_offset ? ` (${layer.start_offset.toFixed(2)}s)` : ''}</option>)}</select></label>}
-            {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} sourceLayerId={sourceLayerId || undefined} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
-            {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
-            {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
-            {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">Select an object to choose its sound. AudioSep separates the sound description.</p>}
-            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia}/>}
+            {project?.metadata?.has_video && <ObjectsPanel key={project.project_id} config={config} projectId={project.project_id} vision={capabilities?.vision} visual={visual} selection={selectedVisual} disabled={busy} resumeJobId={resumeVisual?.projectId===project.project_id ? resumeVisual.jobId : null} canPrepare={!jobId} onAnalyzed={visualAnalyzed} onSelect={onSelectVisual} onSeek={onSeek} onPrepared={reloadPreparedMedia} onEdited={(metadata,keep)=>keep ? onVisual(metadata) : visualAnalyzed(metadata)}/>}
             <div className="rounded-xl bg-surface-2 p-3 text-xs">
               {prompt.trim() ? <div className="flex items-center gap-2"><span className="text-subtle">Target</span><span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">{prompt.trim()}</span></div>
                 : <p className="text-muted">{visual ? 'Click an object in the video, or describe' : 'Describe'} the sound in the bar below, like <span className="text-fg">“isolate the dog barking”</span>.</p>}
               {selection !== null && <div className="mt-2"><GuidedByChip selection={selection as {label?:unknown;track_id?:unknown}} start={Number(rangeStart)} end={Number(rangeEnd)} onClear={()=>{setSelection(null);onClearSelection();setSelectionName('')}}/></div>}
             </div>
-            {project && <ProcessingRange duration={project.metadata?.duration || 1} value={processingRange} onChange={value=>{setProcessingRange(value);setProcessingTime(null)}}/>}
-            {project && <details className="group text-xs">
-              <summary className="cursor-pointer list-none text-muted hover:text-fg"><span className="inline-block transition-transform group-open:rotate-90">›</span> Fine-tune</summary>
-              <div className="mt-2 space-y-2">
-                {capabilities?.spanAnchors === false ? <p className="text-muted">The current separator does not use sound time guidance. Timed edits are still available below.</p> : <SoundGuidance duration={project.metadata?.duration || 1} anchors={anchors} onChange={setAnchors}/>}
-                <label className="block">After separating<select aria-label="Edit after separation" className={`${field} mt-1`} value={editAction} onChange={e=>setEditAction(e.target.value as EditScope['action'])}><option value="keep">Keep it as its own layer</option><option value="mute">Mute it</option><option value="lower">Lower it by half</option></select></label>
-                {editAction==='mute' && <div><label className="flex items-center gap-1.5"><input type="checkbox" className="accent-accent" checked={timedEdit} onChange={e=>setTimedEdit(e.target.checked)}/>Only mute between</label>{timedEdit && <div className="mt-1 flex gap-1"><label>Start<input aria-label="Edit start" className={field} type="number" min={0} value={editStart} onChange={e=>setEditStart(Number(e.target.value))}/></label><label>End<input aria-label="Edit end" className={field} type="number" min={0} value={editEnd} onChange={e=>setEditEnd(Number(e.target.value))}/></label></div>}</div>}
-                <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
+            {project && <details className="group/adv rounded-xl border border-line text-xs" open={advancedOpen} onToggle={e=>setAdvancedOpen(e.currentTarget.open)}>
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 font-medium text-muted hover:text-fg"><span aria-hidden="true" className="inline-block transition-transform group-open/adv:rotate-90">›</span>Advanced options<span className="ml-auto text-[11px] font-normal text-subtle">one sound, range, effects</span></summary>
+              <div className="space-y-3 border-t border-line p-3">
+              {sourceLayers.length>0 && <label className="block text-xs">Search within<select aria-label="Source layer" className={`${field} mt-1`} value={sourceLayerId} disabled={busy} onChange={e=>setSourceLayerId(e.target.value)}><option value="">Current remaining audio</option>{sourceLayers.map(layer=><option key={layer.id} value={layer.id}>{layer.name}{layer.start_offset ? ` (${layer.start_offset.toFixed(2)}s)` : ''}</option>)}</select></label>}
+              {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} sourceLayerId={sourceLayerId || undefined} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
+              {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
+              {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
+              {project && <ProcessingRange duration={project.metadata?.duration || 1} value={processingRange} onChange={value=>{setProcessingRange(value);setProcessingTime(null)}}/>}
+              {project && <details className="group text-xs">
+                <summary className="cursor-pointer list-none text-muted hover:text-fg"><span className="inline-block transition-transform group-open:rotate-90">›</span> Fine-tune</summary>
+                <div className="mt-2 space-y-2">
+                  {capabilities?.spanAnchors === false ? <p className="text-muted">The current separator does not use sound time guidance. Timed edits are still available below.</p> : <SoundGuidance duration={project.metadata?.duration || 1} anchors={anchors} onChange={setAnchors}/>}
+                  <label className="block">After separating<select aria-label="Edit after separation" className={`${field} mt-1`} value={editAction} onChange={e=>setEditAction(e.target.value as EditScope['action'])}><option value="keep">Keep it as its own layer</option><option value="mute">Mute it</option><option value="lower">Lower it by half</option></select></label>
+                  {editAction==='mute' && <div><label className="flex items-center gap-1.5"><input type="checkbox" className="accent-accent" checked={timedEdit} onChange={e=>setTimedEdit(e.target.checked)}/>Only mute between</label>{timedEdit && <div className="mt-1 flex gap-1"><label>Start<input aria-label="Edit start" className={field} type="number" min={0} value={editStart} onChange={e=>setEditStart(Number(e.target.value))}/></label><label>End<input aria-label="Edit end" className={field} type="number" min={0} value={editEnd} onChange={e=>setEditEnd(Number(e.target.value))}/></label></div>}</div>}
+                  <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
+                </div>
+              </details>}
+              {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
+              {routing && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
+              {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata} onClick={()=>void run(async()=>{if(project)await previewDirector(config,project,'Make the whole video more cinematic','cinematic','cinematic')})}>Preview cinematic audio</button>}
+              {project && <div className="rounded-xl border border-line p-2 text-xs">
+                <button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>effectsOpen ? setEffectsOpen(false) : openEffects()}>Adjust layer EQ &amp; compression</button>
+                {effectsOpen && <div className="mt-2 space-y-2">
+                  <label className="block">Layer<select aria-label="Effects layer" className={`${field} mt-1`} value={effectsStem} onChange={e=>setEffectsStem(e.target.value)}>{effectsStems.length ? <>{Array.from(new Set(effectsStems.map(s=>s.effect_group_id || s.sound_group_id).filter((id):id is string=>Boolean(id)))).map(id=>{const items=effectsStems.filter(s=>(s.effect_group_id || s.sound_group_id)===id);return items.length>1?<option key={id} value={`group:${id}`}>{items[0].effect_label || items[0].sound_group_label || items[0].name} · {items.length} clips</option>:null})}{effectsStems.map(stem=><option key={stem.id} value={stem.id}>{stem.name}</option>)}</> : <option value="">Original audio</option>}</select></label>
+                  {([{key:'bass',label:'Bass',min:-12,max:12,step:.5,unit:'dB'}, {key:'treble',label:'Treble',min:-12,max:12,step:.5,unit:'dB'}, {key:'highpass',label:'Low-cut',min:0,max:200,step:5,unit:'Hz'}, {key:'compression',label:'Compression',min:1,max:6,step:.1,unit:':1'}] as const).map(control=><label key={control.key} className="block"><span className="flex justify-between"><span>{control.label}</span><span>{effects[control.key]}{control.unit}</span></span><input className="w-full accent-accent" aria-label={control.label} type="range" min={control.min} max={control.max} step={control.step} value={effects[control.key]} onChange={e=>setEffects({...effects,[control.key]:Number(e.target.value)})}/></label>)}
+                  <p className="text-muted">Preview before applying. Applying renders these effects into the selected layer; later changes add to them. Undo restores the previous audio.</p>
+                  <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={previewEffects}>Preview effects</button><button type="button" className={secondary} disabled={busy} onClick={()=>setEffects({bass:0,treble:0,highpass:0,compression:1})}>Reset controls</button></div>
+                </div>}
+              </div>}
+              {(project?.metadata?.audio_quality?.findings.length ?? 0) > 0 && <details className="text-xs text-amber-700"><summary className="cursor-pointer">Notes about this clip ({project?.metadata?.audio_quality?.findings.length})</summary><ul className="mt-1 list-disc space-y-1 pl-4">{project?.metadata?.audio_quality?.findings.map(f=><li key={f}>{f}</li>)}</ul></details>}
               </div>
             </details>}
-            {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
-            {routing && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
-            {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata} onClick={()=>void run(async()=>{if(project)await previewDirector(config,project,'Make the whole video more cinematic','cinematic','cinematic')})}>Preview cinematic audio</button>}
-            {project && <div className="rounded-xl border border-line p-2 text-xs">
-              <button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>effectsOpen ? setEffectsOpen(false) : openEffects()}>Adjust layer EQ &amp; compression</button>
-              {effectsOpen && <div className="mt-2 space-y-2">
-                <label className="block">Layer<select aria-label="Effects layer" className={`${field} mt-1`} value={effectsStem} onChange={e=>setEffectsStem(e.target.value)}>{effectsStems.length ? <>{Array.from(new Set(effectsStems.map(s=>s.effect_group_id || s.sound_group_id).filter((id):id is string=>Boolean(id)))).map(id=>{const items=effectsStems.filter(s=>(s.effect_group_id || s.sound_group_id)===id);return items.length>1?<option key={id} value={`group:${id}`}>{items[0].effect_label || items[0].sound_group_label || items[0].name} · {items.length} clips</option>:null})}{effectsStems.map(stem=><option key={stem.id} value={stem.id}>{stem.name}</option>)}</> : <option value="">Original audio</option>}</select></label>
-                {([{key:'bass',label:'Bass',min:-12,max:12,step:.5,unit:'dB'}, {key:'treble',label:'Treble',min:-12,max:12,step:.5,unit:'dB'}, {key:'highpass',label:'Low-cut',min:0,max:200,step:5,unit:'Hz'}, {key:'compression',label:'Compression',min:1,max:6,step:.1,unit:':1'}] as const).map(control=><label key={control.key} className="block"><span className="flex justify-between"><span>{control.label}</span><span>{effects[control.key]}{control.unit}</span></span><input className="w-full accent-accent" aria-label={control.label} type="range" min={control.min} max={control.max} step={control.step} value={effects[control.key]} onChange={e=>setEffects({...effects,[control.key]:Number(e.target.value)})}/></label>)}
-                <p className="text-muted">Preview before applying. Applying renders these effects into the selected layer; later changes add to them. Undo restores the previous audio.</p>
-                <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={previewEffects}>Preview effects</button><button type="button" className={secondary} disabled={busy} onClick={()=>setEffects({bass:0,treble:0,highpass:0,compression:1})}>Reset controls</button></div>
-              </div>}
-            </div>}
-
-            {(project?.metadata?.audio_quality?.findings.length ?? 0) > 0 && <details className="text-xs text-amber-700"><summary className="cursor-pointer">Notes about this clip ({project?.metadata?.audio_quality?.findings.length})</summary><ul className="mt-1 list-disc space-y-1 pl-4">{project?.metadata?.audio_quality?.findings.map(f=><li key={f}>{f}</li>)}</ul></details>}
           </div>
         </Step>
 
@@ -1265,7 +1279,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     </div>}
 
     <details className="border-t border-line text-xs">
-      <summary className="cursor-pointer list-none px-3 py-2 text-subtle hover:text-fg">Advanced</summary>
+      <summary className="cursor-pointer list-none px-3 py-2 text-subtle hover:text-fg">Developer tools</summary>
       <div className="max-h-56 space-y-3 overflow-y-auto px-3 pb-3">
         {project && <div><p className="font-medium text-fg">Import detections</p><p className="my-1 text-muted">Detection and selection JSON files that match this video, instead of Find objects.</p><label className="block">Detections<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=asVisualMetadata(await readJson(f));await storeVisualMetadata(config,project.project_id,data);onVisual(data);setVisualName(f.name);setMessage('Detections saved.')})}} /></label>{visualName && <span>{visualName}</span>}<label className="block mt-1">Selection<input className={field} type="file" accept=".json" disabled={busy} onChange={e=>{const f=e.target.files?.[0]; if(f) void run(async()=>{const data=await readJson(f) as VisualSelection; if (!data?.interval) throw new Error('Selection JSON needs an interval.'); setSelection(data);setRangeStart(String(data.interval.start_seconds));setRangeEnd(String(data.interval.end_seconds));setSelectionName(f.name);setMessage('Selection ready.')})}} /></label>{selectionName && <><button className="text-accent" onClick={()=>{setSelection(null);onClearSelection();setSelectionName('')}}>Clear {selectionName}</button><div className="flex gap-1"><label>Start (seconds)<input className={field} type="number" min="0" step="any" value={rangeStart} onChange={e=>setRangeStart(e.target.value)} /></label><label>End (seconds)<input className={field} type="number" min="0" step="any" value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} /></label></div></>}</div>}
         {jobId && <div><p className="font-medium text-fg">Layer settings</p><button className={`${secondary} mt-1`} disabled={busy} onClick={refreshSettings}>Load layer settings</button>{settingsStems.length>0 && <div className="mt-1 space-y-1"><select className={field} aria-label="Stem" value={settingId} onChange={e=>{const stem=settingsStems.find(s=>s.id===e.target.value);if(stem){setSettingId(stem.id);setStemName(stem.name);setOffset(String(stem.start_offset || 0));setClearRanges(false)}}}>{settingsStems.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><label>Name<input className={field} value={stemName} onChange={e=>setStemName(e.target.value)} /></label><label>Start offset (seconds)<input className={field} type="number" min="0" step="any" value={offset} onChange={e=>setOffset(e.target.value)} /></label><label className="flex items-center gap-1"><input type="checkbox" checked={clearRanges} onChange={e=>setClearRanges(e.target.checked)} />Clear remote mute ranges</label><button className={secondary} disabled={busy} onClick={saveSettings}>Save layer settings</button><div className="flex items-center gap-1"><span title={refineBlocked ?? 'Rerun this sound\'s prompt on the residual to pull out what the first pass only quieted.'}><button className={secondary} disabled={Boolean(refineBlocked)} onClick={extractMore}>{FEATURES.refine}: extract more</button></span>{refining && <button className={secondary} onClick={() => abort.current?.abort()}>Cancel</button>}</div>{refineBlocked && !busy && <p className="text-muted">{refineBlocked}</p>}</div>}</div>}
@@ -1281,8 +1295,6 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   </section>
 })
 
-/** A starting list for a film scene. AudioSep hears sounds, not characters, so voices go in one layer to rename. */
-const DEFAULT_EXPLODE = 'people talking, heavy rain, thunder rumbling'
 const TIER_LABEL: Record<string, string> = { background: 'background', hits: 'hit', other: 'other', music: 'music', voices: 'voice' }
 const RECIPE_WHY: Record<string, string> = {
   voices: 'taken first by a dialogue model, from the full mix',

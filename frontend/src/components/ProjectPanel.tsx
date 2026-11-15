@@ -1130,7 +1130,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   })
   const useRetry = () => run(async () => {
     if(!candidateId || !project) return
-    await flush();await beginStep(config,project.project_id,candidateKind === 'separation' ? `Apply “${(retryStems.length ? retryPrompt : prompt).trim() || 'preview'}”` : `Apply ${candidateKind === 'effects' ? 'effects' : candidateKind === 'director' ? 'director edit' : 'cinematic edit'}`)
+    await flush();await beginStep(config,project.project_id,candidateKind === 'multi' ? `Apply ${multiEdits.length || 'several'} edits` : candidateKind === 'separation' ? `Apply “${(retryStems.length ? retryPrompt : prompt).trim() || 'preview'}”` : `Apply ${candidateKind === 'effects' ? 'effects' : candidateKind === 'director' ? 'director edit' : 'cinematic edit'}`)
     const applied=await applyCandidate(config,candidateId)
     await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems');await endStep(config)
     if (candidateKind === 'separation' || candidateMock === true) setMockStems(candidateMock);setJobId(applied.job_id);setUndoId(candidateId);setCandidateId('');setRetryStems([])

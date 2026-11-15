@@ -18,6 +18,10 @@ from app.word_fx import find, parse, windows
     ('whenever he says McLovin add echo', 'add echo', False, ['mclovin']),
     ('deepen person 2 whenever he says McLovin or Fogell', 'deepen person 2', False, ['mclovin', 'fogell']),
     ('put reverb on the word "fake ID"', 'put reverb', False, ['fake id']),
+    ("make every bad word and instance of the word 'mohammed' bass boosted", 'make bass boosted', True, ['mohammed']),
+    ('make all the bad words and every instance of mohammed bass boosted', 'make bass boosted', True, ['mohammed']),
+    ('bass boost every time he says mohammed and the bad words', 'bass boost', True, ['mohammed']),
+    ('bass boost the word mohammed', 'bass boost', False, ['mohammed']),
 ])
 def test_parse_word_clauses(prompt, rest, profanity, words):
     assert parse(prompt) == (rest, {'profanity': profanity, 'words': words})

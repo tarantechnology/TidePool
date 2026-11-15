@@ -348,16 +348,25 @@ def discovery_job(jid: str, authorization: str | None=Header(None)):
 def word_effect_plan(body):
     """"Bass boost the bad words", "add echo whenever he says McLovin": plan the effect without the word clause,
     then attach on_words so the preview applies it only while those words are said (app/word_fx.py)."""
-    from .word_fx import parse, describe
+    from .word_fx import parse, describe, planner_prompt, local_plan
+    from .fx_schema import FxError, validate_plan
     found=parse(body.prompt)
     if not found:return None
     rest,on_words=found
     clarify=lambda message:{'kind':'clarify','description':None,'remove':False,'actions':[],'message':message}
     if not rest:return clarify(f'Which effect should go on the {describe(on_words)}? For example "bass boost the bad words".')
-    try: result=agent_plan(body.model_copy(update={'prompt':rest}))
-    except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+    def usable(fx):
+        return bool(fx) and not fx.get('adjust') and not fx.get('speed') and fx.get('preset') not in ('slowed_reverb','slowed','nightcore','sped_up')
+    try: result=agent_plan(body.model_copy(update={'prompt':planner_prompt(rest)}))
+    except AgentError: result={}
     fx=result.get('fx') if result.get('kind')=='fx' else None
-    if not fx or fx.get('adjust') or fx.get('speed') or fx.get('preset') in ('slowed_reverb','slowed','nightcore','sped_up'):
+    if not usable(fx):
+        # "add echo" can read as a new sound to the planner; an effect word still names the effect.
+        local=local_plan(rest,body.stems)
+        try: fx=validate_plan('fx',local,body.stems,body.duration,rest) if local else None
+        except FxError: fx=None
+        result={'kind':'fx','description':None,'remove':False,'actions':[],'fx':fx}
+    if not usable(fx):
         return clarify(f'I can put an effect such as bass boost, echo, reverb, deepen or muffle on the {describe(on_words)}. Which effect do you want?')
     return {**result,'fx':{**fx,'interval':None,'on_words':on_words},
             'message':f'Finding the {describe(on_words)} in the speech, then previewing the effect on each one.'}

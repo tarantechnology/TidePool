@@ -180,3 +180,37 @@ def resolve(pid, spec, snapshot, source, new_file, stage=None):
     if spec['targets'] == ['mix'] and voices: spec['targets'] = [r['id'] for r in voices]
     spec['word_matches'] = [{'word': w['word'], 'start': round(w['start'], 2), 'end': round(w['end'], 2)} for w in found][:MAX_WINDOWS]
     return spec
+
+
+# The ask without its word clause, as the effect planner reads best: "add echo" -> "apply an echo effect".
+_LEAD = re.compile(r"^(?:please\s+)?(?:add|put|apply|throw|give(?:\s+(?:it|them))?|use|slap)\s+(?:an?\s+|some\s+|the\s+)?", re.I)
+
+
+def planner_prompt(rest):
+    m = _LEAD.match(rest)
+    if not m: return rest
+    effect = rest[m.end():].strip()
+    return f"apply {effect}{'' if re.search(r'\beffects?\b', effect, re.I) else ' effect'}" if effect else rest
+
+
+# Offline effect for the word ask when the planner does not give one: first match wins.
+_LOCAL = [(r"bass", 'bass_boost'), (r"echo|delay", 'echo'), (r"church|cathedral", 'church'), (r"stadium|arena", 'stadium'),
+          (r"reverb", 'reverb'), (r"deep(?:en|er)?|lower", 'deep_voice'), (r"chipmunk|higher|squeak", 'chipmunk'), (r"giant", 'giant'),
+          (r"muffle\w*|through (?:a |the )?wall", 'through_the_wall'), (r"underwater", 'underwater'), (r"tele?phone|phone", 'telephone'),
+          (r"radio", 'radio'), (r"megaphone|bullhorn", 'megaphone'), (r"robot\w*", 'robot'), (r"distort\w*|overdrive", 'overdrive'),
+          (r"deep[- ]fried|earrape", 'deep_fried'), (r"lo-?fi", 'lofi'), (r"8-?bit|bitcrush\w*", 'eight_bit'), (r"announcer", 'announcer'),
+          (r"dreamy", 'dreamy'), (r"flanger", 'flanger'), (r"phaser", 'phaser'), (r"tremolo|wobble", 'tremolo'), (r"chorus", 'chorus')]
+
+
+def local_plan(rest, stems):
+    """A fx plan for ``rest`` without the AI planner, or None. Louder/quieter become a gain chain."""
+    targets = [s['id'] for s in stems if s.get('label') and re.search(r'\b' + re.escape(str(s['label'])) + r'\b', rest, re.I)] or ['mix']
+    plan = {'targets': targets, 'preset': None, 'chain': None, 'interval': None, 'adjust': None, 'speed': None,
+            'duck_source': None, 'duck_depth_db': None, 'loudness_lufs': None}
+    if re.search(r"\b(?:louder|boost(?:ed)?\s+(?:the\s+)?volume|loud)\b", rest, re.I) and not re.search(r"bass", rest, re.I):
+        return {**plan, 'chain': [{'type': 'gain', 'params': {'gain': 8}}]}
+    if re.search(r"\b(?:quieter|softer|quiet|lower the volume)\b", rest, re.I):
+        return {**plan, 'chain': [{'type': 'gain', 'params': {'gain': -12}}]}
+    for pattern, preset in _LOCAL:
+        if re.search(r"\b(?:" + pattern + r")\b", rest, re.I): return {**plan, 'preset': preset}
+    return None

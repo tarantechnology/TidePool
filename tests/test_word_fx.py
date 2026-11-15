@@ -64,9 +64,20 @@ def test_agent_plans_the_effect_and_attaches_the_words(client, tmp_path, monkeyp
     plan = r.json()
     assert plan['kind'] == 'fx' and plan['fx']['preset'] == 'bass_boost' and plan['fx']['on_words'] == {'profanity': True, 'words': []}
     assert json.loads(sent['input'])['prompt'] == 'bass boost'  # The planner never sees the word clause.
-    # A word clause with no effect left is a question, not a guess.
+    # The planner reads "add echo" as a new sound and asks: the effect word still names the effect.
     _, sent = fake_planner(monkeypatch, base_plan('clarify', {}))
     r = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': 'add echo whenever he says McLovin', 'stems': [], 'tracks': [], 'duration': 2})
+    plan = r.json()
+    assert plan['kind'] == 'fx' and plan['fx']['preset'] == 'echo' and plan['fx']['on_words'] == {'profanity': False, 'words': ['mclovin']}, plan
+    assert json.loads(sent['input'])['prompt'] == 'apply echo effect'
+    # A layer named in the ask is the target; louder is a gain chain.
+    _, sent = fake_planner(monkeypatch, base_plan('clarify', {}))
+    r = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': 'make speech louder every time he swears', 'stems': [], 'tracks': [], 'duration': 2})
+    plan = r.json()
+    stems = {s['name']: s for s in client.get(f'/api/projects/{pid}/stems', headers=h).json()}
+    assert plan['kind'] == 'fx' and plan['fx']['targets'] == [stems['speech']['id']] and plan['fx']['chain'][0]['type'] == 'gain', plan
+    # With no effect named at all, it asks.
+    r = client.post(f'/api/projects/{pid}/agent', headers=h, json={'prompt': 'do something cool to the bad words with an effect', 'stems': [], 'tracks': [], 'duration': 2})
     assert r.json()['kind'] == 'clarify' and 'effect' in r.json()['message']
 
 

@@ -81,6 +81,7 @@ class Backend(ABC):
     supports_spans: bool = False
     supports_span_prediction: bool = False
     supports_independent_candidates: bool = True
+    supports_tagging: bool = False
     sample_rate: int = 48_000
 
     @abstractmethod
@@ -109,6 +110,11 @@ class Backend(ABC):
         if len(mixtures) != len(prompts):
             raise ValueError(f"separate_many needs one prompt per mixture, got {len(mixtures)} and {len(prompts)}")
         return [self.separate(mixture, prompt, options) for mixture, prompt in zip(mixtures, prompts, strict=True)]
+
+    def tag(self, windows: list[np.ndarray], labels: list[str]) -> tuple[np.ndarray, float]:
+        """Cosine similarity of each mono window (at ``self.sample_rate``) to each label, as a
+        [windows, labels] array, and the scale that turns it into logits."""
+        raise NotImplementedError
 
     @property
     def loaded(self) -> bool:

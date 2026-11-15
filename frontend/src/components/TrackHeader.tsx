@@ -1,9 +1,11 @@
 import { Tip } from './Tip'
 import { useState } from 'react'
+import { EditableName } from './EditableName'
+import { DeleteLayer } from './DeleteLayer'
 import type { CSSProperties, ReactNode } from 'react'
 import { refinementBadge } from '../api/refine'
 import { tagLine } from '../api/backend'
-import { MAX_GAIN, toDb } from '../edits'
+import { gainToPos, posToGain, toDb } from '../edits'
 import type { EditAction, FxChip, Stem, StemKind, TrackState } from '../types'
 
 interface Props {
@@ -18,6 +20,14 @@ interface Props {
   compact?: boolean
   /** Preview this layer without one of its effects. */
   onRemoveFx?: (chip: FxChip) => void
+  /** Rename this layer; absent when it cannot be renamed. */
+  onRename?: (name: string) => Promise<void> | void
+  /** Delete this layer (fold: its sound goes into the residual); absent when it cannot be deleted. */
+  onDelete?: (fold: boolean) => Promise<void>
+  /** The residual layer's name, when there is one to fold into. */
+  residualLabel?: string | null
+  /** The residual itself can't be deleted. */
+  residualId?: string | null
   clipActions?: ReactNode
 }
 
@@ -63,24 +73,24 @@ function FxChips({ chips, label, onRemove }: { chips: FxChip[]; label: string; o
   )
 }
 
-export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRemoveFx, clipActions }: Props) {
+export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsynced, compact = false, onRename, onDelete, residualLabel = null, residualId = null, onRemoveFx, clipActions }: Props) {
   const btn = (active: boolean, activeCls: string) =>
     `h-6 w-6 rounded-md border font-mono text-[11px] font-medium transition-colors ${
       active ? activeCls : 'border-line bg-tint/[0.03] text-subtle hover:border-line-strong hover:text-fg'
     }`
   const refined = refinementBadge(stem.refinement)
-  const pos = `${(track.gain / MAX_GAIN) * 100}%`
+  const pos = `${gainToPos(track.gain) * 100}%`
   const sliderStyle = {
     '--pos': pos,
     '--fill': audible ? '#2b7bd6' : '#b5c3d4',
   } as CSSProperties
 
   return (
-    <div className={`relative z-30 flex min-h-0 flex-col justify-center border-r border-line px-4 max-md:px-2.5 max-md:gap-0 ${compact ? 'gap-0' : 'gap-2.5'}`}>
+    <div className={`relative z-30 has-[[role=dialog]]:z-40 flex min-h-0 flex-col justify-center border-r border-line px-4 max-md:px-2.5 max-md:gap-0 ${compact ? 'gap-0' : 'gap-2.5'}`}>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium tracking-tight" title={stem.tags?.length ? `Heard: ${stem.tags.join(', ')}` : undefined}>
-            {stem.label}
+          <div className="flex min-w-0 items-baseline truncate text-[13px] font-medium tracking-tight" title={stem.tags?.length ? `Heard: ${stem.tags.join(', ')}` : undefined}>
+            <EditableName value={stem.label} onRename={onRename} className="text-[13px] font-medium tracking-tight" />
             {tagLine(stem.label, stem.tags) && <span className="ml-1.5 text-[11px] font-normal text-subtle">{tagLine(stem.label, stem.tags)}</span>}
           </div>
           <div className="flex items-center gap-1.5">
@@ -137,6 +147,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             S
           </button>
         </Tip>
+        {onDelete && <DeleteLayer label={stem.label} residualLabel={residualLabel} isResidual={stem.id === residualId} onDelete={onDelete} />}
       </div>
       <div className={`flex items-center gap-2.5 max-md:gap-1 ${compact ? 'hidden max-md:flex' : ''}`}>
         <div className="relative flex-1">
@@ -145,14 +156,14 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
             type="range"
             aria-label={`Volume ${stem.label}`}
             min={0}
-            max={MAX_GAIN}
-            step={0.01}
-            value={track.gain}
+            max={1}
+            step={0.001}
+            value={gainToPos(track.gain)}
             title="Volume (double-click to reset)"
             style={sliderStyle}
             className="fader w-full"
             onChange={(e) =>
-              onAction({ type: 'set_gain', stemId: stem.id, value: Number(e.target.value) }, `gain:${stem.id}`)
+              onAction({ type: 'set_gain', stemId: stem.id, value: Math.round(posToGain(Number(e.target.value)) * 100) / 100 }, `gain:${stem.id}`)
             }
             onDoubleClick={() => onAction({ type: 'set_gain', stemId: stem.id, value: 1 })}
           />

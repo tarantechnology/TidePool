@@ -245,7 +245,7 @@ def work_once():
                 stems=[{'path':p['audio'],'muted':False,'solo':False,'volume':1,'automation':'[]','mute_ranges':'[]','start_offset':0}]
             path=project_dir(pid)/'exports'/(job['id']+'.'+payload['format'])
             path.parent.mkdir(parents=True,exist_ok=True)
-            export(stems,p['original'],path,payload['format'],payload['include_video'],payload.get('trim'),payload.get('clips'))
+            export(stems,p['original'],path,payload['format'],payload['include_video'],rotation=payload.get('rotation',0),trim=payload.get('trim'),clips=payload.get('clips'))
             with connect() as db: db.execute("UPDATE jobs SET status='completed',progress=100,output=? WHERE id=?",(json.dumps({'path':str(path)}),job['id']))
         if job['kind']=='process':
             try: provider.send(pid, 'Your SoundCanvas video is ready to edit.')

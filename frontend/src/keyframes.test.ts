@@ -105,12 +105,14 @@ describe('pointToKeyframe', () => {
 
   it('maps the lane box to time and gain', () => {
     expect(pointToKeyframe(200, 100, rect, 20)).toEqual({ t: 10, value: 1 })
-    expect(pointToKeyframe(100, 50, rect, 20)).toEqual({ t: 0, value: 2 })
+    expect(pointToKeyframe(100, 50, rect, 20)).toEqual({ t: 0, value: 5 })
+    // The upper half of the lane is 100-500%.
+    expect(pointToKeyframe(200, 75, rect, 20)).toEqual({ t: 10, value: 3 })
     expect(pointToKeyframe(300, 150, rect, 20)).toEqual({ t: 20, value: 0 })
   })
 
   it('clamps pointers dragged outside the lane', () => {
-    expect(pointToKeyframe(0, 0, rect, 20)).toEqual({ t: 0, value: 2 })
+    expect(pointToKeyframe(0, 0, rect, 20)).toEqual({ t: 0, value: 5 })
     expect(pointToKeyframe(999, 999, rect, 20)).toEqual({ t: 20, value: 0 })
   })
 })

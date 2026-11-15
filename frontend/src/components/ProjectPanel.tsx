@@ -583,7 +583,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       const name = stem.label?.trim() || stem.name
       await beginStep(config, pid, `Delete “${name}”`)
       let result
-      try { result = await deleteStem(config, pid, stemId, fold) } catch (e) { pendingStep.current = null; throw e }
+      try { result = await deleteStem(config, pid, stemId, fold, stem.revision) } catch (e) { pendingStep.current = null; throw e }
       await onLoadStems(new HttpStemSource(config, result.job_id), 'Project stems'); setJobId(result.job_id); await endStep(config)
       setSettingsStems([]); setRetryStems([])
       setMessage(result.folded ? `Deleted “${name}”. Its sound is now part of the residual, so the mix is unchanged. Undo with ⌘Z.` : `Deleted “${name}” and its sound. Undo with ⌘Z.`)

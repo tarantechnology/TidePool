@@ -62,6 +62,9 @@ export function parseOnScreenCommand(text: string): ScreenCommand | null {
   if (!m) return null
   const subject = m[1].trim()
   if (!subject || subject.split(' ').length > 8) return null
+  // A numbered detector track is an explicit reference and should go to the
+  // sound-effect planner, which can resolve that track without another click.
+  if (/\b(?:person|dog|cat|car|object|animal|bird|vehicle)\s*#?\s*\d+\b/i.test(subject)) return null
   const verb = /\b(?:add|play|put|bring in|cue|start|layer in|use)\s+(?:in\s+|on\s+)?(.+)$/i.exec(t.slice(0, m.index) + ' ' + t.slice(m.index + m[0].length))
   let sound = verb ? verb[1] : ''
   sound = sound.replace(/[.!?]+$/, '').replace(/\b(?:whenever|when|every ?time|each time|while)\b.*$/i, '').replace(/^(?:some|a|an|the)\s+/i, '').trim()

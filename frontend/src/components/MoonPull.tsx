@@ -110,8 +110,9 @@ interface PanelProps {
 
 /** Delete a layer a rule added, if it is still there. Returns the job that lists the layers left. */
 async function dropLayer(config: BackendConfig, pid: string, saved: SavedStem[], stemId: string): Promise<string | null> {
-  if (!saved.some((s) => s.id === stemId)) return null
-  return (await deleteStem(config, pid, stemId, false)).job_id
+  const layer=saved.find((s) => s.id === stemId)
+  if (!layer) return null
+  return (await deleteStem(config, pid, stemId, false, layer.revision)).job_id
 }
 
 /** Transcripts by project layer and file, so reopening the panel does not read the lines again. */

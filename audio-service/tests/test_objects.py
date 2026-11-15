@@ -50,3 +50,20 @@ def test_sam_cache_and_inference_lock_prevent_duplicate_gpu_work(tmp_path,monkey
 def test_unconfigured_sam_is_reported_unavailable(monkeypatch):
     for key in ['AUDIO_OBJECT_PYTHON','AUDIO_OBJECT_CHECKPOINT','AUDIO_OBJECT_SOURCE_ROOT']:monkeypatch.delenv(key,raising=False)
     assert objects.capabilities()['available'] is False
+
+
+def test_automatic_discovery_does_not_require_gated_sam(tmp_path,monkeypatch):
+    python=tmp_path/'python';python.touch();root=tmp_path/'project';code=root/'vision/soundcanvas_cv';code.mkdir(parents=True)
+    for name in ('yolo_adapter.py','pipeline.py'):(code/name).write_text('tested')
+    discovery=tmp_path/'yolo.pt';discovery.write_bytes(b'yolo')
+    for name,value in {'AUDIO_OBJECT_PYTHON':python,'AUDIO_OBJECT_DISCOVERY_MODEL':discovery,'AUDIO_OBJECT_SOURCE_ROOT':root,'AUDIO_OBJECT_CACHE':tmp_path/'cache'}.items():monkeypatch.setenv(name,str(value))
+    monkeypatch.delenv('AUDIO_OBJECT_CHECKPOINT',raising=False)
+    caps=objects.capabilities();assert caps['available'] and caps['automatic'] and not caps['prompted'] and caps['weights_cached']
+    source=tmp_path/'input.mp4';source.write_bytes(b'video')
+    def run(command,**kwargs):
+        assert command[command.index('--adapter')+1]=='yolo'
+        out=Path(command[command.index('--output-dir')+1]);(out/'detections.json').write_text('{"frames":[]}')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(objects.subprocess,'run',run)
+    assert objects.analyze(source,'auto','p',threading.Lock())['discovery_mode']=='automatic'
+    with pytest.raises(ValueError,match='SAM object refinement'):objects.analyze(source,'dog','p',threading.Lock())

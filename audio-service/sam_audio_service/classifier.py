@@ -34,6 +34,7 @@ AST        0.40-0.57    <= 0.17 (median 0)     0          0.2
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -296,6 +297,131 @@ class PannsClassifier(_AudioSetTagger):
         batch = np.stack([np.pad(c, (0, max(0, size - len(c))))[:size] for c in clips]).astype(np.float32)
         with torch.inference_mode():
             return self.model(torch.from_numpy(batch).to(self.device), None)["clipwise_output"].float().cpu().numpy()
+
+
+CLAP_MODEL_ID = "laion/larger_clap_music_and_speech"
+
+
+class ClapTagger:
+    """Zero-shot instrument/voice tagger: LAION-CLAP (HTSAT-large audio tower + RoBERTa text tower,
+    ``laion/larger_clap_music_and_speech``, Apache-2.0, ~190M parameters, 48 kHz, 10 s windows).
+
+    Not a router classifier (no ``score``); ``labeling`` uses it to name stems when
+    ``AUDIO_STEM_LABEL_MODEL=clap``. ``prompts`` maps a label id to one or more text prompts;
+    ``tag`` returns, per clip, the cosine similarity between the clip's audio embedding and each
+    label's (prompt- and template-averaged) text embedding, in ``class_names()`` order.
+
+    The log-mel front end runs on the model's device (the transformers ``ClapFeatureExtractor``
+    is numpy, ~25 ms a window on the pod's CPUs; on the GPU 48 windows take a few ms). It matches
+    the extractor's non-fusion path (Hann 1024 / hop 480, 64 Slaney mel bins 50 Hz-14 kHz, dB)
+    to ~1e-4 dB. Note: the music-only ``laion/larger_clap_music`` checkpoint collapses to one
+    class on our instrument prompts (11% top-1 on clean BabySlakh sources), so it is not used.
+    """
+
+    name = "clap"
+    rate = 48_000
+    templates = ("{}", "the sound of {}", "{} in a song")
+    can_tag = True
+    zero_shot = True  # tag() returns cosine similarities per label id, not AudioSet probabilities
+    is_mock = False
+
+    def __init__(self, prompts: dict[str, Sequence[str]], model_id: str = CLAP_MODEL_ID, device: str = "auto", window_seconds: float = 10.0, batch: int = 16):
+        self.prompts = {k: tuple(v) for k, v in prompts.items()}
+        self.model_id, self.requested_device, self.device = model_id, device, device
+        self.window_seconds, self.batch = window_seconds, batch
+        self.model: Any = None
+        self._text: Any = None  # (n_labels, d) normalised text embeddings on the device
+        self._mel: Any = None
+        self._window: Any = None
+
+    @property
+    def loaded(self) -> bool:
+        return self.model is not None
+
+    def info(self) -> dict[str, Any]:
+        return {"tagger": self.name, "model_id": self.model_id, "device": self.device, "loaded": self.loaded, "labels": len(self.prompts)}
+
+    def load(self) -> None:  # pragma: no cover - needs the model
+        if self.loaded:
+            return
+        import torch
+        from transformers import ClapModel, ClapProcessor
+        from transformers.audio_utils import mel_filter_bank
+
+        from .stems.demucs import resolve_device
+
+        self.device = resolve_device(self.requested_device)
+        model = ClapModel.from_pretrained(self.model_id).eval().to(self.device)
+        tokenizer = ClapProcessor.from_pretrained(self.model_id).tokenizer
+        rows = []
+        with torch.inference_mode():
+            for label, prompts in self.prompts.items():
+                texts = [t.format(p) for t in self.templates for p in prompts]
+                tokens = tokenizer(texts, return_tensors="pt", padding=True).to(self.device)
+                e = torch.nn.functional.normalize(_pooled(model.get_text_features(**tokens)), dim=-1).mean(0)
+                rows.append(torch.nn.functional.normalize(e, dim=-1))
+        self._text = torch.stack(rows)
+        fb = mel_filter_bank(num_frequency_bins=513, num_mel_filters=64, min_frequency=50, max_frequency=14000, sampling_rate=self.rate, norm="slaney", mel_scale="slaney")
+        self._mel = torch.from_numpy(np.asarray(fb, dtype=np.float32)).to(self.device)
+        self._window = torch.hann_window(1024, periodic=True, device=self.device)
+        self.model = model
+
+    def class_names(self) -> list[str]:
+        return list(self.prompts)
+
+    def tag(self, clips: list[np.ndarray], sample_rate: int) -> np.ndarray:  # pragma: no cover - needs the model
+        """``(len(clips), n_labels)`` cosine similarities for mono clips at ``sample_rate``
+        (resampled to 48 kHz, zero-padded/cut to ``window_seconds``)."""
+        self.load()
+        if not clips:
+            return np.zeros((0, len(self.prompts)), dtype=np.float32)
+        import torch
+
+        size = int(round(self.window_seconds * sample_rate))
+        batch = np.stack([np.pad(np.asarray(c, dtype=np.float32), (0, max(0, size - len(c))))[:size] for c in clips])
+        out = []
+        with torch.inference_mode():
+            x = torch.from_numpy(batch).to(self.device)
+            if sample_rate != self.rate:  # band-limited FFT resampling, as _AudioSetTagger does
+                n_out = int(round(size * self.rate / sample_rate))
+                spectrum = torch.fft.rfft(x.double(), dim=-1)[:, : n_out // 2 + 1]
+                x = (torch.fft.irfft(spectrum, n=n_out, dim=-1) * (n_out / size)).float()
+            x = x[:, : int(self.window_seconds * self.rate)]
+            for i in range(0, len(x), self.batch):
+                chunk = x[i : i + self.batch]
+                spec = torch.stft(chunk, 1024, 480, window=self._window, center=True, pad_mode="reflect", return_complex=True).abs() ** 2
+                mel = 10.0 * torch.log10(torch.clamp(spec.transpose(1, 2) @ self._mel, min=1e-10))  # (n, frames, 64)
+                feats = mel[:, None]
+                longer = torch.zeros((len(chunk), 1), dtype=torch.bool, device=self.device)
+                emb = torch.nn.functional.normalize(_pooled(self.model.get_audio_features(input_features=feats, is_longer=longer)), dim=-1)
+                out.append((emb @ self._text.T).float().cpu().numpy())
+        return np.concatenate(out)
+
+    def unload(self) -> None:
+        self.model = self._text = self._mel = self._window = None
+
+
+def _pooled(output: Any) -> Any:
+    """transformers >= 5 returns a ModelOutput from ``get_*_features``; 4.x a tensor."""
+    return getattr(output, "pooler_output", output)
+
+
+def create_stem_tagger(settings: Settings, router: ContentClassifier) -> Any:
+    """The tagger ``labeling`` names stems with (``AUDIO_STEM_LABEL_MODEL``): the router's own
+    classifier when it is the one asked for (``router``, or the same ``panns``/``ast``), else a
+    separate lazily loaded instance. Nothing is loaded here."""
+    kind = settings.stem_label_model
+    if kind == "router" or kind == settings.router_classifier:
+        return router
+    if kind == "panns":
+        return PannsClassifier(checkpoint=settings.router_panns_checkpoint, device=settings.device)
+    if kind == "ast":
+        return AstClassifier(device=settings.device)
+    if kind == "clap":
+        from .labeling import clap_prompts
+
+        return ClapTagger(clap_prompts(), model_id=settings.stem_label_clap_model, device=settings.device)
+    raise ValueError(f"unknown stem label model {kind!r}")
 
 
 def create_classifier(settings: Settings) -> ContentClassifier:

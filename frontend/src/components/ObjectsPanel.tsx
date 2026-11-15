@@ -127,7 +127,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
         <span aria-hidden="true" className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot[status.tone]}`} />
         <span className="min-w-0 break-words">{status.text}</span>
       </p>
-      {vision?.selectionOnly && <details><summary className="cursor-pointer text-muted">Find a specific object with SAM</summary><label className="mt-2 block">Object to find<input aria-label="Object to find" placeholder="Optional, e.g. dog or person in a white hoodie" className="mt-1 w-full rounded border border-line bg-surface px-2 py-1" value={concept} maxLength={80} disabled={disabled || status.running} onChange={e=>setConcept(e.target.value)}/></label><button type="button" className="mt-1 rounded border border-line px-2 py-1" disabled={disabled || status.running || !concept.trim()} onClick={()=>void detect(null,false,concept.trim())}>Find with SAM</button></details>}
+      {vision?.selectionOnly && vision.prompted !== false && <details><summary className="cursor-pointer text-muted">Find a specific object with SAM</summary><label className="mt-2 block">Object to find<input aria-label="Object to find" placeholder="Optional, e.g. dog or person in a white hoodie" className="mt-1 w-full rounded border border-line bg-surface px-2 py-1" value={concept} maxLength={80} disabled={disabled || status.running} onChange={e=>setConcept(e.target.value)}/></label><button type="button" className="mt-1 rounded border border-line px-2 py-1" disabled={disabled || status.running || !concept.trim()} onClick={()=>void detect(null,false,concept.trim())}>Find with SAM</button></details>}
       {status.running ? (
         <div className="flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-tint/10" role="progressbar" aria-label="Detection progress" aria-valuemin={0} aria-valuemax={100} {...(progress !== undefined ? { 'aria-valuenow': progress } : {})}>
@@ -140,7 +140,7 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
           {automatic ? 'Find people and objects' : 'Find with SAM'}
         </button>
       )}
-      {visual?.discovery_mode==='automatic' && suggestedConcepts.length>0 && <div className="space-y-1"><p className="text-muted">People and common objects found automatically. Refine a category with SAM for a more precise outline:</p><div className="flex flex-wrap gap-1">{suggestedConcepts.map(label=><button type="button" key={label} disabled={disabled || status.running} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={()=>void detect(null,false,label)}>Refine {label}</button>)}</div></div>}
+      {visual?.discovery_mode==='automatic' && suggestedConcepts.length>0 && vision?.prompted !== false && <div className="space-y-1"><p className="text-muted">People and common objects found automatically. Refine a category with SAM for a more precise outline:</p><div className="flex flex-wrap gap-1">{suggestedConcepts.map(label=><button type="button" key={label} disabled={disabled || status.running} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={()=>void detect(null,false,label)}>Refine {label}</button>)}</div></div>}
       {run.phase === 'failed' && run.status === 422 && !status.running && (canPrepare ? (
         <div className="space-y-1">
           <p className="text-muted">This server did not re-encode the video itself. Prepare a compatible copy here and detection runs again; the uploaded file is kept.</p>

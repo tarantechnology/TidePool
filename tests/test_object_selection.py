@@ -88,6 +88,8 @@ def test_remote_detection_uses_proxy_without_replacing_original_audio_or_layers(
     assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==stems_before
     monkeypatch.setattr(detector,'status',lambda:{'available':True,'selection_only':True,'automatic':False})
     assert client.post(f'/api/projects/{pid}/visual-analyze',headers=h,json={}).status_code==503
+    monkeypatch.setattr(detector,'status',lambda:{'available':True,'selection_only':True,'automatic':True,'prompted':False})
+    assert client.post(f'/api/projects/{pid}/visual-analyze',headers=h,json={'concept':'dog'}).status_code==503
 
 
 @pytest.mark.parametrize('value,expected', [(None,10), ('15',15), ('7.5',7.5)])

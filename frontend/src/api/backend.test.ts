@@ -106,6 +106,12 @@ describe('toStem', () => {
     expect(toStem(row({ role: 'target', name: 'dialogue' }), 'blob:x').kind).toBe('sfx')
   })
 
+  it('keeps grouped separated sounds distinct from editable effect clips', () => {
+    const target=toStem(row({role:'target',sound_group_id:'g',sound_group_label:'chopping',sound_start:1,sound_end:2}), 'blob:x')
+    expect(target.effectGroupId).toBe('g');expect(target.effectLabel).toBe('chopping');expect(target.soundInterval).toEqual({start:1,end:2});expect(target.isEffectClip).toBeUndefined()
+    expect(toStem(row({role:'effect',effect_group_id:'e',effect_label:'gong'}),'blob:x').isEffectClip).toBe(true)
+  })
+
   it('prefers the backend label for display, and falls back to the name', () => {
     expect(toStem(row({ label: 'Dog barking' }), 'blob:x').label).toBe('Dog barking')
     expect(toStem(row({ label: '   ' }), 'blob:x').label).toBe('dog barking')

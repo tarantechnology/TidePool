@@ -19,6 +19,19 @@ def wait(c,cid,h):
         time.sleep(.05)
     pytest.fail('timed out')
 
+def test_progress_ticker_preserves_explicit_stage(client,monkeypatch):
+    from app.core import connect
+    from app import worker
+    pid=client.post('/api/projects').json()['project_id']
+    jid=worker.enqueue(pid,'candidate',{})
+    with connect() as db: db.execute("UPDATE jobs SET status='processing' WHERE id=?",(jid,))
+    monkeypatch.setattr(worker,'TICK_SECONDS',.02)
+    with worker.ticking(jid,'separating',1):
+        worker.set_stage(jid,'generating',35)
+        time.sleep(.08)
+        with connect() as db: row=db.execute('SELECT stage,progress FROM jobs WHERE id=?',(jid,)).fetchone()
+        assert row['stage']=='generating' and row['progress']>=35
+
 def test_upload_preview_replace_undo_and_validation(client,tmp_path):
     p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
     audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
@@ -37,6 +50,20 @@ def test_upload_preview_replace_undo_and_validation(client,tmp_path):
     assert job['provenance']['kind']=='replacement' and job['inference']['model']['is_mock'] is True
     assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
     stems=client.get(f'/api/projects/{pid}/stems',headers=h).json();assert any(s['name']=='quack' for s in stems)
+    targets=[s for s in stems if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+    assert [s['sound_start'] for s in targets]==[1,3]
+    from app.core import connect,restore_legacy_effect_groups
+    with connect() as db:
+        db.execute("UPDATE stems SET sound_group_id=NULL,sound_group_label=NULL,sound_start=NULL,sound_end=NULL WHERE project_id=? AND role='target'",(pid,))
+        restore_legacy_effect_groups(db)
+    targets=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+    agent={'prompt':'make the punches quieter','stems':[],'tracks':[],'duration':5,'has_project_stems':True}
+    plan=client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json()
+    assert plan['kind']=='edit' and {a['stemId'] for a in plan['actions']}=={s['id'] for s in targets}
+    eq=client.post(f'/api/projects/{pid}/effects-preview',headers=h,json={'effect_group_id':targets[0]['sound_group_id'],'bass':2})
+    assert eq.status_code==202 and wait(client,eq.json()['candidate_id'],h)['status']=='completed'
     assert client.get(f'/api/projects/{pid}',headers=h).json()['latest_undoable_candidate_id']==cid
     assert client.post('/api/candidates/'+cid+'/undo',headers=h).status_code==200
     assert client.get(f'/api/projects/{pid}',headers=h).json()['latest_undoable_candidate_id'] is None
@@ -83,6 +110,11 @@ def test_parse_replacement_and_vague_requests():
     assert 'quack sounds' not in __import__('app.replacement',fromlist=['effect_request']).effect_request('quack sounds')['prompt']
     assert parse_replacement('can you make every punch sound like a quack?',10)=={'source':'punch','effect':'quack','time':None}
     assert parse_replacement('add a quack at 4 seconds',10)=={'source':'','effect':'quack','time':4,'mode':'add'}
+    assert parse_replacement('Add a gong sound after the word "quant" has been said.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','spoken_word':'quant'}
+    assert parse_replacement('add a gong whenever the word quant is said',10)=={'source':'','effect':'gong','time':None,'mode':'add','spoken_word':'quant'}
+    assert parse_replacement('Add a gong every time we see person 5',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
+    assert parse_replacement('Every time person 5 appears, play a gong sound.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','object_label':'person','object_track_id':5}
+    assert parse_replacement('play a gong whenever person #5 shows up',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
     assert parse_replacement('replace the punch at 4 seconds with a quack',10)=={'source':'punch','effect':'quack','time':4}
     assert parse_replacement('Replace all knife chopping sounds with a quack; use the sound at 4 seconds as an example',10)=={'source':'knife chopping sounds','effect':'quack','time':4,'all_occurrences':True}
     assert parse_replacement('replace every punch with a gong, using that sound around 3.5s as an example.',10)=={'source':'punch','effect':'gong','time':3.5,'all_occurrences':True}
@@ -90,6 +122,72 @@ def test_parse_replacement_and_vague_requests():
     with pytest.raises(ValueError):parse_replacement('replace punch with something',10)
     with pytest.raises(ValueError):parse_replacement('replace the punch at 15s with a quack',10)
     with pytest.raises(ValueError):parse_replacement('replace punch with quack at 4s and add music',10)
+
+
+def test_add_generated_sound_after_spoken_word(client,tmp_path,monkeypatch):
+    import app.censorship as transcription
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    monkeypatch.setattr(transcription,'transcribe',lambda *a: ([{'word':'quant,','start':.5,'end':.7},{'word':'quant','start':2.,'end':2.2},{'word':'quantity','start':3.,'end':3.4}],'en'))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    url=f'/api/projects/{pid}/automatic-replacement'
+    assert client.post(url,json={'request':'Add a gong sound after the word "quant" has been said.'}).status_code==401
+    response=client.post(url,headers=h,json={'request':'Add a gong sound after the word "quant" has been said.'});assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['alignment']=='onset'
+    assert job['provenance']['peak_times']==pytest.approx([.7,2.2])
+    assert job['provenance']['detection']['method']=='local-word-transcription'
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    stems=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    effects=[s for s in stems if s['role']=='effect'];assert len(effects)==2 and effects[0]['effect_group_id']==effects[1]['effect_group_id']
+    assert client.post(f'/api/candidates/{cid}/undo',headers=h).status_code==200
+    assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
+    missing=client.post(url,headers=h,json={'request':'Add a gong after the word "missing" is said.'})
+    assert missing.status_code==202,missing.text
+    failed=wait(client,missing.json()['candidate_id'],h)
+    assert failed['status']=='failed' and "couldn't find" in failed['error']
+    assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
+
+
+def test_add_effect_at_tracked_object_appearances_and_reject_stale_analysis(client,tmp_path,monkeypatch):
+    import json
+    from app.core import connect
+    from app.visual import file_sha256
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Add a gong every time we see person 5','stems':[],'tracks':[],'duration':5})
+    assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
+    old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Every time person 5 appears, play a gong sound.','stems':[],'tracks':[],'duration':5})
+    assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
+    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Every time person 5 appears, play a gong sound.'}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json=body).status_code==422
+    with connect() as db:
+        original=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original']
+        frames=[{'timestamp_seconds':t,'objects':[{'track_id':5,'label':'person','mask':{'encoding':'rle'}}]} for t in (.2,.3,.4,2.2,2.3,2.4,3.5)]
+        visual={'selection_only':True,'video_id':pid,'analysis_id':'analysis-a','original_source_sha256':file_sha256(original),'fps':10,'processed_duration_seconds':4,'discovery_mode':'automatic','frames':frames}
+        db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    wrong=client.post(url,headers=h,json={'request':'Add a gong whenever we see dog 5'})
+    assert wrong.status_code==422 and 'labeled person' in wrong.text
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['peak_times']==pytest.approx([.2,2.2])
+    assert job['provenance']['alignment']=='onset' and job['provenance']['detection']['track_id']==5
+    assert any('first 4.0 seconds' in w and 'Tracking' in w for w in job['inference']['warnings'])
+    with connect() as db:
+        visual['analysis_id']='analysis-b';db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==409
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];assert wait(client,cid,h)['status']=='completed'
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    effects=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='effect']
+    assert len(effects)==2 and effects[0]['effect_group_id']==effects[1]['effect_group_id']
+    assert client.post(f'/api/candidates/{cid}/undo',headers=h).status_code==200
 
 
 def test_automatic_replacement_finds_generates_and_previews(client,tmp_path,monkeypatch):
@@ -177,6 +275,185 @@ def test_langchain_effect_resolution_validates_only_known_labels(monkeypatch):
     with pytest.raises(ValueError,match='Several sounds'):resolve_effect_reference('that sound',rows)
     FakeModel.result=EffectReference(decision='none',label=None)
     assert resolve_effect_reference('footsteps',rows)==[]
+
+
+def test_group_commands_do_not_mix_distinct_groups(monkeypatch):
+    from app.effect_group_commands import plan_group_command
+    rows=[{'id':'a','role':'effect','name':'gong','effect_label':'gong','effect_group_id':'one','volume':1,'start_offset':1},
+          {'id':'b','role':'effect','name':'gong 2','effect_label':'gong','effect_group_id':'two','volume':.5,'start_offset':2}]
+    result=plan_group_command('make the gongs quieter',rows)
+    assert result['kind']=='clarify' and result['actions']==[]
+    result=plan_group_command('move the second gong later by 0.2 seconds',rows)
+    assert result['kind']=='clarify' and result['actions']==[]
+
+
+def test_separate_identical_sound_prompts_share_a_group(client,tmp_path):
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=4','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    for start in (1,2):
+        response=client.post(f'/api/projects/{pid}/candidates',headers=h,json={'prompt':'knife chopping','processing_interval':{'start':start,'end':start+.3}})
+        assert response.status_code==202,response.text
+        cid=response.json()['candidate_id'];assert wait(client,cid,h)['status']=='completed';assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    targets=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+    assert [s['sound_start'] for s in targets]==[1,2]
+
+
+def test_process_append_groups_same_explicit_sound(client,tmp_path,monkeypatch):
+    import shutil
+    import app.worker as worker
+    def separate(source,directory,payload,report=None):
+        result=[]
+        for name in (payload['prompts'][0],'residual'):
+            path=directory/(worker.uid()+'.wav');shutil.copyfile(source,path)
+            result.append({'name':name,'path':path,'role':'residual' if name=='residual' else 'target','prompt':name,'label':name})
+        return result
+    monkeypatch.setattr(worker,'separate',separate)
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    for append in (False,True):
+        response=client.post(f'/api/projects/{pid}/process',headers=h,json={'prompts':['dog barking'],'append':append})
+        assert response.status_code==202,response.text
+        jid=response.json()['job_id']
+        for _ in range(300):
+            job=client.get('/api/jobs/'+jid,headers=h).json()
+            if job['status'] in ('completed','failed'):break
+            time.sleep(.05)
+        assert job['status']=='completed',job
+    targets=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='target']
+    assert len(targets)==2 and targets[0]['sound_group_id']==targets[1]['sound_group_id'] and targets[0]['sound_group_id']
+
+
+def test_split_selected_shifted_layer_preserves_other_layers_and_undo(client,tmp_path,monkeypatch):
+    import numpy as np
+    from app.core import connect
+    from app.media import read_wav
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,freq,duration in [(audio,440,4),(fx,800,.5)]:
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency={freq}:duration={duration}','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('fx.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'gong','source_prompt':'sound','mode':'add','intervals':[{'start':1.5,'end':1.51},{'start':3,'end':3.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed';assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();chosen=next(s for s in before if s['role']=='effect')
+    assert client.patch(f'/api/projects/{pid}/stems/{chosen["id"]}',headers=h,json={'volume':.6,'automation':[{'time':0,'value':.8}]}).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();chosen=next(s for s in before if s['id']==chosen['id'])
+    with connect() as db:original_path=db.execute('select path from stems where id=?',(chosen['id'],)).fetchone()[0]
+    original,rate=read_wav(original_path);start=chosen['start_offset']+.05
+    url=f'/api/projects/{pid}/candidates';body={'source_stem_id':chosen['id'],'prompt':'ring','processing_interval':{'start':start,'end':start+.2}}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json={**body,'source_stem_id':'missing'}).status_code==404
+    assert client.post(url,headers=h,json={**body,'processing_interval':{'start':0,'end':.1}}).status_code==422
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['source_kind']=='selected-layer' and job['provenance']['source_layer_id']==chosen['id']
+    assert job['provenance']['processing_interval']['start']==pytest.approx(start)
+    assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json();parent=next(s for s in after if s['id']==chosen['id']);child=next(s for s in after if s.get('source_stem_id')==chosen['id'])
+    assert parent['role']=='effect' and parent['volume']==child['volume']==.6 and parent['start_offset']==child['start_offset']==chosen['start_offset']
+    assert parent['automation']==child['automation']==chosen['automation']
+    assert {s['id'] for s in before}-{chosen['id']} <= {s['id'] for s in after}
+    with connect() as db:
+        paths={r['id']:r['path'] for r in db.execute('select id,path from stems where project_id=?',(pid,))}
+    a,_=read_wav(paths[parent['id']]);b,_=read_wav(paths[child['id']]);assert np.max(np.abs(original-a-b))<1e-4
+    assert client.post('/api/candidates/'+cid+'/undo',headers=h).status_code==200
+    assert {s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}=={s['id'] for s in before}
+    # Replacement uses the same selected shifted source, with events in project time.
+    request={'source_stem_id':chosen['id'],'asset_id':aid,'effect_label':'clap','source_prompt':'ring','mode':'replace','intervals':[{'start':start,'end':start+.2}]}
+    response=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=request);assert response.status_code==202,response.text
+    rid=response.json()['candidate_id'];job=wait(client,rid,h);assert job['status']=='completed',job
+    assert job['provenance']['source_layer_id']==chosen['id'] and all(start<=t<=start+.2 for t in job['provenance']['peak_times'])
+    event=job['provenance']['events'][0]
+    adjust=client.post('/api/candidates/'+rid+'/replacement-adjust',headers=h,json={'operation':'toggle','event_id':event['id'],'enabled':False}).json()['candidate_id']
+    assert wait(client,adjust,h)['status']=='completed'
+    assert client.post('/api/candidates/'+adjust+'/apply',headers=h).status_code==200
+    assert client.post('/api/candidates/'+adjust+'/undo',headers=h).status_code==200
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    text=f'replace ring in the gong layer with a clap at {start:.6f} seconds'
+    response=client.post(f'/api/projects/{pid}/automatic-replacement',headers=h,json={'request':text})
+    assert response.status_code==202,response.text
+    auto=wait(client,response.json()['candidate_id'],h);assert auto['status']=='completed',auto
+    assert auto['provenance']['source_layer_id']==chosen['id'] and all(t>=chosen['start_offset'] for t in auto['provenance']['peak_times'])
+    # Even a backend with an aggressively suppressed remainder must not damage
+    # the chosen layer when creating an unedited split.
+    import app.candidates as candidates
+    def suppressed(source,directory,payload,report=None):
+        paths=[]
+        for name,gain in [('ring',.5),('residual',0)]:
+            path=directory/(name+'-suppressed-test.wav')
+            subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-af',f'volume={gain}','-c:a','pcm_f32le',str(path)],check=True);paths.append({'name':name,'path':path})
+        return paths
+    monkeypatch.setattr(candidates,'separate',suppressed)
+    res=client.post(url,headers=h,json={'source_stem_id':chosen['id'],'prompt':'ring'});assert res.status_code==202,res.text
+    whole=res.json()['candidate_id'];assert wait(client,whole,h)['status']=='completed';assert client.post('/api/candidates/'+whole+'/apply',headers=h).status_code==200
+    rows=client.get(f'/api/projects/{pid}/stems',headers=h).json();child=next(s for s in rows if s.get('source_stem_id')==chosen['id'])
+    with connect() as db:paths={r['id']:r['path'] for r in db.execute('select id,path from stems where project_id=?',(pid,))}
+    a,_=read_wav(paths[chosen['id']]);b,_=read_wav(paths[child['id']]);assert np.max(np.abs(original-a-b))<1e-4
+    assert client.post('/api/candidates/'+whole+'/undo',headers=h).status_code==200
+
+
+def test_group_effects_preview_apply_and_undo(client,tmp_path):
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,duration in [(audio,4),(fx,.2)]:
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency=440:duration={duration}','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('fx.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'gong','source_prompt':'sound','mode':'add','intervals':[{'start':1,'end':1.01},{'start':2,'end':2.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed'
+    assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();clips=[s for s in before if s['role']=='effect'];gid=clips[0]['effect_group_id']
+    url=f'/api/projects/{pid}/effects-preview'
+    assert client.post(url,json={'effect_group_id':gid,'bass':4}).status_code==401
+    assert client.post(url,headers=h,json={'effect_group_id':'not-a-group','bass':4}).status_code==422
+    response=client.post(url,headers=h,json={'effect_group_id':gid,'bass':4});assert response.status_code==202,response.text
+    eqid=response.json()['candidate_id'];assert wait(client,eqid,h)['status']=='completed'
+    assert client.post('/api/candidates/'+eqid+'/apply',headers=h).status_code==200
+    after=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [(s['id'],s['start_offset'],s['effect_group_id']) for s in after]==[(s['id'],s['start_offset'],s['effect_group_id']) for s in before]
+    assert client.post('/api/candidates/'+eqid+'/undo',headers=h).status_code==200
+    restored=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    assert [(s['id'],s['start_offset'],s['effect_group_id']) for s in restored]==[(s['id'],s['start_offset'],s['effect_group_id']) for s in before]
+
+
+def test_group_commands_and_clip_edits_are_revision_checked_and_undoable(client,tmp_path):
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
+    for path,duration in [(audio,4),(fx,.2)]:subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency=440:duration={duration}','-ac','2','-ar','48000',str(path)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with fx.open('rb') as f:aid=client.post(f'/api/projects/{pid}/sound-effects/upload',headers=h,files={'file':('fx.wav',f)}).json()['asset_id']
+    body={'asset_id':aid,'effect_label':'gong','source_prompt':'sound','mode':'add','intervals':[{'start':1,'end':1.01},{'start':2,'end':2.01}]}
+    cid=client.post(f'/api/projects/{pid}/replacement-preview',headers=h,json=body).json()['candidate_id'];assert wait(client,cid,h)['status']=='completed';assert client.post('/api/candidates/'+cid+'/apply',headers=h).status_code==200
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();clips=[s for s in before if s['role']=='effect']
+    # Recover legacy rows only when an applied candidate still references their exact files.
+    from app.core import connect,restore_legacy_effect_groups
+    with connect() as db:
+        db.execute("UPDATE stems SET effect_group_id=NULL,effect_asset_id=NULL,effect_label=NULL WHERE project_id=? AND role='effect'",(pid,))
+        restore_legacy_effect_groups(db)
+    before=client.get(f'/api/projects/{pid}/stems',headers=h).json();clips=[s for s in before if s['role']=='effect']
+    assert clips[0]['effect_group_id'] and clips[0]['effect_group_id']==clips[1]['effect_group_id']
+    agent={'prompt':'make the gongs quieter','stems':[],'tracks':[],'duration':4,'has_project_stems':True}
+    plan=client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json();assert plan['kind']=='edit' and {a['stemId'] for a in plan['actions']}=={c['id'] for c in clips}
+    agent['prompt']='move the second gong later';assert 'How many seconds' in client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json()['message']
+    agent['prompt']='move the second gong later by 0.2 seconds';plan=client.post(f'/api/projects/{pid}/agent',headers=h,json=agent).json()
+    assert plan['kind']=='clip_edit' and plan['clip_edit']['stem_id']==clips[1]['id'] and plan['clip_edit']['start_offset']==pytest.approx(clips[1]['start_offset']+.2)
+    url=f'/api/projects/{pid}/effect-clip-edit';body={'stem_id':clips[1]['id'],'expected_revision':clips[1]['revision'],'operation':'move','start_offset':clips[1]['start_offset']+.2}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json={**body,'expected_revision':999}).status_code==409
+    result=client.post(url,headers=h,json=body);assert result.status_code==202,result.text
+    move=result.json()['candidate_id'];assert wait(client,move,h)['status']=='completed';assert client.post('/api/candidates/'+move+'/apply',headers=h).status_code==200
+    moved=client.get(f'/api/projects/{pid}/stems',headers=h).json();assert next(s for s in moved if s['id']==clips[1]['id'])['start_offset']==pytest.approx(body['start_offset'])
+    assert client.post('/api/candidates/'+move+'/undo',headers=h).status_code==200
+    restored=client.get(f'/api/projects/{pid}/stems',headers=h).json();clip=next(s for s in restored if s['id']==clips[1]['id'])
+    deletion=client.post(url,headers=h,json={'stem_id':clip['id'],'expected_revision':clip['revision'],'operation':'delete'}).json()['candidate_id']
+    assert wait(client,deletion,h)['status']=='completed';assert client.post('/api/candidates/'+deletion+'/apply',headers=h).status_code==200
+    assert clip['id'] not in {s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}
+    assert client.post('/api/candidates/'+deletion+'/undo',headers=h).status_code==200
+    assert clip['id'] in {s['id'] for s in client.get(f'/api/projects/{pid}/stems',headers=h).json()}
 
 
 def test_automatic_no_matches_asks_for_time(client,tmp_path,monkeypatch):

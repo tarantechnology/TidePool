@@ -14,24 +14,26 @@ def configuration():
 
 def capabilities():
     python, checkpoint, root = configuration()
-    available = all(Path(p).is_file() for p in (python, checkpoint)) and (Path(root)/'vision/soundcanvas_cv/sam3_adapter.py').is_file() if all((python, checkpoint, root)) else False
+    prompted = all(Path(p).is_file() for p in (python, checkpoint)) and (Path(root)/'vision/soundcanvas_cv/sam3_adapter.py').is_file() if all((python, checkpoint, root)) else False
     discovery = os.getenv('AUDIO_OBJECT_DISCOVERY_MODEL', '')
-    automatic = bool(available and discovery and Path(discovery).is_file() and (Path(root)/'vision/soundcanvas_cv/yolo_adapter.py').is_file())
-    return {'available': available, 'reason': None if available else 'SAM object selection runtime is not configured.',
-            'model': 'sam3.1', 'device': 'cuda', 'weights_cached': bool(checkpoint and Path(checkpoint).is_file()),
-            'selection_only': True, 'max_seconds': 30, 'automatic': automatic,
+    automatic = bool(python and root and Path(python).is_file() and discovery and Path(discovery).is_file() and (Path(root)/'vision/soundcanvas_cv/yolo_adapter.py').is_file())
+    available = bool(prompted or automatic)
+    return {'available': available, 'reason': None if available else 'Object selection runtime is not configured.',
+            'model': 'sam3.1' if prompted else (Path(discovery).stem if automatic else 'sam3.1'), 'device': 'cuda', 'weights_cached': bool(automatic or (checkpoint and Path(checkpoint).is_file())),
+            'selection_only': True, 'max_seconds': 30, 'automatic': automatic, 'prompted':bool(prompted),
             'discovery_model': Path(discovery).name if automatic else None}
 
 
 def analyze(source, concept, video_id, lock):
     python, checkpoint, root = configuration()
-    if not capabilities()['available']:
-        raise ValueError('SAM object selection runtime is not configured.')
     automatic = concept == 'auto'
+    caps=capabilities()
     if automatic:
-        if not capabilities()['automatic']:
+        if not caps['automatic']:
             raise ValueError('Automatic object discovery runtime is not configured.')
         checkpoint = os.environ['AUDIO_OBJECT_DISCOVERY_MODEL']
+    elif not caps['prompted']:
+        raise ValueError('SAM object refinement is not configured.')
     content_hash = hashlib.sha256(Path(source).read_bytes()).hexdigest()
     checkpoint_stat = Path(checkpoint).stat()
     implementation = b''.join((Path(root)/'vision/soundcanvas_cv'/name).read_bytes() for name in

@@ -112,7 +112,7 @@ def onset_before_peak(samples, rate, peak):
     return max(left,left+first*frame-(n*frame-len(segment)))
 
 
-def duck_events(raw_path, output_path, events, group, rate):
+def duck_events(raw_path, output_path, events, group, rate, source_offset=0):
     """Attenuate only approved events, with short fades; never modify the raw stem."""
     import numpy as np
     from .media import read_wav,write_wav
@@ -120,7 +120,7 @@ def duck_events(raw_path, output_path, events, group, rate):
     if sr!=rate: raise ValueError('Separated sound timing changed.')
     for event in events:
         if event.get('group')!=group or not event.get('enabled',True):continue
-        center=round(event['source_peak']*rate);a=max(0,center-round(.035*rate));b=min(len(samples),center+round(.18*rate))
+        center=round((event['source_peak']-source_offset)*rate);a=max(0,center-round(.035*rate));b=min(len(samples),center+round(.18*rate))
         if b<=a:continue
         fade=max(1,round(.01*rate)); length=b-a
         gain=np.zeros(length,dtype=np.float64);edge=min(fade,length//2)
@@ -193,31 +193,39 @@ def build(project,payload,cid):
     original=directory/(uid()+'.wav');mix=directory/(uid()+'.wav');placed=directory/(uid()+'.wav')
     if rows: export(rows,source,original,'wav',False)
     else: shutil.copyfile(source,original)
-    warnings=[];is_mock=False;peak_samples=[];events=[];groups=[];rate=probe(source)['sample_rate']
+    warnings=[];is_mock=False;peak_samples=[];events=[];groups=[];rate=probe(source)['sample_rate'];sound_group_id=uid()
     if payload['mode']=='replace':
         for span in payload['intervals']:
+            selected=next((r for r in rows if r['id']==payload.get('source_stem_id')),None)
             residuals=[r for r in rows if r['name'].lower()=='residual']
-            if rows and len(residuals)==1 and residuals[0]['start_offset']==0:
+            if payload.get('source_stem_id') and not selected:raise ValueError('The selected source layer is unavailable.')
+            if selected:
+                event_source=candidates.safe_path(pid,selected['path']);rid=selected['id'];current=rows;source_offset=float(selected['start_offset'])
+            elif rows and len(residuals)==1 and residuals[0]['start_offset']==0:
                 residual=residuals[0];event_source=candidates.safe_path(pid,residual['path']);rid=residual['id'];current=rows
+                source_offset=0.0
             elif not rows:
-                event_source=source;rid=None;current=[]
+                event_source=source;rid=None;current=[];source_offset=0.0
             else: raise ValueError('Replacement needs one unshifted residual layer. Choose add over the original or separate a fresh project.')
+            local_span={'start':span['start']-source_offset,'end':span['end']-source_offset}
+            if local_span['start']<0 or local_span['end']>probe(event_source)['duration']+1/48000:raise ValueError('Select times within the source layer.')
             entry={'_candidate':{'rows':current,'source':str(event_source),'source_sha256':file_sha256(event_source),'project_audio':project['audio'],'target_id':None,'residual_id':rid},
-                   '_processing_interval':span,'_processing_time':None,'prompts':[payload['source_prompt']],
+                   '_processing_interval':local_span,'_processing_time':None,'prompts':[payload['source_prompt']],
                    'anchors':[],'visual_prompt':{},'edit_scope':{'action':'keep'},'profile':'preview','options':options('preview')}
+            if selected:entry['_candidate'].update(source_layer_id=selected['id'],source_offset=source_offset)
+            if selected:entry['options']['mode']='prompted'
             result=candidates.build(project,entry,cid);next_rows=result['proposed']
             inference=result.get('inference') or {}
             mock=(inference.get('model') or {}).get('is_mock') is True
             if not mock:
                 from .director import measured_ratio
-                ratio,correlation=measured_ratio(event_source,result['target']['path'],span)
+                ratio,correlation=measured_ratio(event_source,result['target']['path'],local_span)
                 if ratio<.02 or (ratio>.8 and abs(correlation)>.95):
                     warnings.append('Skipped a sound: its separation was too quiet or too similar to the whole mix.')
                     continue
             from .media import read_wav
             target,target_rate=read_wav(result['target']['path'])
-            if target_rate!=rate: raise ValueError('Separated sound timing does not match the project.')
-            peaks,fallback=transient_peaks(target,rate,span['start'],span['end'])
+            peaks,fallback=transient_peaks(target,target_rate,local_span['start'],local_span['end'])
             if not peaks:
                 warnings.append('Skipped a sound because the separated target was silent.')
                 continue
@@ -226,21 +234,21 @@ def build(project,payload,cid):
             if hints:
                 matched=[]
                 for hint in hints:
-                    available=[p for p in peaks if p not in matched and abs(p/rate-hint)<=.16]
-                    if available:matched.append(min(available,key=lambda p:abs(p/rate-hint)))
+                    available=[p for p in peaks if p not in matched and abs(p/target_rate+source_offset-hint)<=.16]
+                    if available:matched.append(min(available,key=lambda p:abs(p/target_rate+source_offset-hint)))
                 if len(matched)<len(hints):warnings.append('Some suggested sounds could not be verified in the separated target and were skipped.')
                 peaks=sorted(matched)
             if not peaks:
                 warnings.append('Skipped a range because the suggested sound was not clear in the separated audio.')
                 continue
-            peak_samples.extend(peaks)
+            peak_samples.extend(round((p/target_rate+source_offset)*rate) for p in peaks)
             if len(peak_samples)>100: raise ValueError('More than 100 peaks were detected. Try a shorter selection.')
             group=len(groups);raw_path=result['target']['path'];target_id=result['target']['id']
-            groups.append({'target_id':target_id,'raw_path':raw_path,'interval':span})
+            groups.append({'target_id':target_id,'raw_path':raw_path,'interval':span,'source_offset':source_offset,'source_rate':target_rate})
             for point in peaks:
-                events.append({'id':uid(),'group':group,'source_peak':point/rate,'source_onset':onset_before_peak(target,rate,point)/rate,'offset':0,'enabled':True})
-            processed=directory/(uid()+'-ducked.wav');duck_events(raw_path,processed,events,group,rate)
-            next(row for row in next_rows if row['id']==target_id)['path']=str(processed)
+                events.append({'id':uid(),'group':group,'source_peak':point/target_rate+source_offset,'source_onset':onset_before_peak(target,target_rate,point)/target_rate+source_offset,'offset':0,'enabled':True})
+            processed=directory/(uid()+'-ducked.wav');duck_events(raw_path,processed,events,group,target_rate,source_offset)
+            next(row for row in next_rows if row['id']==target_id).update(path=str(processed),sound_group_id=sound_group_id,sound_group_label=payload['source_prompt'],sound_start=local_span['start'],sound_end=local_span['end'])
             rows=next_rows
             is_mock=is_mock or mock
             warnings.extend(inference.get('warnings') or [])
@@ -258,7 +266,8 @@ def build(project,payload,cid):
         events=[{'id':uid(),'group':None,'source_peak':p/rate,'source_onset':p/rate,'offset':0,'enabled':True} for p in peak_samples]
     normalized=directory/(uid()+'-effect.wav')
     run('ffmpeg','-v','error','-y','-i',str(effect),'-ar',str(rate),'-ac',str(channels),'-af','afade=t=in:st=0:d=0.005','-c:a','pcm_f32le',str(normalized))
-    alignment='peak'
+    alignment=payload.get('alignment','peak')
+    if alignment not in ('peak','onset'): raise ValueError('Unsupported alignment.')
     notices,peak_offset,onset_offset=render_effect(normalized,placed,events,rate,channels,count,alignment)
     warnings.extend(notices)
     effect_group_id=uid()
@@ -266,7 +275,7 @@ def build(project,payload,cid):
     export(rows,source,mix,'wav',False)
     return {'_replacement_edit':{'effect_path':str(normalized),'effect_ids':[e['id'] for e in events],'effect_label':payload['effect_label'],'effect_group_id':effect_group_id,'effect_asset_id':payload['asset_id'],'groups':groups,'rate':rate,'channels':channels,'count':count},'target':{'path':str(placed)},'mix':{'path':str(mix)},'original':{'path':str(original)},'snapshot':snapshot,'proposed':rows,
             'inference':{'model':{'backend':'sound-replacement','is_mock':is_mock},'warnings':warnings},
-            'provenance':{'kind':'replacement','mode':payload['mode'],'intervals':payload['intervals'],'effect_label':payload['effect_label'],'source_prompt':payload['source_prompt'],'peak_times':[round(x/rate,6) for x in peak_samples], 'events':events,'alignment':alignment,'effect_peak_offset':round(peak_offset/rate,6),'effect_onset_offset':round(onset_offset/rate,6)}}
+            'provenance':{'kind':'replacement','mode':payload['mode'],'intervals':payload['intervals'],'effect_label':payload['effect_label'],'source_prompt':payload['source_prompt'],'source_layer_id':payload.get('source_stem_id'),'peak_times':[round(x/rate,6) for x in peak_samples], 'events':events,'alignment':alignment,'effect_peak_offset':round(peak_offset/rate,6),'effect_onset_offset':round(onset_offset/rate,6)}}
 
 
 def effect_request(text):
@@ -340,6 +349,27 @@ def parse_replacement(text,duration):
     example=re.search(r'\s*[;,]\s*(?:use|using)\s+(?:the|that)\s+sound\s+((?:at|around|near)\s+\d+(?:\.\d+)?\s*(?:seconds?|secs?|s))\s+as\s+(?:an?\s+)?example[.!?]?\s*$',text,re.I)
     if example:
         text=text[:example.start()].rstrip()+' '+example.group(1)
+    visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|play)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:we\s+)?see\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)[.!?]?',text,re.I)
+    if not visible:
+        visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|play)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)\s+(?:appears|shows\s+up|is\s+visible)[.!?]?',text,re.I)
+    if not visible:
+        conditional=re.fullmatch(r'(?:every\s+time|whenever|when)\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)\s+(?:appears|shows\s+up|is\s+visible)\s*,?\s*(?:please\s+)?(?:play|add)\s+(?:a\s+|an\s+|the\s+)?(.+?)[.!?]?',text,re.I)
+        if conditional:
+            label,track_id,effect=conditional.group(1).strip().lower(),int(conditional.group(2)),conditional.group(3).strip()
+            if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')
+            effect_request(effect)
+            return {'source':'','effect':effect,'time':None,'mode':'add','object_label':label,'object_track_id':track_id}
+    if visible:
+        effect,label,track_id=visible.group(1).strip(),visible.group(2).strip().lower(),int(visible.group(3))
+        if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')
+        effect_request(effect)
+        return {'source':'','effect':effect,'time':None,'mode':'add','object_label':label,'object_track_id':track_id}
+    spoken=re.fullmatch(r'''(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:after|when|whenever)\s+(?:(?:the|every|each)\s+)?(?:word\s+)?["“']?([\w]+(?:['’][\w]+)*)["”']?(?:\s+(?:is|was|has\s+been)\s+(?:said|spoken|mentioned))?[.!?]?''',text,re.I)
+    if spoken:
+        effect,word=spoken.group(1).strip(),spoken.group(2).strip()
+        if not effect or len(effect)>100 or len(word)>60: raise ValueError('What sound and spoken word should I use?')
+        effect_request(effect)
+        return {'source':'','effect':effect,'time':None,'mode':'add','spoken_word':word}
     addition=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+at\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)[.!?]?',text,re.I)
     if addition:
         effect=addition.group(1).strip();point=float(addition.group(2))
@@ -378,11 +408,13 @@ def auto_build(project,payload,cid):
     if file_sha256(source)!=snapshot['source_sha256']: raise ValueError('Source changed; please retry.')
     for row in snapshot['rows']:
         if file_sha256(candidates.safe_path(pid,row['path']))!=snapshot['stem_hashes'][row['id']]: raise ValueError('A layer changed; please retry.')
+    selected_layer=next((r for r in snapshot['rows'] if r['id']==payload.get('source_stem_id')),None)
+    if payload.get('source_stem_id') and not selected_layer:raise ValueError('The selected source layer is unavailable.')
     from .effect_followup import matching_effects, replace_known_effects, resolve_effect_reference
     resolver_unavailable=False
     if plan.get('mode')!='add':
-        known=matching_effects(snapshot['rows'],plan['source'])
-        if not known and any(row.get('role')=='effect' for row in snapshot['rows']):
+        known=matching_effects([selected_layer] if selected_layer else snapshot['rows'],plan['source'])
+        if not selected_layer and not known and any(row.get('role')=='effect' for row in snapshot['rows']):
             known=resolve_effect_reference(plan['source'],snapshot['rows'])
             if known is None:
                 import re
@@ -393,36 +425,70 @@ def auto_build(project,payload,cid):
             return replace_known_effects(project,payload,plan,snapshot['rows'],source,cid,known)
     event_hints=None;detection_meta={};detector_unavailable=False
     residuals=[r for r in snapshot['rows'] if r['name'].lower()=='residual']
-    detection_source=candidates.safe_path(pid,residuals[0]['path']) if residuals else source
-    if plan.get('all_occurrences'):
+    detection_source=candidates.safe_path(pid,selected_layer['path']) if selected_layer else (candidates.safe_path(pid,residuals[0]['path']) if residuals else source)
+    source_offset=float(selected_layer['start_offset']) if selected_layer else 0.0
+    search_duration=probe(detection_source)['duration'] if selected_layer else duration
+    local_time=plan['time']-source_offset if plan['time'] is not None else None
+    if local_time is not None and not 0<=local_time<search_duration:raise ValueError('The timestamp is outside the selected source layer.')
+    if plan.get('object_track_id') is not None:
+        from .object_selection import appearances
+        set_stage(cid,'finding',15)
+        found=appearances(project,plan['object_track_id'],plan['object_label'])
+        if found['analysis_id']!=snapshot.get('visual_analysis_id') or found['source_sha256']!=snapshot.get('visual_source_sha256'):
+            raise ValueError('Object analysis changed; find objects and preview again.')
+        intervals=[{'start':t,'end':min(duration,t+.01)} for t in found['starts'] if t<duration]
+        if not intervals:raise ValueError('No appearances were found inside the audio timeline.')
+        detection_meta={'method':'visual-track','analysis_id':found['analysis_id'],'label':found['label'],'track_id':found['track_id'],'processed_duration':found['processed_duration']}
+        note=f"Found {len(intervals)} appearance(s) of {found['label']} #{found['track_id']}. Tracking can miss appearances or switch identities; review each placement."
+        if found['processed_duration']+0.1<duration: note+=f" Only the first {found['processed_duration']:.1f} seconds were analyzed."
+    elif plan.get('spoken_word'):
+        from .censorship import transcribe, MAX_DURATION
+        import re
+        if duration>MAX_DURATION: raise ValueError('Word timing is limited to 10 minutes per preview.')
+        set_stage(cid,'transcribing',15)
+        transcript_audio=project_dir(pid)/'stems'/(uid()+'-transcription.wav')
+        try:
+            if snapshot['rows']: export(snapshot['rows'],source,transcript_audio,'wav',False)
+            else: shutil.copyfile(source,transcript_audio)
+            words,language=transcribe(transcript_audio,duration)
+        finally:
+            transcript_audio.unlink(missing_ok=True)
+        normalize=lambda word: re.sub(r"[^\w']",'',word.casefold())
+        matches=[w for w in words if normalize(w['word'])==normalize(plan['spoken_word']) and w['end']<duration]
+        if not matches: raise ValueError(f"I couldn't find the spoken word '{plan['spoken_word']}' in the current mix. Check the spelling or try a timestamp; transcription can miss words.")
+        if len(matches)>100: raise ValueError('More than 100 matching words were found. Try a shorter clip.')
+        intervals=[{'start':w['end'],'end':min(duration,w['end']+.01)} for w in matches]
+        detection_meta={'method':'local-word-transcription','word':plan['spoken_word'],'language':language}
+        note=f"Found {len(matches)} possible occurrence(s) of '{plan['spoken_word']}'. Word recognition and timing are approximate; review the placements."
+    elif plan.get('all_occurrences'):
         from .event_detection import find_similar_events,flexsed_intervals,merge_candidate_ranges
         set_stage(cid,'finding',15)
-        match=find_similar_events(detection_source,duration,plan['time'])
+        match=find_similar_events(detection_source,search_duration,local_time)
         event_hints=match['times'];detection_meta={'method':match['method'],'example_time':match['example_time']}
-        try: flex=flexsed_intervals(detection_source,duration,plan['source'])
+        try: flex=flexsed_intervals(detection_source,search_duration,plan['source'])
         except RuntimeError:flex=None;detector_unavailable=True
         if flex and flex['intervals']:
             reference=match['example_time']
             supports_reference=any(r['start']-.12<=reference<=r['end']+.12 for r in flex['intervals'])
             selected=[t for t in event_hints if abs(t-reference)<.04 or any(r['start']-.12<=t<=r['end']+.12 for r in flex['intervals'])]
             if supports_reference and len(selected)>1:event_hints=selected;detection_meta['filter']='flexsed-experimental'
-        intervals=merge_candidate_ranges(event_hints,duration)
+        intervals=merge_candidate_ranges(event_hints,search_duration)
         note=f"Found {len(event_hints)} possible similar sounds using your example; review placements because matches are approximate."
     elif plan['time'] is not None:
-        t=plan['time']; intervals=[{'start':t if plan.get('mode')=='add' else max(0,t-.05),'end':min(duration,t+.6)}]
+        t=local_time; intervals=[{'start':t if plan.get('mode')=='add' else max(0,t-.05),'end':min(search_duration,t+.6)}]
         note='Used a short range around the requested timestamp. Sounds outside that range were not checked.'
         detection_meta={'method':'supplied-time'}
     else:
         from .event_detection import flexsed_intervals,candidate_times_in_regions,merge_candidate_ranges
         set_stage(cid,'finding',15)
-        try: flex=flexsed_intervals(detection_source,duration,plan['source'])
+        try: flex=flexsed_intervals(detection_source,search_duration,plan['source'])
         except RuntimeError:flex=None;detector_unavailable=True
         if flex is not None and flex['intervals']:
-            event_hints=candidate_times_in_regions(detection_source,duration,flex['intervals'])
-            intervals=merge_candidate_ranges(event_hints,duration)
+            event_hints=candidate_times_in_regions(detection_source,search_duration,flex['intervals'])
+            intervals=merge_candidate_ranges(event_hints,search_duration)
             detection_meta={'method':'flexsed-experimental','seconds':flex['seconds'],'peak_gpu_bytes':flex['peak_gpu_bytes']}
         else:
-            detected=discovery.discover(detection_source,duration)
+            detected=discovery.discover(detection_source,search_duration)
             q=plan['source'].lower()
             mapped='impact' if any(w in q for w in ('punch','hit','impact','slap','thud')) else next((v for k,v in discovery.QUERY_LABELS.items() if k in q),q)
             matching=[s for s in detected['sources'] if s['label']==mapped]
@@ -432,18 +498,22 @@ def auto_build(project,payload,cid):
         if not intervals: raise ValueError(f"I couldn't confidently find {plan['source']}. Give me an example timestamp, such as 'at 4 seconds', and I can look for similar sounds.")
         note=f'Found {len(event_hints) if event_hints is not None else len(intervals)} possible {plan["source"]} occurrence(s); detection can miss or misidentify sounds.'
         if detection_meta['method']=='flexsed-experimental': note+=' The text-conditioned detector is experimental.'
+    if source_offset:
+        intervals=[{'start':i['start']+source_offset,'end':i['end']+source_offset} for i in intervals]
+        if event_hints is not None:event_hints=[t+source_offset for t in event_hints]
+        if 'example_time' in detection_meta:detection_meta['example_time']+=source_offset
     set_stage(cid,'generating',35)
     asset=prepare_effect(project,{'prompt':plan['effect']})
     set_stage(cid,'separating',60)
     output=build(project,{'_candidate':snapshot,'asset_id':asset['asset_id'],'asset_sha256':file_sha256(asset_path(pid,asset['asset_id'])),
-                          'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints},cid)
+                          'source_prompt':plan['source'] or 'sound effect','effect_label':plan['effect'],'mode':plan.get('mode','replace'),'intervals':intervals,'event_hints':event_hints,'source_stem_id':payload.get('source_stem_id'),'alignment':'onset' if plan.get('spoken_word') or plan.get('object_track_id') is not None else 'peak'},cid)
     output['inference']['warnings'].insert(0,note)
     if resolver_unavailable:
         output['inference']['warnings'].append('Could not check for a similarly named effect layer; searched the residual audio instead.')
     if detector_unavailable:
         output['inference']['warnings'].append('The experimental text-conditioned detector was unavailable; the other detection method was used. Review the suggested placements.')
     output['inference']['warnings'].append('Generated sound count and content are approximate; listen to the effect before applying.')
-    output['provenance'].update({'request':payload['request'],'generation_prompt':asset['generation_prompt'],'requested_count':asset['requested_count'],'automatic':True,'detection':detection_meta})
+    output['provenance'].update({'request':payload.get('original_request',payload['request']),'generation_prompt':asset['generation_prompt'],'requested_count':asset['requested_count'],'automatic':True,'detection':detection_meta})
     return output
 
 
@@ -489,7 +559,7 @@ def adjust(project,payload,candidate_id):
             raw=candidates.safe_path(pid,group['raw_path']);row=next((r for r in output['proposed'] if r['id']==group['target_id']),None)
             if not row:raise ValueError('The separated sound layer is unavailable.')
             path=directory/(uid()+'-ducked.wav');created.append(path)
-            duck_events(raw,path,events,group_id,meta['rate']);row['path']=str(path)
+            duck_events(raw,path,events,group_id,group.get('source_rate',meta['rate']),group.get('source_offset',0));row['path']=str(path)
         placed=directory/(uid()+'.wav');mix=directory/(uid()+'.wav');created.extend([placed,mix])
         notices,_,_=render_effect(effect,placed,events,meta['rate'],meta['channels'],meta['count'],provenance['alignment'])
         prior_ids=set(meta['effect_ids']);base=[r for r in output['proposed'] if r['id'] not in prior_ids]

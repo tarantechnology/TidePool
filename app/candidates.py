@@ -25,6 +25,8 @@ def build(project, payload, cid):
     object_context=payload.pop('_object_context',None)
     if 'rows' not in snapshot: raise ValueError('Queued preview uses an older format; generate a new preview.')
     source=safe_path(pid,snapshot['source'])
+    mix_source=safe_path(pid,snapshot.get('project_audio') or snapshot['source'])
+    source_layer_id=snapshot.get('source_layer_id');source_offset=float(snapshot.get('source_offset',0))
     if file_sha256(source)!=snapshot['source_sha256']: raise ValueError('Source changed; generate another preview')
     reuse=payload.pop('_reuse_target_id',None)
     if reuse:
@@ -62,6 +64,15 @@ def build(project, payload, cid):
         results=[{**selected[0],'path':full_target},{'name':'residual','path':full_residual}]
         if localization and localization.get('notice'):
             inference.setdefault('warnings',[]).append(localization['notice'])
+    elif source_layer_id:
+        # Some backends additionally suppress their residual. A split of a chosen
+        # editable layer must reconstruct that layer before any user edits.
+        found=[r if isinstance(r,dict) else {'name':r[0],'path':r[1]} for r in results]
+        isolated=[r for r in found if r['name'].lower()!='residual']
+        if len(isolated)!=1:raise ValueError('Preview requires exactly one target; existing layers were preserved.')
+        remainder=directory/(uid()+'-layer-remainder.wav')
+        run('ffmpeg','-v','error','-y','-i',str(source),'-i',str(isolated[0]['path']),'-filter_complex','[1:a]volume=-1[neg];[0:a][neg]amix=inputs=2:duration=first:normalize=0','-c:a','pcm_f32le',str(remainder))
+        results=[isolated[0],{'name':'residual','path':remainder}]
     results=[r if isinstance(r,dict) else {'name':r[0],'path':r[1]} for r in results]
     refinement=next((r.get('refinement') for r in results if r['name'].lower()!='residual'),None)
     targets=[(r['name'],r['path']) for r in results if r['name'].lower()!='residual']
@@ -82,23 +93,49 @@ def build(project, payload, cid):
         return row
     target=edit_target(new_row(*targets[0],snapshot['target_id']),payload.get('edit_scope',{'action':'keep'}))
     residual=new_row(*residuals[0],snapshot['residual_id'])
-    target['role']='target'; residual['role']='residual'
+    target['role']='target'
+    if source_layer_id:
+        # The selected layer becomes its own remainder, not the project residual.
+        parent=by_id[source_layer_id]
+        residual['role']=parent.get('role');residual['label']=parent.get('label')
+        if snapshot.get('promote_original'):
+            residual.update(name='residual',role='residual',label='everything else')
+        for key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label','sound_start','sound_end'):
+            target[key]=None
+    else:residual['role']='residual'
     target['refinement']=json.dumps(refinement) if refinement is not None else None
     if not snapshot['target_id']:
-        target['prompt']=payload['prompts'][0];target['label']=target['name'];target['source_stem_id']=None
-    residual['label']='everything else'
+        target['prompt']=payload['prompts'][0];target['label']=target['name'];target['source_stem_id']=source_layer_id
+    if not source_layer_id:residual['label']='everything else'
     replaced={snapshot['target_id'],snapshot['residual_id']}
     proposed=[dict(r) for r in rows if r['id'] not in replaced]+[target,residual]
+    if not snapshot['target_id']:
+        # The same explicitly requested description in one project represents the
+        # same logical sound. Do not combine different existing group identities.
+        prompt=' '.join(payload['prompts'][0].casefold().split())
+        matching=[r for r in proposed if r['id'] not in (target['id'],source_layer_id) and r.get('role')=='target' and r.get('source_stem_id')==source_layer_id and r.get('prompt') and ' '.join(r['prompt'].casefold().split())==prompt]
+        existing={r.get('sound_group_id') for r in matching if r.get('sound_group_id')}
+        group=next(iter(existing)) if len(existing)==1 else uid()
+        target.update(sound_group_id=group,sound_group_label=payload['prompts'][0],sound_start=interval['start'] if interval else None,sound_end=interval['end'] if interval else None)
+        if len(existing)<=1:
+            for item in matching:item.update(sound_group_id=group,sound_group_label=payload['prompts'][0])
+        elif matching:
+            inference.setdefault('warnings',[]).append('Multiple existing sound groups use this description; the new layer was kept separate.')
     mix=directory/(uid()+'.wav'); original=directory/(uid()+'.wav')
-    export(proposed,source,mix,'wav',False)
-    if rows: export(rows,source,original,'wav',False)
+    export(proposed,mix_source,mix,'wav',False)
+    if rows: export(rows,mix_source,original,'wav',False)
     else: shutil.copyfile(source,original)
+    def timeline_range(value):
+        return {'start':value['start']+source_offset,'end':value['end']+source_offset} if value else None
+    public_anchors=[{**a,'start':a['start']+source_offset,'end':a['end']+source_offset} for a in source_anchors]
+    if localization and source_offset:
+        localization={**localization,'interval':timeline_range(localization.get('interval'))}
     return {'target':target,'residual':residual,'mix':{'path':str(mix)},'original':{'path':str(original)},
             'snapshot':snapshot,'proposed':proposed,'inference':inference,
-            'provenance':{'source_sha256':snapshot['source_sha256'],'source_kind':'original' if snapshot['target_id'] or not rows else 'residual',
-                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':source_anchors,'object_selection':object_context,
+            'provenance':{'source_sha256':snapshot['source_sha256'],'source_kind':'selected-layer' if source_layer_id else ('original' if snapshot['target_id'] or not rows else 'residual'),'source_layer_id':source_layer_id,'source_offset':source_offset,
+                          'stem_revisions':revisions(rows),'prompt':payload['prompts'][0],'anchors':public_anchors,'object_selection':object_context,
                           'visual_guidance':bool(payload.get('visual_prompt')),'edit_scope':payload.get('edit_scope'),
-                          'profile':payload.get('profile','preview'),'processing_interval':interval,'processing_time':point,'localization':localization,'inference_interval':{'start':context_start,'end':context_end} if interval else None,'requested_options':payload['options'],
+                          'profile':payload.get('profile','preview'),'processing_interval':timeline_range(interval),'processing_time':point+source_offset if point is not None else None,'localization':localization,'inference_interval':timeline_range({'start':context_start,'end':context_end}) if interval else None,'requested_options':payload['options'],
                           'passes':payload['options'].get('passes',1),'refinement':refinement}}
 
 
@@ -147,16 +184,33 @@ def apply(job):
                 expected = snapshot.get('stem_hashes', {}).get(item['id'])
                 if expected and file_sha256(safe_path(pid, item['path'])) != expected: raise ValueError('A source layer changed')
         except (OSError,ValueError) as exc: raise HTTPException(409,'Preview media changed or is unavailable; regenerate it.') from exc
-        project=db.execute('SELECT audio FROM projects WHERE id=?',(pid,)).fetchone()
+        project=db.execute('SELECT audio,original,visual FROM projects WHERE id=?',(pid,)).fetchone()
         if project['audio']!=snapshot.get('project_audio',project['audio']): raise HTTPException(409,'Project media changed since preview; regenerate it.')
+        if snapshot.get('visual_analysis_id'):
+            try:
+                visual=json.loads(project['visual'] or '{}')
+                if visual.get('analysis_id')!=snapshot['visual_analysis_id'] or file_sha256(project['original'])!=snapshot['visual_source_sha256']:
+                    raise ValueError('Object analysis changed')
+            except (ValueError,OSError,TypeError) as exc: raise HTTPException(409,'Object analysis changed; generate a new preview.') from exc
         old=revisions(current)
+        remove_ids=data.get('remove_ids',[])
+        if remove_ids:
+            proposed_ids={r['id'] for r in data['proposed']}
+            removable={r['id'] for r in current if r.get('role')=='effect'}
+            if (data.get('provenance') or {}).get('kind')!='effect-clip-edit' or len(remove_ids)!=len(set(remove_ids)) or not set(remove_ids)<=removable or set(remove_ids)&proposed_ids:
+                raise HTTPException(409,'The requested clip removal is no longer valid.')
+            db.executemany('DELETE FROM stems WHERE id=? AND project_id=?',[(sid,pid) for sid in remove_ids])
         for item in data['proposed']:
             if item['id'] in old:
                 # The snapshot is unchanged, including every existing edit.
                 db.execute('UPDATE stems SET path=?,name=?,label=?,duration=?,start_offset=?,volume=?,muted=?,mute_ranges=?,revision=revision+1 WHERE id=? AND project_id=?',
                            (item['path'],item['name'],item.get('label'),item['duration'],item['start_offset'],item['volume'],item['muted'],item['mute_ranges'],item['id'],pid))
-                for key in ('effect_group_id','effect_asset_id','effect_label'):
-                    if key in item: db.execute(f'UPDATE stems SET {key}=? WHERE id=? AND project_id=?',(item[key],item['id'],pid))
+                if snapshot.get('promote_original') and item['id']==snapshot.get('source_layer_id'):
+                    db.execute("UPDATE stems SET role='residual' WHERE id=? AND project_id=?",(item['id'],pid))
+                for key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label','sound_start','sound_end'):
+                    if key in item:
+                        value='COALESCE(?, '+key+')' if key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label') else '?'
+                        db.execute(f'UPDATE stems SET {key}={value} WHERE id=? AND project_id=?',(item[key],item['id'],pid))
                 if 'refinement' in item:  # Previews built before refinement existed leave it alone.
                     db.execute('UPDATE stems SET refinement=? WHERE id=? AND project_id=?',(item['refinement'],item['id'],pid))
             else:
@@ -186,7 +240,7 @@ def undo(job):
         replaced=[r['path'] for r in current]
         db.execute('DELETE FROM stems WHERE project_id=?',(pid,))
         for row in previous:
-            row['revision']=revs[row['id']]+1
+            row['revision']=revs.get(row['id'],row['revision'])+1
             keys=list(row)
             db.execute('INSERT INTO stems('+','.join(keys)+') VALUES('+','.join('?' for _ in keys)+')',list(row.values()))
         db.execute('UPDATE candidate_history SET undone=1 WHERE candidate_id=?',(job['id'],))

@@ -28,6 +28,13 @@ export interface BackendStem {
   start_offset?: number
   mute_ranges?: MuteRange[]
   role?: string
+  effect_group_id?: string | null
+  effect_label?: string | null
+  effect_asset_id?: string | null
+  sound_group_id?: string | null
+  sound_group_label?: string | null
+  sound_start?: number | null
+  sound_end?: number | null
   source_stem_id?: string
   prompt?: string
   label?: string
@@ -244,6 +251,8 @@ export function toStem(stem: BackendStem, url: string): Stem {
     duration: stem.duration,
     startOffset: stem.start_offset ?? 0,
     muteRanges: stem.mute_ranges ?? [],
+    ...(stem.role === 'effect' && stem.effect_group_id ? { effectGroupId: stem.effect_group_id, effectLabel: stem.effect_label || stem.name, isEffectClip:true } : {}),
+    ...(stem.role === 'target' && stem.sound_group_id ? {effectGroupId:stem.sound_group_id,effectLabel:stem.sound_group_label || stem.name,...(typeof stem.sound_start==='number' && typeof stem.sound_end==='number' && stem.sound_start>=0 && stem.sound_end>stem.sound_start ? {soundInterval:{start:stem.sound_start,end:stem.sound_end}} : {})} : {}),
     ...(refinement ? { refinement } : {}),
     ...(tags.length ? { tags } : {}),
   }
@@ -430,7 +439,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -448,9 +457,9 @@ export async function getPrepareVisual(config:BackendConfig, jobId:string, signa
 export interface Anchor {token:"+"|"-";start:number;end:number}
 export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
 export interface ObjectSelectionContext {analysis_id:string;detection_id:string;track_id:number;frame_index:number}
-export interface PreviewOptions {object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
+export interface PreviewOptions {source_stem_id?:string;object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
 /** The object detector, as GET /capabilities reports it. Absent fields are null, not guessed. */
-export interface VisionCapability {automatic?:boolean;retryable?:boolean;selectionOnly?:boolean;available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
+export interface VisionCapability {automatic?:boolean;prompted?:boolean;retryable?:boolean;selectionOnly?:boolean;available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
 /**
  * `visual` is SAM Audio's visual prompting; `vision` is the object detector. An older backend sends no `vision`.
  * max_passes and refine come from backends with multi-pass separation; older ones omit them.
@@ -461,7 +470,7 @@ export function toVisionCapability(raw:unknown):VisionCapability|undefined {
   if(!raw || typeof raw!=='object') return undefined
   const v=raw as Record<string,unknown>
   if(typeof v.available!=='boolean') return undefined
-  return {...(typeof v.automatic==='boolean'?{automatic:v.automatic}:{}),...(typeof v.retryable==='boolean'?{retryable:v.retryable}:{}),...(typeof v.selection_only==='boolean'?{selectionOnly:v.selection_only}:{}),available:v.available,reason:text(v.reason),model:text(v.model),weightsCached:typeof v.weights_cached==='boolean'?v.weights_cached:null,device:text(v.device)}
+  return {...(typeof v.automatic==='boolean'?{automatic:v.automatic}:{}),...(typeof v.prompted==='boolean'?{prompted:v.prompted}:{}),...(typeof v.retryable==='boolean'?{retryable:v.retryable}:{}),...(typeof v.selection_only==='boolean'?{selectionOnly:v.selection_only}:{}),available:v.available,reason:text(v.reason),model:text(v.model),weightsCached:typeof v.weights_cached==='boolean'?v.weights_cached:null,device:text(v.device)}
 }
 export function toCapabilities(raw:unknown):Capabilities {
   const c=(raw && typeof raw==='object' ? raw : {}) as Record<string,unknown>
@@ -488,8 +497,12 @@ export async function getCapabilities(config:BackendConfig,projectId:string):Pro
 }
 export type CinematicStyle = 'subtle'|'cinematic'|'dramatic'
 export interface LayerEffects {bass:number;treble:number;highpass:number;compression:number}
-export async function createEffectsPreview(config:BackendConfig,projectId:string,stemId:string|null,effects:LayerEffects):Promise<string> {
-  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effects-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,...effects})})
+export async function editEffectClip(config:BackendConfig,projectId:string,stem:SavedStem,operation:'move'|'delete',startOffset?:number):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effect-clip-edit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stem.id,expected_revision:stem.revision,operation,...(startOffset===undefined ? {} : {start_offset:startOffset})})})
+  return ((await response.json()) as {candidate_id:string}).candidate_id
+}
+export async function createEffectsPreview(config:BackendConfig,projectId:string,stemId:string|null,effects:LayerEffects,groupId?:string):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/effects-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,...(groupId ? {effect_group_id:groupId} : {}),...effects})})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
 export type DirectorIntent = 'cinematic'|'dramatic'|'cool'|'funny'
@@ -513,7 +526,7 @@ export async function adjustReplacementPreview(config:BackendConfig,candidateId:
   const response=await request(config,`/api/candidates/${encodeURIComponent(candidateId)}/replacement-adjust`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adjustment)})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
-export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
+export interface CandidateInfo {recovery?:ReplacementRecovery|null;provenance?:{matches?:Array<{word:string;start:number;end:number}>;events?:ReplacementEvent[];alignment?:'peak'|'onset';peak_times?:number[];mode?:'replace'|'add';intervals?:Array<{start:number;end:number}>;requested_count?:number;changes?:DirectorChange[];kind?:string;style?:CinematicStyle;intent?:DirectorIntent;request?:string;steps?:string[];analysis?:{mean_dbfs?:number;peak_dbfs?:number};processing_interval?:{start:number;end:number}|null;processing_time?:number|null;localization?:{method:string;notice?:string}|null};mix_url?:string;original_url?:string;id:string;status:string;progress?:number;stage?:string|null;error?:string|null;audio_url?:string|null;inference?:{model?:{reranking_candidates?:number;is_mock?:boolean};warnings?:string[]}|null}
 export async function createCandidate(config:BackendConfig,projectId:string,stemId:string|null,prompt:string,candidates:number,options:PreviewOptions={}):Promise<string> {
   const {passes,...rest}=options
   const res=await request(config,`/api/projects/${encodeURIComponent(projectId)}/candidates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stem_id:stemId,prompt,reranking_candidates:candidates,...rest,...passesField(passes)})})
@@ -558,10 +571,14 @@ export async function generateSoundEffect(config:BackendConfig,projectId:string,
 export async function getSoundEffectJob(config:BackendConfig,id:string):Promise<{status:string;error?:string;result?:SoundEffectAsset}> {
   return (await (await request(config,`/api/sound-effect-jobs/${encodeURIComponent(id)}`)).json()) as {status:string;error?:string;result?:SoundEffectAsset}
 }
-export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
+export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;source_stem_id?:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
   return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/replacement-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json()) as {candidate_id:string}).candidate_id
 }
 
-export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string):Promise<string> {
-  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text})})).json()) as {candidate_id:string}).candidate_id
+export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string,sourceStemId?:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text,...(sourceStemId ? {source_stem_id:sourceStemId} : {})})})).json()) as {candidate_id:string}).candidate_id
+}
+
+export async function createCensorshipPreview(config:BackendConfig,projectId:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/censorship-preview`,{method:'POST'})).json()) as {candidate_id:string}).candidate_id
 }

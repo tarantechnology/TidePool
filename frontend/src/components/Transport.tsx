@@ -17,7 +17,7 @@ export function Transport({ engine, playing, duration }: Props) {
   const t = useTimelineTime(engine)
   const disabled = !engine
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-line bg-tint/[0.03] p-1 pr-5 backdrop-blur">
+    <div className="flex items-center gap-1.5 rounded-full border border-line bg-tint/[0.03] p-1 pr-5 backdrop-blur max-md:pr-3">
       <button
         className="flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-tint/[0.06] hover:text-fg disabled:opacity-40"
         disabled={disabled}
@@ -45,8 +45,8 @@ export function Transport({ engine, playing, duration }: Props) {
           </svg>
         )}
       </button>
-      <div className="ml-3 font-mono text-[13px] tabular-nums text-fg">
-        {fmt(t)} <span className="text-faint">/ {fmt(duration)}</span>
+      <div className="ml-3 whitespace-nowrap font-mono text-[13px] tabular-nums text-fg max-md:ml-1.5 max-md:text-[12px]">
+        {fmt(t)} <span className="text-faint max-md:hidden">/ {fmt(duration)}</span>
       </div>
     </div>
   )

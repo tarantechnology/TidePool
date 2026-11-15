@@ -16,7 +16,8 @@ def effect_key(text):
     words=[w for w in words if w not in {'a','an','the','sound','sounds','noise','noises','loud','louder','quiet','quieter'}]
     if words:
         word=words[-1]
-        if len(word)>3 and word.endswith('s') and not word.endswith(('ss','us','is')): words[-1]=word[:-1]
+        if len(word)>4 and word.endswith(('ches','shes','xes','zes')):words[-1]=word[:-2]
+        elif len(word)>3 and word.endswith('s') and not word.endswith(('ss','us','is')): words[-1]=word[:-1]
     return ' '.join(words)
 
 

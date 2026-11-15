@@ -100,6 +100,8 @@ COMPOSITE = {
     "strings": [(0, 52, "cellos"), (53, 61, "violas"), (62, 127, "violins")],
     "strings_spic": [(0, 54, "cellos_spic"), (55, 127, "violins_spic")],
 }
+# Section presets rendered as an ensemble: 3 layers, detuned, time-offset and spread across the stereo field.
+ENSEMBLE = {"violins", "violas", "cellos", "violins_spic", "cellos_spic", "violins_pizz", "horn"}
 ARTICULATION_PRESET = {("violins", "spiccato"): "violins_spic", ("violins", "pizzicato"): "violins_pizz", ("cellos", "spiccato"): "cellos_spic",
                        ("strings", "spiccato"): "strings_spic", ("strings", "pizzicato"): "violins_pizz", ("solo_violin", "pizzicato"): "violins_pizz"}
 
@@ -163,33 +165,62 @@ class SampleRenderer:
         attack = float(info.get("attack", 0.0))
         release = float(info.get("release", 0.3))
         gain = float(info.get("gain", 1.0))
+        ensemble = preset in ENSEMBLE
+        n_layers = 3 if ensemble else 1
+        rng = np.random.default_rng(len(notes) * 7919 + n_out % 9973)
+        last_file: dict[int, str] = {}
         for n in notes:
             want_layer = int(round((n.velocity / 127) * (layers - 1)))
             def cost(z):
                 return abs(z["pitch"] - n.pitch) + 1.5 * abs(z["layer"] - want_layer)
-            best = min(cost(z) for z in zones)
-            pool = [z for z in zones if cost(z) <= best + 1e-6]
-            rr_key = f"{preset}:{n.pitch}:{want_layer}"
-            zone = pool[self._rr.get(rr_key, 0) % len(pool)]
-            self._rr[rr_key] = self._rr.get(rr_key, 0) + 1
-            src = self._sample(zone["file"], sr)
-            ratio = 2 ** ((n.pitch - zone["pitch"]) / 12)
+            ranked = sorted(zones, key=cost)
             dur = max(0.03, n.end - n.start)
-            hold = int(dur * sr)
-            rel = int(release * sr)
-            total = hold + rel if sustain else min(int(len(src[0]) / ratio), hold + rel)
-            need = int(total * ratio) + 4
-            if need > src.shape[1]:
-                src = _extend_loop(src, need, sr, zone.get("loop"))
-            pos = np.arange(total) * ratio
-            seg = np.stack([np.interp(pos, np.arange(src.shape[1]), c) for c in src])
-            att = attack if (n.articulation == "sustain" and sustain) else min(attack, 0.01)
-            env = _env(hold if sustain else min(hold, total), sr, att, release, total)
-            s = int(n.start * sr)
-            if s >= n_out:
+            s0 = int(n.start * sr)
+            if s0 >= n_out:
                 continue
-            e = min(n_out, s + total)
-            out[:, s:e] += (seg[:, : e - s] * env[: e - s]) * (_vel_gain(n.velocity) * gain)
+            long_note = sustain and dur > 0.6
+            # Bow attack: softer notes speak slower (40-150 ms); short notes keep a crisp start.
+            att = (0.04 + 0.11 * (1 - n.velocity / 127)) if (sustain and n.articulation == "sustain") else min(attack, 0.012) if not sustain else 0.035
+            rel_s = max(release, 0.35) if sustain else release
+            for k in range(n_layers):
+                # Each layer uses a different sample (round robin / neighbouring zone), never the previous one.
+                pool = ranked[: max(1, min(len(ranked), 3 if ensemble else 1))]
+                rr_key = f"{preset}:{n.pitch}:{want_layer}"
+                idx = (self._rr.get(rr_key, 0) + k) % len(pool)
+                zone = pool[idx]
+                if last_file.get(k) == zone["file"] and len(pool) > 1:
+                    zone = pool[(idx + 1) % len(pool)]
+                last_file[k] = zone["file"]
+                src = self._sample(zone["file"], sr)
+                cents = 0.0 if k == 0 else float(rng.choice([-1, 1]) * rng.uniform(4, 12))
+                offset = 0 if k == 0 else int(rng.uniform(0.008, 0.025) * sr)
+                hold = int(dur * sr)
+                rel = int(rel_s * sr)
+                base_ratio = 2 ** ((n.pitch - zone["pitch"] + cents / 100) / 12)
+                total = hold + rel if sustain else min(int(len(src[0]) / base_ratio), hold + rel)
+                t = np.arange(total) / sr
+                ratio = np.full(total, base_ratio)
+                if long_note:  # delayed vibrato on top of the sample's own: ~5.5 Hz, 8-18 cents, from ~200 ms
+                    depth = rng.uniform(8, 18) * np.clip((t - 0.2) / 0.35, 0, 1)
+                    ratio = ratio * 2 ** (depth * np.sin(2 * np.pi * rng.uniform(5.1, 5.9) * t + rng.uniform(0, 6.28)) / 1200)
+                pos = np.concatenate([[0.0], np.cumsum(ratio[:-1])])
+                need = int(pos[-1]) + 4
+                if need > src.shape[1]:
+                    src = _extend_loop(src, need, sr, zone.get("loop"))
+                seg = np.stack([np.interp(pos, np.arange(src.shape[1]), c) for c in src])
+                env = _env(hold if sustain else min(hold, total), sr, att, rel_s, total)
+                if long_note:  # gentle swell into the middle of the note, easing off before the release
+                    env *= (0.82 + 0.18 * np.sin(np.pi * np.clip(t / max(dur, 1e-3), 0, 1)) ** 0.8).astype(np.float32)
+                g = _vel_gain(n.velocity) * gain / np.sqrt(n_layers)
+                if ensemble:
+                    pan = (-0.65, 0.65, 0.0, -0.3)[k % 4] if n_layers > 1 else 0.0
+                    seg = np.stack([seg[0] * np.sqrt(0.5 * (1 - pan)) * 1.41, seg[1] * np.sqrt(0.5 * (1 + pan)) * 1.41])
+                s = s0 + offset
+                if s >= n_out:
+                    continue
+                e = min(n_out, s + total)
+                out[:, s:e] += seg[:, : e - s] * env[: e - s] * g
+            self._rr[f"{preset}:{n.pitch}:{want_layer}"] = self._rr.get(f"{preset}:{n.pitch}:{want_layer}", 0) + 1
         return out
 
 

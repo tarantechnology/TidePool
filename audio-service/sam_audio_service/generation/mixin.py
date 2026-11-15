@@ -59,13 +59,20 @@ def _vocal_presence(vocals: np.ndarray | None, sr: int, n: int, hop: int) -> np.
 
 def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | None, analysis: dict[str, Any], role: str,
            windows: list[tuple[float, float]], *, level_db: float = 0.0, duck_db: float = 3.0, carve_db: float = 4.0,
-           reverb: bool = True, has_bass_stem: bool = False) -> tuple[np.ndarray, dict[str, Any]]:
+           reverb: bool = True, has_bass_stem: bool = False, family: str | None = None) -> tuple[np.ndarray, dict[str, Any]]:
     n = song.shape[-1]
     part = part[:, :n] if part.shape[1] >= n else np.pad(part, ((0, 0), (0, n - part.shape[1])))
     report: dict[str, Any] = {}
     # 1. high-pass + gentle air roll-off
     hpf = ROLE_HPF.get(role, 100.0)
-    part = dsp.fft_eq(part, sr, lambda f: dsp.highpass_gain(f, hpf, 2) * dsp.lowpass_gain(f, 15000, 1))
+    bowed = family in ("strings", "brass", "winds", "voice") and role != "bassline"
+    if bowed:
+        # Orchestral polish: HPF ~180 Hz, dip the 2.5-4 kHz rasp, a little air on top.
+        hpf = max(hpf, 180.0)
+        part = dsp.fft_eq(part, sr, lambda f: dsp.highpass_gain(f, hpf, 2) * dsp.peak_gain(f, 3200, -3.0, 1.2)
+                          * (1 + (10 ** (1.5 / 20) - 1) / (1 + (9000 / np.maximum(f, 1.0)) ** 2)) * dsp.lowpass_gain(f, 16000, 1))
+    else:
+        part = dsp.fft_eq(part, sr, lambda f: dsp.highpass_gain(f, hpf, 2) * dsp.lowpass_gain(f, 15000, 1))
     # 2. dynamic EQ carve around the vocal
     hop, n_fft = 512, 2048
     pres = _vocal_presence(vocals, sr, n, hop)
@@ -87,7 +94,10 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
     if reverb:
         rt60 = float(space.get("rt60", 0.8))
         wet = float(space.get("wet", 0.2)) * (1.25 if role == "pad" else 0.4 if role == "bassline" else 1.0)
-        ir = synth_ir(sr, rt60, float(space.get("predelay_ms", 18.0)))
+        predelay = float(space.get("predelay_ms", 18.0))
+        if bowed:  # strings want a hall: longer tail, 30 ms pre-delay, wetter
+            rt60, wet, predelay = max(rt60, 1.8), min(0.5, wet + 0.12), 30.0
+        ir = synth_ir(sr, rt60, predelay)
         wet_sig = np.stack([dsp.fft_convolve(part[c], ir[c])[:n] for c in range(2)])
         dry_rms, wet_rms = np.sqrt(np.mean(part ** 2) + 1e-12), np.sqrt(np.mean(wet_sig ** 2) + 1e-12)
         part = np.sqrt(1 - wet) * part + np.sqrt(wet) * wet_sig * (dry_rms / wet_rms)
@@ -112,6 +122,11 @@ def mix_in(part: np.ndarray, sr: int, song: np.ndarray, vocals: np.ndarray | Non
     part_lufs = dsp.loudness_lufs(part, sr)
     offset = ROLE_LEVEL_LU.get(role, -8.0) - (3.0 if role == "bassline" and has_bass_stem else 0.0) + level_db
     target = song_lufs + offset
+    if vocals is not None and role != "bassline":
+        # Sit ~3 dB behind the vocal (pads a bit further back), never louder than the role target.
+        vocal_lufs = dsp.loudness_lufs(vocals, sr)
+        if vocal_lufs > -60:
+            target = min(target, vocal_lufs - (5.0 if role == "pad" else 3.0) + level_db)
     gain_db = float(np.clip(target - part_lufs, -40, 30)) if part_lufs > -69 else 0.0
     part = part * 10 ** (gain_db / 20)
     peak = float(np.max(np.abs(part))) if part.size else 0.0

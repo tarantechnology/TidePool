@@ -235,7 +235,7 @@ class Generator:
         if not np.any(part):
             warnings.append("the part is silent (no notes in the requested sections)")
         t2 = time.perf_counter()
-        mixed, mix_report = mix_in(part, sr, mix, vocals, analysis, spec.role, windows, level_db=req.level_db, duck_db=req.duck_db, has_bass_stem=has_bass)
+        mixed, mix_report = mix_in(part, sr, mix, vocals, analysis, spec.role, windows, level_db=req.level_db, duck_db=req.duck_db, has_bass_stem=has_bass, family=spec.family)
         elapsed["mix"] = round(time.perf_counter() - t2, 3)
         warnings += mix_report.pop("warnings", [])
         checks = {"audio": audio_checks(mixed, sr, analysis, mix)}

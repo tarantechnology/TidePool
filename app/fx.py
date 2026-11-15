@@ -365,6 +365,28 @@ def blend(dry, wet, sr, interval):
     return dry + (wet - dry) * mask[:, None]
 
 
+def blend_many(dry, wet, sr, intervals):
+    """Wet only inside each window (layer seconds), with the same short crossfades as ``blend``."""
+    n = len(dry); mask = np.zeros(n, np.float32)
+    for iv in intervals:
+        a = max(0, int(round(iv['start'] * sr))); b = min(n, int(round(iv['end'] * sr)))
+        if a >= n or b <= a: continue
+        xf = max(1, min(int(.015 * sr), (b - a) // 4))
+        part = np.ones(b - a, np.float32)
+        part[:xf] = np.linspace(0, 1, xf, dtype=np.float32); part[len(part) - xf:] = np.linspace(1, 0, xf, dtype=np.float32)
+        mask[a:b] = np.maximum(mask[a:b], part)
+    return dry + (wet - dry) * mask[:, None]
+
+
+def layer_intervals(intervals, offset, duration):
+    """Timeline windows to one layer's own seconds; windows that miss the layer are dropped."""
+    out = []
+    for iv in intervals or []:
+        a, b = max(0.0, iv['start'] - offset), min(duration, iv['end'] - offset)
+        if b - a > .01: out.append({'start': round(a, 4), 'end': round(b, 4)})
+    return out
+
+
 def change_speed(x, sr, rate):
     """Turntable-style speed change (tempo and pitch together); the only length-changing op."""
     return ffmpeg_pass(x, sr, [f'asetrate={sr * rate:.4f}', f'aresample={sr}'], int(round(len(x) / rate)), 'Speed change')
@@ -395,6 +417,7 @@ def render(x, sr, items, notes):
             a, b = _rms(x), _rms(y)
             if a > 1e-6 and b > 1e-9: y = y * np.float32(min(4.0, a / b))
         if it.get('interval'): y = blend(x, y, sr, it['interval'])
+        elif it.get('intervals') is not None: y = blend_many(x, y, sr, it['intervals'])
         if before is not None and before > -70:
             rise = loudness(y, sr) - before
             if rise > it['loudness_cap_db']:
@@ -537,6 +560,12 @@ def build(project, payload, candidate_id):
         else: shutil.copyfile(source, original)
         by_id = {r['id']: r for r in rows}
         op = spec['op']
+        if op == 'chain' and spec.get('on_words'):
+            from .word_fx import resolve
+            from .worker import set_stage
+            spec = resolve(pid, dict(spec, item=dict(spec['item'])), snapshot, source, new_file, lambda stage, pct: set_stage(candidate_id, stage, pct))
+            notes.append(f"Found {len(spec['word_matches'])} spoken match{'es' if len(spec['word_matches']) != 1 else ''} in a local transcript; "
+                         'transcription can miss or mishear words, so listen before applying.')
         provenance = {'kind': 'fx', 'op': op, 'stem_revisions': revisions(snapshot['rows']), 'source_sha256': snapshot['source_sha256']}
         if op == 'duck':
             result = _duck(rows, by_id, spec, provenance)
@@ -591,8 +620,14 @@ def _render_rows(rows, by_id, spec, provenance, original, new_file, notes):
         new = spec['item']
         if new.get('speed'): targets = list(rows)  # A speed change keeps every layer on one timeline.
         scope = 'mix' if spec['targets'] == ['mix'] or new.get('speed') else 'layer'
-        for row in targets: plans[row['id']] = records[row['id']]['items'] + [{**new, 'scope': scope}]
+        for row in targets:
+            item = {**new, 'scope': scope}
+            if new.get('intervals') is not None:  # Word windows are timeline seconds; each layer renders in its own time.
+                item['intervals'] = layer_intervals(new['intervals'], float(row.get('start_offset') or 0), float(row['duration']))
+                if not item['intervals']: continue
+            plans[row['id']] = records[row['id']]['items'] + [item]
         provenance.update(item={**new, 'scope': scope}, label=new['label'], steps=[e['type'] for e in new['chain']])
+        if spec.get('word_matches'): provenance['word_matches'] = spec['word_matches']
     elif op in ('adjust', 'remove'):
         wanted = spec.get('item_id'); changed = None
         if wanted:

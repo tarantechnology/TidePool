@@ -2,6 +2,8 @@ import base64
 import json
 import math
 import os
+import subprocess
+from functools import cache
 from pathlib import Path
 import httpx
 from . import guidance
@@ -95,9 +97,16 @@ def separate(audio, directory, payload, report=None):
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
     url = os.getenv('SAM_AUDIO_SERVICE_URL', 'http://127.0.0.1:8001/separate')
     if not url: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
+    split_music = False
+    if payload.get('explode'):
+        # Explode recipe: same request and response shape, its own endpoint.
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(url); url = urlunsplit((parts.scheme, parts.netloc, '/explode', '', ''))
+        split_music = bool(payload.get('split_music'))
+        payload = {k: v for k, v in payload.items() if k not in ('explode','split_music')}
     try:
         with open(audio, 'rb') as f:
-            response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload)}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
+            response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload), **({'split_music': 'true'} if url.endswith('/explode') and split_music else {})}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
     except httpx.TimeoutException as exc:
         raise RuntimeError('Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS') from exc
     if response.is_error:
@@ -203,7 +212,22 @@ def energy_db(samples):
     return round(max(-120.0, 10 * math.log10(power)) if power > 0 else -120.0, 3)
 
 
-def export(stems, original, destination, fmt, include_video, trim=None, clips=None):
+# Clockwise quarter turns as ffmpeg video filters (transpose=1 is 90 degrees clockwise).
+ROTATE_FILTERS = {90: 'transpose=1', 180: 'hflip,vflip', 270: 'transpose=2'}
+
+
+@cache
+def limiter():
+    """The export's final limiter. latency=1 removes the look-ahead delay so audio stays in sync with the
+    picture; FFmpeg builds without that option skip the limiter rather than shift the audio."""
+    try:
+        options = subprocess.run(['ffmpeg','-hide_banner','-h','filter=alimiter'],capture_output=True,text=True,timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        options = ''
+    return ',alimiter=limit=0.97:attack=5:release=50:level=0:latency=1' if 'latency' in options else ''
+
+
+def export(stems, original, destination, fmt, include_video, rotation=0, trim=None, clips=None):
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
     # A silent source maintains duration for an all-muted mix.
     duration = probe(original)['duration']
@@ -230,7 +254,7 @@ def export(stems, original, destination, fmt, include_video, trim=None, clips=No
         labels.append(f'[a{i}]')
     silent=base+len(active)
     labels.append(f'[{silent}:a]')
-    mixed=''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0'
+    mixed=''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:normalize=0'+limiter()
     if clips:
         if len(clips)>100: raise ValueError('Too many clips')
         for clip in clips:
@@ -254,13 +278,32 @@ def export(stems, original, destination, fmt, include_video, trim=None, clips=No
         mixed+=f',atrim=start={start}:end={end},asetpts=PTS-STARTPTS'
         if include_video: filters.append(f'[0:v]setpts=PTS-STARTPTS,trim=start={start}:end={end},setpts=PTS-STARTPTS[video]')
     if not clips: filters.append(mixed+'[mix]')
+    turn=ROTATE_FILTERS.get(int(rotation or 0)) if include_video else None
+    if turn: filters.append(('[video]' if trim or clips else '[0:v:0]')+turn+',format=yuv420p[vout]')
     args += ['-filter_complex',';'.join(filters),'-map','[mix]']
     if include_video:
         output_duration=sum(float(c['end'])-float(c['start']) for c in clips) if clips else end-start if trim else duration
-        args += ['-map','[video]' if trim or clips else '0:v:0','-c:v','libx264' if trim or clips else 'copy','-c:a','aac','-b:a','192k','-t',str(output_duration),'-movflags','+faststart']
+        args += ['-map','[vout]' if turn else '[video]' if trim or clips else '0:v:0','-c:v','libx264' if trim or clips or turn else 'copy','-c:a','aac','-b:a','192k','-t',str(output_duration),'-movflags','+faststart']
     elif fmt=='mp3': args += ['-c:a','libmp3lame']
     else: args += ['-c:a','pcm_f32le']
     run(*args,str(destination))
+
+
+def suggest_sounds(audio, max_sounds=6):
+    """Ask the audio service which sounds it hears in this audio (strongest first)."""
+    if os.getenv('INFERENCE_ADAPTER','fake') != 'http':
+        return {'sounds':[],'is_mock':True,'reason':'The fake adapter cannot listen; type the sounds instead.'}
+    from urllib.parse import urlsplit, urlunsplit
+    url=urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL',''))
+    with open(audio,'rb') as f:
+        response=httpx.post(urlunsplit((url.scheme,url.netloc,'/tag','','')),files={'audio':('audio.wav',f,'audio/wav')},data={'max_sounds':str(max_sounds)},timeout=float(os.getenv('TAG_TIMEOUT_SECONDS','300')))
+    if response.is_error:
+        try: message=response.json()['error']['message']
+        except (ValueError,KeyError,TypeError): message=f'Audio service HTTP {response.status_code}'
+        raise RuntimeError(message)
+    data=response.json()
+    sounds=[{k:s[k] for k in ('prompt','group','tier','score','windows')} for s in data.get('sounds',[]) if isinstance(s,dict) and isinstance(s.get('prompt'),str)]
+    return {'sounds':sounds,'is_mock':bool(data.get('is_mock')),'window_seconds':data.get('window_seconds',10),'reason':''}
 
 
 def capabilities():
@@ -287,7 +330,7 @@ def capabilities():
                 'experimental_visual':True,**({'span_anchors': data['prompting_modes']['span_anchors']} if isinstance((data.get('prompting_modes') or {}).get('span_anchors'), bool) else {}),'reason':reason,'quality_mode':('ranker' if ranked else 'consistency') if quality else None,
                 'profiles':{'preview':guidance.options('preview', backend=identity['backend'] or 'sam'),
                             **({'quality':guidance.options('quality', backend=identity['backend'] or 'sam')} if quality else {})},
-                'long_window_promoted':False,'automatic_spans':False,**passes_capability(data),**music_capability(data)}
+                'long_window_promoted':False,'automatic_spans':False,'suggest':bool((data.get('prompting_modes') or {}).get('tagging')),'explode':bool((data.get('prompting_modes') or {}).get('explode')),**passes_capability(data),**music_capability(data)}
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
         return {'preview':True,'quality':False,'visual':False,'experimental_visual':True,'reason':'Service capabilities unavailable; quality retry is disabled.',
                 'max_passes':max_passes(),'refine':True,'music_stems':{'available':False}}

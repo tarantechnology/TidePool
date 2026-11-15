@@ -1,8 +1,7 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
-
+import type { HeardSound, Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { musicCommand, separationCommand } from '../separationCommand'
@@ -17,7 +16,7 @@ import { extractLayerScope, resolveSourceLayer } from '../agent/layerScope'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject, processProject, renameStem, deleteStem, suggestSounds } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
 import { mediaCommand } from '../mediaCommand'
@@ -28,7 +27,12 @@ import type { SourceClip } from '../state/clipSequence'
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
 import { HttpStemSource } from '../api/stemSources'
+import type { StemExclusive } from '../hooks/useStemSync'
+import { NO_VISUAL_PROMPT, explodeTier, orderForExplode, parseExplodeList, recipeTier, focusSounds } from '../api/separation'
 import type { StemSource } from '../api/stemSources'
+import { createCheckpoint, restoreCheckpoint } from '../api/checkpoints'
+import { fileBase, getProject as getSavedProject, nameFromFile, saveProject } from '../projects/registry'
+import type { ServerStep } from '../state/steps'
 
 import { SoundGuidance } from './SoundGuidance'
 import { ProcessingRange } from './ProcessingRange'
@@ -40,6 +44,8 @@ import { PassesSelect } from './PassesSelect'
 import { DropLoader } from './DropLoader'
 import { FEATURES } from '../features'
 import { FeatureTag } from './FeatureTag'
+import { LayerTips } from './LayerTips'
+import { layersJob } from '../moonpull/api'
 
 const field = 'w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15'
 const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3] disabled:opacity-40'
@@ -64,8 +70,14 @@ interface Props {
   visual: VisualMetadata | null
   /** What the panel is busy with, for the timeline's working state; null when idle. */
   onBusy?: (label: string | null) => void
+  /** The project to open, from this browser's project list. Null opens an empty editor for a new one. */
+  projectId?: string | null
+  /** A change made on the server finished: undo and redo can now step over it. */
+  onStep?: (step: ServerStep) => void
+  /** Undo the last step, the same as the arrow at the top. */
+  onUndo?: () => void
   /** The step the flow is on, for a collapsed panel to show (phone layout). */
-  onStep?: (step: { n: number; title: string }) => void
+  onFlowStep?: (step: { n: number; title: string }) => void
   /** Keep failures visible when the phone sheet closes during work. */
   onError?: (message: string) => void
 }
@@ -75,8 +87,23 @@ export interface ProjectPanelHandle {
   uploadMedia: (file:File) => Promise<void>
   visualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
   planCommand: (prompt:string, video:File|null, stems:Stem[], tracks:TrackState[], duration:number) => Promise<AgentPlan | {kind:'media'; message:string}>
+  /** Rename a layer on the backend, then reload the layers so later edits sync against its new revision. */
+  /** Save a new layer name between fader saves (exclusive), as one undoable step. Shows nothing while it runs. */
+  renameLayer: (stemId:string, label:string, exclusive:StemExclusive) => Promise<void>
+  /** Delete a layer; fold adds its sound to the residual. One undoable step. */
+  deleteLayer: (stemId:string, fold:boolean) => Promise<void>
+  /**
+   * Moon pull: run work against the saved layers under the project lock, after pending edits are
+   * saved. With reload, the layers are loaded again afterwards so later edits sync against the
+   * new revisions.
+   */
+  withLayers: <T>(label:string, work:(config:BackendConfig, projectId:string, saved:SavedStem[]) => Promise<T>, reload:boolean) => Promise<T>
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
+  /** Undo or redo a server step: put the layers back as a checkpoint saw them, then load them. */
+  restoreTo: (checkpoint:string, label:string, how:'undo'|'redo') => Promise<void>
+  /** Outflow from the top bar: save pending edits, render, and download. onStatus hears each stage. */
+  exportAs: (format:'mp4'|'wav'|'mp3', onStatus:(text:string)=>void) => Promise<void>
   keepRange: (start:number, end:number) => string
   splitRange: (start:number, end:number) => string
   cutRange: (start:number, end:number) => string
@@ -88,14 +115,21 @@ export interface ProjectPanelHandle {
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, getPlayhead, onClipSequence, visual, onBusy, onStep, onError}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, getPlayhead, onClipSequence, visual, onBusy, projectId:openId, onStep, onUndo, onFlowStep, onError}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
-  const [resumeId, setResumeId] = useState('')
-  const [resumeToken, setResumeToken] = useState('')
   const [resumeVisual, setResumeVisual] = useState<{projectId:string;jobId:string}|null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [prompt, setPrompt] = useState('')
+  const [explodeText, setExplodeText] = useState(DEFAULT_EXPLODE)
+  const [exploded, setExploded] = useState('')
+  const [smartOrder, setSmartOrder] = useState(true)
+  const [splitMusic, setSplitMusic] = useState(false)
+  const [confirmExplode, setConfirmExplode] = useState(false)
+  /** What the model heard in this project's clip, once it has listened. */
+  const [heard, setHeard] = useState<{projectId:string;sounds:HeardSound[];note:string}|null>(null)
+  const [listening, setListening] = useState(false)
+  const explodeEdited = useRef(false)
   const [selection, setSelection] = useState<unknown>(null)
   const [visualName, setVisualName] = useState('')
   const [selectionName, setSelectionName] = useState('')
@@ -238,8 +272,29 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     onVideo(await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(info.project_id)}/preview`, 3_600_000))
   }
   const rememberProject = (id: string, credential: string) => {
-    setResumeId(id); setResumeToken(credential)
+    saveProject({id, token:credential}, true)
+    // The address names the open project, so a reload or the back button comes back to it.
+    if (window.location.hash !== `#/app/p/${id}`) { try { window.history.replaceState(null, '', `#/app/p/${encodeURIComponent(id)}`) } catch { /* the address just stays */ } }
     try { sessionStorage.setItem(`soundcanvas-project:${baseUrl}`, JSON.stringify({id, token:credential})) } catch { /* Manual credentials remain available. */ }
+  }
+  /** Describe the project on its card in the project list. */
+  const noteProject = (info: ProjectInfo) => {
+    // A name the user gave the project stays; otherwise the card is named after the clip.
+    const named = getSavedProject(info.project_id)?.named
+    saveProject({id:info.project_id, ...(info.filename && !named ? {name:nameFromFile(info.filename)} : {}), ...(info.metadata?.duration ? {duration:info.metadata.duration} : {}), hasVideo:Boolean(info.metadata?.has_video)})
+  }
+  // A step that changes layers on the server is bracketed by two checkpoints, so undo and redo can step over it.
+  const pendingStep = useRef<{label:string;before:string;projectId:string}|null>(null)
+  const beginStep = async (cfg: BackendConfig, pid: string, label: string) => {
+    pendingStep.current = null
+    try { const c = await createCheckpoint(cfg, pid, `Before: ${label}`); pendingStep.current = {label, before:c.id, projectId:pid} }
+    catch { /* A server without checkpoints: this step just can't be undone from the top bar. */ }
+  }
+  const endStep = async (cfg: BackendConfig) => {
+    const p = pendingStep.current; pendingStep.current = null
+    if (!p) return
+    try { const c = await createCheckpoint(cfg, p.projectId, p.label); onStep?.({label:p.label, before:p.before, after:c.id}) }
+    catch { /* see beginStep */ }
   }
   async function waitCandidate(cfg:BackendConfig, projectId:string, id:string) {
     const began=Date.now()
@@ -272,13 +327,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const splitInto = async (cfg: BackendConfig, info: ProjectInfo, stems: string[] | null, scope?: EditScope) => {
     await flush()
     setMessage('Splitting into tracks…')
+    await beginStep(cfg, info.project_id, 'Split into tracks')
     const id = await splitTracks(cfg, info.project_id, stems, scope)
     const controller = new AbortController(); abort.current = controller
     const began = Date.now()
     const result = await pollJob(async signal => toJobStatus(await getJob(cfg, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(jobProgressMessage(status, Date.now()-began, 'Splitting into tracks'))})
     if (result.state === 'failed') throw new Error(result.error || 'The split failed.')
     const job = await getJob(cfg, id)
-    await onLoadStems(new HttpStemSource(cfg, id), 'Project stems')
+    await onLoadStems(new HttpStemSource(cfg, id), 'Project stems'); await endStep(cfg)
     const how = toRouting(job.routing)
     setJobId(id); setMockStems(job.inference?.model?.is_mock ?? null); setCandidateWarnings(job.inference?.warnings || []); setRouting(how); setSuggestion(null)
     // A split is whole-song; drop any range picked for prompted previews so it is not mistaken as applied.
@@ -295,8 +351,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     restoreTimeline(info); setClipClipboard(null); setSelectedClip(null)
     attachedVideo.current = null; setFile(null)
     setUndoId(info.latest_undoable_candidate_id || ''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
-
-    setToken(cfg.token); setProject(info); rememberProject(info.project_id, cfg.token)
+    setToken(cfg.token); setProject(info); rememberProject(info.project_id, cfg.token); noteProject(info)
     setJobId(info.last_completed_job_id || ''); setSettingsStems([]); setMessages([])
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav'); setSelection(null); onClearSelection(); setVisualName(''); setSelectionName('')
     try { onVisual(info.visual_metadata ? asVisualMetadata(info.visual_metadata) : null) } catch { onVisual(null) }
@@ -328,10 +383,10 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const restoreTab = useEffectEvent(() => {
     if (restored.current) return
     restored.current = true
-    try {
-      const saved = sessionStorage.getItem(`soundcanvas-project:${baseUrl}`)
-      if (saved) { const credentials = JSON.parse(saved); if (typeof credentials.id === 'string' && typeof credentials.token === 'string') void resume(credentials.id, credentials.token) }
-    } catch { /* The manual resume form remains available. */ }
+    if (!openId) return
+    const saved = getSavedProject(openId)
+    if (saved) void resume(saved.id, saved.token)
+    else setError('This browser has no access to that project. Open it from your projects, or with its ID and token.')
   })
   useEffect(() => { if (readyToRestore) restoreTab() }, [baseUrl, readyToRestore])
   const uploadMedia = (media: File) => run(async () => {
@@ -342,19 +397,18 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     // Same render as setProject, so the save effect never writes this reset under the previous project.
     setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
-    setMockStems(null);setJobId(''); setUndoId('');setRouting(null);setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
-
+    setMockStems(null);setJobId(''); setUndoId(''); setExploded(''); setConfirmExplode(false); setHeard(null); explodeEdited.current=false; setExplodeText(DEFAULT_EXPLODE); setRouting(null); setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
     setMessage('Uploading and extracting audio…')
     await uploadProject(cfg, created.project_id, media)
     attachedVideo.current = media
-    const info = await getProject(cfg, created.project_id); setProject(info)
+    const info = await getProject(cfg, created.project_id); setProject(info); noteProject(info)
     const original=await fetchStemBlobUrl(cfg, `/api/projects/${encodeURIComponent(created.project_id)}/original-audio`, 3_600_000)
     onOriginalAudio(original)
     await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url:original,duration:0}]}, 'Original audio')
     setFormat(info.metadata?.has_video ? 'mp4' : 'wav')
     await loadVideo(cfg, info)
     suggestRoute(cfg, created.project_id)
-    setMessage(info.metadata?.has_video ? 'Uploaded. Pick a sound to separate.' : 'Uploaded. Split it into tracks, or pick a sound to separate.')
+    setMessage(info.metadata?.has_video ? 'Uploaded. Explode it into layers, or pull out one sound.' : 'Uploaded. Split it into tracks, or pull out one sound.')
     if (info.metadata?.has_video) {
       try {
         const available = await getCapabilities(cfg, info.project_id)
@@ -457,6 +511,79 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     if(selection)visual={...selection as object,interval:{start_seconds:Number(rangeStart),end_seconds:Number(rangeEnd)}}
     await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices),processingRange,processingTime,undefined,sourceLayerId || undefined)
   })
+  /**
+   * Explode: pull each listed sound out in turn, each from what the previous ones left
+   * (the residual), so a sound already taken cannot leak into a later layer. Replaces the
+   * current layers. Order matters: broad, steady sounds first works best.
+   */
+  const explode = () => run(async () => {
+    if (!project) return
+    const listed = parseExplodeList(explodeText)
+    const recipe = capabilities?.explode === true
+    const sounds = smartOrder ? orderForExplode(listed, recipe) : listed
+    if (sounds.length === 0) throw new Error('List at least one sound, separated by commas.')
+    await flush()
+    setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); setMixUrl(''); setUndoId(''); setRetryStems([]); setSettingsStems([])
+    abort.current?.abort(); const controller = new AbortController(); abort.current = controller
+    await beginStep(config, project.project_id, 'Explode')
+    const passCount = clampPasses(passes, choices)
+    if (recipe) {
+      // One job: the server runs the tuned recipe (dialogue model, storm split, then the rest).
+      setMessage(`Exploding into ${sounds.length} layers: dialogue, weather, music${splitMusic && capabilities?.musicStems?.available ? ' (split into instruments)' : ''}, then the rest…`)
+      const id = await processProject(config, project.project_id, sounds, NO_VISUAL_PROMPT, false, passCount, {explode:true, splitMusic: splitMusic && capabilities?.musicStems?.available === true})
+      const result = await pollJob(async signal => toJobStatus(await getJob(config, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(`Exploding into ${sounds.length} layers (${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''})`)})
+      if (result.state === 'failed') throw new Error(result.error || 'Explode failed')
+      const job = await getJob(config, id)
+      await onLoadStems(new HttpStemSource(config, id), 'Project stems'); await endStep(config)
+      setJobId(id); setMockStems(job.inference?.model?.is_mock ?? null); setPrompt(''); setExploded(sounds.join(', '))
+      setProject(await getProject(config, project.project_id))
+      setMessage(`Exploded into ${sounds.join(', ')} and one background layer. Double-click a layer name to rename it.`)
+      return
+    }
+    let lastJob = ''
+    for (const [i, sound] of sounds.entries()) {
+      const step = `Exploding ${i + 1} of ${sounds.length}: ${sound}`
+      setMessage(`${step}…`)
+      const id = await processProject(config, project.project_id, [sound], NO_VISUAL_PROMPT, i > 0, passCount)
+      const result = await pollJob(async signal => toJobStatus(await getJob(config, id, signal)), {signal:controller.signal, onUpdate: status => setMessage(`${step} (${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''})`)})
+      if (result.state === 'failed') {
+        if (lastJob) { await onLoadStems(new HttpStemSource(config, lastJob), 'Project stems'); await endStep(config); setJobId(lastJob) }
+        throw new Error(`Explode stopped at “${sound}”: ${result.error || 'separation failed'}. ${i > 0 ? 'The layers before it are loaded.' : ''}`)
+      }
+      lastJob = id
+    }
+    const job = await getJob(config, lastJob)
+    await onLoadStems(new HttpStemSource(config, lastJob), 'Project stems'); await endStep(config)
+    setJobId(lastJob); setMockStems(job.inference?.model?.is_mock ?? null); setPrompt(''); setExploded(sounds.join(', '))
+    setProject(await getProject(config, project.project_id))
+    setMessage(`Exploded into ${sounds.join(', ')} and one background layer. Double-click a layer name to rename it.`)
+  })
+  /** Let the model listen to the clip and fill Explode with the sounds it hears. */
+  const listen = async (auto=false) => {
+    if (!project || !token || listening) return
+    const pid = project.project_id
+    setListening(true)
+    try {
+      const result = await suggestSounds({baseUrl, token}, pid)
+      if (!mounted.current) return
+      const note = result.sounds.length ? '' : (result.reason || 'It did not recognise any sounds; type them instead.')
+      setHeard({projectId:pid, sounds:result.sounds, note})
+      if (result.sounds.length && (!auto || !explodeEdited.current)) { setExplodeText((focusSounds(result.sounds).length ? focusSounds(result.sounds) : result.sounds.map(s => s.prompt)).join(', ')); explodeEdited.current = false }
+    } catch (e) {
+      if (mounted.current) setHeard({projectId:pid, sounds:[], note:`Could not listen to the clip: ${e instanceof Error ? e.message : String(e)}`})
+    } finally { if (mounted.current) setListening(false) }
+  }
+  const canListen = capabilities?.suggest === true
+  const heardHere = heard && heard.projectId === project?.project_id ? heard : null
+  // Listen once per uploaded clip, before anything is separated.
+  const listenedFor = useRef('')
+  const autoListen = useEffectEvent(() => {
+    const pid = project?.project_id
+    if (!pid || listenedFor.current === pid || !canListen || !project?.metadata || jobId) return
+    listenedFor.current = pid
+    void listen(true)
+  })
+  useEffect(() => { autoListen() }, [canListen, project?.project_id, project?.metadata, jobId])
   const splitSong = () => run(async () => {
     if (!project) return
     await splitInto(config, project, null)
@@ -471,18 +598,104 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const applied=await applyCandidate(config,id);await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
     setJobId(applied.job_id);setUndoId(id);setProject(await getProject(config,project.project_id));setMessage(operation==='move'?'Sound moved.':'Sound removed.')
   }
-  const finishExport = async (id: string, extension: string, cfg: BackendConfig = config) => {
+  const finishExport = async (id: string, extension: string, option: BackendConfig | ((text:string)=>void) = config) => {
+    const cfg=typeof option === 'function' ? config : option
+    const onStatus=typeof option === 'function' ? option : setMessage
     for (;;) {
       const info=await getExport(cfg,id)
       if (info.status === 'failed') throw new Error(info.error || 'Export failed')
       if (info.status === 'completed') {
         if (!info.download_url) throw new Error('Export has no download URL')
-        await downloadExport(cfg,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
+        const name=(openId && getSavedProject(openId)?.name) || project?.filename || 'tidepool'
+        await downloadExport(cfg,info.download_url,`${fileBase(name)}.${extension}`); onStatus('Export downloaded.'); return
       }
-      setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
+      onStatus('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), exportTimeline: () => run(async () => {
+  useImperativeHandle(ref, () => ({ splitSong, editClip: async (stemId,operation,startOffset) => run(()=>applyClipEdit(stemId,operation,startOffset)), exportAs: async (fmt, onStatus) => {
+    if (!project?.metadata || !token) throw new Error('Upload a video or song first, then export.')
+    if (fmt === 'mp4' && !project.metadata?.has_video) throw new Error('This project has no video. Export it as WAV or MP3.')
+    if (busyRef.current) throw new Error('TidePool is still working on the last step. Export again when it finishes.')
+    busyRef.current = true; setBusy(true); setError('')
+    try {
+      onStatus('Saving your latest edits…'); await flush()
+      onStatus('Rendering your export…')
+      const start=Number(trimStart),end=trimEnd.trim() ? Number(trimEnd) : project.metadata.duration
+      if (!clips.length && (!trimStart.trim() || !Number.isFinite(start) || !Number.isFinite(end) || start<0 || end<=start || end>project.metadata.duration+1e-6)) throw new Error('Choose a valid trim range within the media duration.')
+      const trim=clips.length || (start===0 && !trimEnd.trim()) ? undefined : {start,end}
+      const id = await startExport(config, project.project_id, fmt, trim, clips.length ? clips : undefined)
+      await finishExport(id, fmt, onStatus)
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false) }
+  }, renameLayer: async (stemId, label, exclusive) => {
+    const name = label.trim()
+    if (!project || !token || !jobId) throw new Error('Separate the audio before renaming layers.')
+    if (!name) return
+    if (busyRef.current) { const e = new Error('A project operation is already running. Please wait.'); setError(e.message); throw e }
+    const pid = project.project_id, cfg = config
+    busyRef.current = true; setError('')
+    try {
+      await exclusive(stemId, async (revision) => {
+        await beginStep(cfg, pid, `Rename to “${name}”`)
+        try { const next = await renameStem(cfg, pid, stemId, name, revision); await endStep(cfg); return next }
+        catch (e) { pendingStep.current = null; throw e }
+      })
+      setMessage(`Renamed to “${name}”. Current commands can use the new name.`)
+    } catch (e) { setError(`Couldn't rename the layer: ${e instanceof Error ? e.message : String(e)}`); throw e }
+    finally { busyRef.current = false }
+  }, deleteLayer: async (stemId, fold) => {
+    if (!project || !token || !jobId) throw new Error('Separate the audio before deleting layers.')
+    if (busyRef.current) { const e = new Error('A project operation is already running. Please wait.'); setError(e.message); throw e }
+    const pid = project.project_id
+    busyRef.current = true; setBusy(true); setError(''); setMessage(fold ? 'Folding the layer into the residual…' : 'Deleting the layer…')
+    try {
+      await flush()
+      const stem = (await getSavedStems(config, pid)).find(s => s.id === stemId)
+      if (!stem) throw new Error('That layer is no longer in the project.')
+      const name = stem.label?.trim() || stem.name
+      await beginStep(config, pid, `Delete “${name}”`)
+      let result
+      try { result = await deleteStem(config, pid, stemId, fold, stem.revision) } catch (e) { pendingStep.current = null; throw e }
+      await onLoadStems(new HttpStemSource(config, result.job_id), 'Project stems'); setJobId(result.job_id); await endStep(config)
+      setSettingsStems([]); setRetryStems([])
+      setMessage(result.folded ? `Deleted “${name}”. Its sound is now part of the residual, so the mix is unchanged. Undo with ⌘Z.` : `Deleted “${name}” and its sound. Undo with ⌘Z.`)
+    } catch (e) { setMessage(''); setError(e instanceof Error ? e.message : String(e)); throw e }
+    finally { busyRef.current = false; setBusy(false) }
+}, withLayers: async (label, work, reload) => {
+    if (!project || !token || !jobId) throw new Error('Separate the audio into layers first.')
+    if (busyRef.current) throw new Error('A project operation is already running. Please wait.')
+    busyRef.current = true; setBusy(true); setError(''); setMessage(label)
+    try {
+      await flush()
+      if (reload) await beginStep(config, project.project_id, label)
+      const result = await work(config, project.project_id, await getSavedStems(config, project.project_id))
+      // Work that adds or removes a layer names the job that lists the new set of layers.
+      const next = layersJob(result) ?? jobId
+      if (reload) { await onLoadStems(new HttpStemSource(config, next), 'Project stems'); if (next !== jobId) setJobId(next); await endStep(config) }
+      setMessage('')
+      return result
+    } catch (e) { setMessage(''); throw e }
+    finally { busyRef.current = false; setBusy(false) }
+  }, restoreTo: async (checkpoint, label, how) => {
+    if (!project || !token) throw new Error('Open the project first.')
+    if (busyRef.current) throw new Error('A project operation is already running. Please wait.')
+    busyRef.current = true; setBusy(true); setError(''); setMessage(how === 'undo' ? `Undoing ${label}…` : `Redoing ${label}…`)
+    try {
+      await flush()
+      const result = await restoreCheckpoint(config, project.project_id, checkpoint)
+      setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); setMixUrl(''); setUndoId(''); setRetryStems([]); setSettingsStems([])
+      try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ }
+      const info = await getProject(config, project.project_id); setProject(info)
+      if (result.stems > 0) { await onLoadStems(new HttpStemSource(config, result.job_id), 'Project stems'); setJobId(result.job_id) }
+      else {
+        // Back before the first separation: the clip's own audio again.
+        setJobId(''); setExploded('')
+        const url = await fetchStemBlobUrl(config, `/api/projects/${encodeURIComponent(project.project_id)}/original-audio`, 3_600_000)
+        await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url,duration:info.metadata?.duration || 0}]}, 'Original audio')
+      }
+      setMessage(how === 'undo' ? `Undid ${label}. Redo with ⇧⌘Z.` : `Redid ${label}.`)
+    } catch (e) { setMessage(''); setError(e instanceof Error ? e.message : String(e)); throw e }
+    finally { busyRef.current = false; setBusy(false) }
+  }, uploadMedia, exportTimeline: () => run(async () => {
     if (!project?.metadata) throw new Error('Upload media first.')
     await flush()
     const sequence=effectiveClips(project.metadata.duration)
@@ -538,7 +751,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setJobId(''); setSettingsStems([]); setMessages([]); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
       await uploadProject(cfg,created.project_id,video)
       attachedVideo.current=video
-      const info=await getProject(cfg,created.project_id); setProject(info); setFormat('mp4')
+      const info=await getProject(cfg,created.project_id); setProject(info); noteProject(info); setFormat('mp4')
       setMessage('Separating audio…')
       await previewSound(cfg,info,description,{action:remove?'mute':'keep'})
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); throw e }
@@ -561,7 +774,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
         setMessage('Uploading video…')
         await uploadProject(cfg,created.project_id,video); attachedVideo.current=video
-        current=await getProject(cfg,created.project_id); setProject(current); setFormat('mp4')
+        current=await getProject(cfg,created.project_id); setProject(current); noteProject(current); setFormat('mp4')
       }
       if (!current || !currentToken) throw new Error('Upload a video or song first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
@@ -670,12 +883,13 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       }
       if(result.kind==='edit' && Array.isArray(result.actions) && result.actions.some(a=>a.type==='mute_range')) {
         if(result.actions.some(a=>a.type!=='mute_range'))throw new Error('Apply timed mute separately from other commands.')
+        await beginStep(cfg,current.project_id,`Timed mute: ${text.trim()}`)
         for(const action of result.actions as Array<{stemId:string;start:number;end:number}>) {
           const saved=await getSavedStems(cfg,current.project_id);const stem=saved.find(s=>s.id===action.stemId)
           if(!stem)throw new Error('The selected layer is unavailable')
           await addMuteRange(cfg,current.project_id,stem,action.start,action.end)
         }
-        if(currentJob)await onLoadStems(new HttpStemSource(cfg,currentJob),'Project stems')
+        if(currentJob){await onLoadStems(new HttpStemSource(cfg,currentJob),'Project stems');await endStep(cfg)}
         result.actions=[];result.message='Timed mute applied; existing automation preserved.'
       }
       if (result.kind === 'separate') {
@@ -733,8 +947,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const stem=settingsStems.find(s => s.id===settingId); const position=Number(offset)
     if (!stem || !stemName.trim() || !Number.isFinite(position) || position<0) throw new Error('Enter a name and a nonnegative offset.')
     await flush()
+    await beginStep(config,project.project_id,'Layer settings')
     await updateStemSettings(config,project.project_id,stem,{name:stemName.trim(),start_offset:position,...(clearRanges ? {mute_ranges:[]} : {})})
-    await onLoadStems(new HttpStemSource(config,jobId),'Project stems')
+    await onLoadStems(new HttpStemSource(config,jobId),'Project stems'); await endStep(config)
     setSettingsStems([]); setMessage('Stem settings saved. Reload settings to edit again.')
   })
   /** Rerun the selected target's prompt on the residual, then reload both with their new audio. */
@@ -744,6 +959,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await flush()
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller
     setRefining(true)
+    await beginStep(config, project.project_id, `${FEATURES.refine}: extract more`)
     try {
       await runRefine(config, project.project_id, stem.id, {
         signal: controller.signal, onUpdate: status => setMessage(`Extracting more: ${status.state}${status.progress !== undefined ? ` ${status.progress}%` : ''}`),
@@ -756,7 +972,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage(refused); return
     } finally { if (mounted.current) setRefining(false) }
     // Same reload as every other job: fresh blob URLs, decoded again by the engine.
-    await onLoadStems(new HttpStemSource(config, jobId), 'Project stems')
+    await onLoadStems(new HttpStemSource(config, jobId), 'Project stems'); await endStep(config)
     if (!mounted.current) return
     setSettingsStems(await getSavedStems(config, project.project_id))
     setMessage('Extracted more of the sound. The target and residual were reloaded.')
@@ -778,35 +994,31 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   })
   const useRetry = () => run(async () => {
     if(!candidateId || !project) return
-    await flush();const applied=await applyCandidate(config,candidateId)
-    await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
+    await flush();await beginStep(config,project.project_id,candidateKind === 'separation' ? `Apply “${(retryStems.length ? retryPrompt : prompt).trim() || 'preview'}”` : `Apply ${candidateKind === 'effects' ? 'effects' : candidateKind === 'director' ? 'director edit' : 'cinematic edit'}`)
+    const applied=await applyCandidate(config,candidateId)
+    await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems');await endStep(config)
     if (candidateKind === 'separation' || candidateMock === true) setMockStems(candidateMock);setJobId(applied.job_id);setUndoId(candidateId);setCandidateId('');setRetryStems([])
     try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`) } catch { /* Ignore unavailable storage. */ }
     setProject(await getProject(config,project.project_id))
-    setMessage('Preview applied. Existing layer edits were preserved.')
-  })
-  const undoPreview = () => run(async () => {
-    if(!undoId || !project)return
-    await flush();const result=await undoCandidate(config,undoId)
-    const info=await getProject(config,project.project_id);setProject(info)
-    const saved=await getSavedStems(config,project.project_id)
-    if(saved.length){await onLoadStems(new HttpStemSource(config,result.job_id),'Project stems');setJobId(result.job_id)}
-    else {setJobId('');const url=await fetchStemBlobUrl(config,`/api/projects/${project.project_id}/original-audio`);await onLoadStems({load:async()=>[{id:'project-original',label:'Original audio',kind:'sfx',url,duration:info.metadata?.duration || 0}]},'Original audio')}
-    setUndoId('');setMessage('Previous audio restored.')
+    setMessage('Preview applied. Existing layer edits were preserved. Undo it with ⌘Z or the arrow at the top.')
   })
   const sendCommand = () => run(async () => {
     if (!project || !command.trim()) return
-    await flush(); const result = await localCommand(config,project.project_id,command)
+    await flush(); await beginStep(config,project.project_id,`Command “${command.trim()}”`)
+    const result = await localCommand(config,project.project_id,command)
     setMessage(result.message)
     if (result.status === 'accepted' && result.export_id) await finishExport(result.export_id, 'mp4')
-    if (result.status === 'applied' && jobId) await onLoadStems(new HttpStemSource(config,jobId),'Project stems')
+    if (result.status === 'applied' && jobId) { await onLoadStems(new HttpStemSource(config,jobId),'Project stems'); await endStep(config) }
   })
   const hasProject = Boolean(project)
+  const recipeMode = capabilities?.explode === true
+  const explodeOrder = smartOrder ? orderForExplode(parseExplodeList(explodeText), recipeMode) : parseExplodeList(explodeText)
+  const tierOf = (sound: string) => recipeMode ? recipeTier(sound) : explodeTier(sound)
   const ready = Boolean(project?.metadata)
   const durationSeconds = project?.metadata?.duration
   // Where the user is in Upload, Pick a sound, Preview and apply, Export.
   const current: StepId = !ready ? 'upload' : candidateId || undoId ? 'preview' : jobId ? 'export' : 'sound'
-  useEffect(() => { onStep?.(STEP_INFO[current]) }, [current, onStep])
+  useEffect(() => { onFlowStep?.(STEP_INFO[current]) }, [current, onFlowStep])
   const open = (id: StepId) => openStep === id || (openStep === null && current === id)
   const toggle = (id: StepId) => setOpenStep(prev => (prev === id || (prev === null && current === id)) ? 'none' : id)
   const status = (id: StepId): StepStatus => {
@@ -868,13 +1080,33 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
             <span className="text-[11px] text-subtle">MP4, MOV, WAV, MP3, FLAC or M4A. You can also drop it anywhere.</span>
             <input className="sr-only" type="file" accept=".mp4,.mov,.wav,.mp3,.flac,.m4a,video/*,audio/*" aria-label="Media" disabled={busy} onChange={e => { const f=e.target.files?.[0] || null; setFile(f); if (f) void uploadMedia(f) }} />
           </label>
-          {project && <details className="mt-2 text-xs"><summary className="cursor-pointer">Project credentials</summary><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e=>e.currentTarget.select()}/></label><p className="text-muted">Keep these private. Copy them to resume after closing this tab.</p></details>}
-          <details className="mt-2 text-xs"><summary className="cursor-pointer">Resume a project</summary><div className="mt-2 space-y-1"><input className={field} value={resumeId} onChange={e=>setResumeId(e.target.value)} placeholder="Project ID" aria-label="Project ID"/><input className={field} type="password" value={resumeToken} onChange={e=>setResumeToken(e.target.value)} placeholder="Project token" aria-label="Project token"/><button className={secondary} disabled={busy} onClick={()=>void resume(resumeId,resumeToken)}>Resume</button></div></details>
+          {project && <details className="mt-2 text-xs"><summary className="cursor-pointer text-muted hover:text-fg">Share access</summary><p className="mt-1 text-muted">Saved to your projects in this browser. To open it on another computer, use “Open with an ID” on the projects page.</p><p className="mt-1 break-all">ID: {project.project_id}</p><label className="block mt-1">Token<input className={field} readOnly value={token} type="text" onFocus={e=>e.currentTarget.select()}/></label><p className="text-muted">Anyone with both can edit this project.</p></details>}
         </Step>
 
-        <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
-          summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
+        <Step n={2} title="Split into layers" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
+          summary={status('sound') === 'done' ? (prompt.trim() || (exploded ? `Exploded: ${exploded}` : undefined)) : undefined}>
           <div className="space-y-3">
+            {project && <div className="rounded-xl border border-line bg-surface p-3 text-xs">
+              <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true">✺</span>Explode the whole clip<span className="ml-auto rounded-full bg-accent-soft px-1.5 py-px text-[10px] font-normal text-accent">Start here</span></p>
+              <p className="mt-0.5 text-muted">One layer per sound you list, plus a background layer for everything else. Each layer is named after its sound, and you can rename it later. {canListen ? 'TidePool listens to the clip and fills in what it hears; edit the list freely.' : 'List the sounds separated by commas.'}</p>
+              {canListen && <div className="mt-2 flex items-center gap-2 text-[11px]">
+                {listening ? <span className="flex items-center gap-1.5 text-accent"><DropLoader size={16}/>Listening to the clip…</span>
+                  : heardHere?.sounds.length ? <span className="text-muted">Heard: {heardHere.sounds.map(h=>`${h.prompt} (${h.windows.map(w=>`${w*10}–${w*10+10}s`).slice(0,2).join(', ')}${h.windows.length>2?'…':''})`).join(' · ')}</span>
+                  : heardHere?.note ? <span className="text-muted">{heardHere.note}</span> : null}
+                <button type="button" className="ml-auto shrink-0 text-accent hover:underline disabled:opacity-40" disabled={busy || listening} onClick={()=>void listen()}>{heardHere ? 'Listen again' : 'Listen'}</button>
+              </div>}
+              <input className={`${field} mt-2`} aria-label="Sounds to explode into" value={explodeText} onChange={e=>{explodeEdited.current=true;setExplodeText(e.target.value)}} placeholder={DEFAULT_EXPLODE} disabled={busy}/>
+              {explodeOrder.length > 0 && <ol className="mt-2 flex flex-wrap items-center gap-1" aria-label="Explode order">{explodeOrder.map((sound,i)=><li key={sound} title={smartOrder ? `${TIER_LABEL[tierOf(sound)]}: ${(recipeMode ? RECIPE_WHY : TIER_WHY)[tierOf(sound)]}` : 'Your order'} className="flex items-center gap-1 rounded-full bg-accent-soft py-0.5 pr-2 pl-1 text-[11px] font-medium text-accent"><span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[9px] text-white">{i+1}</span>{sound}{smartOrder && <span className="font-normal text-accent/70">· {TIER_LABEL[tierOf(sound)]}</span>}</li>)}<li className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-subtle" title="Score, impacts and everything not listed stay together here.">background</li></ol>}
+              <label className="mt-2 flex items-center gap-1.5 text-[11px] text-muted" title={recipeMode ? 'Dialogue first with a speech model on the full mix, then rain and thunder from one storm pass split by pitch, then music, then short sounds from the cleanest leftovers.' : 'Background beds first, then short hits, then music, then voices last, so the most important layer comes from the cleanest leftovers.'}><input type="checkbox" className="accent-accent" checked={smartOrder} onChange={e=>setSmartOrder(e.target.checked)} disabled={busy}/>{recipeMode ? 'Smart order: dialogue, weather, music, then short sounds' : 'Smart order: backgrounds, hits, music, then voices'}</label>
+              {recipeMode && capabilities?.musicStems?.available && <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted" title="After the music is pulled out, the song splitter breaks it into its instruments (drums, bass, piano, guitar, voices and the rest), one layer each. Quiet instruments fold into the loudest so nothing is lost."><input type="checkbox" className="accent-accent" checked={splitMusic} onChange={e=>setSplitMusic(e.target.checked)} disabled={busy}/>Split the music into instruments</label>}
+              {confirmExplode && jobId ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+                <p><span className="font-medium">This replaces your current layers</span>, along with their volume changes and names. Undo (⌘Z) brings the old layers back.</p>
+                <div className="mt-2 flex gap-2"><button className={`${button} flex-1`} disabled={busy} onClick={()=>{setConfirmExplode(false);void explode()}}>Replace and explode</button><button className={secondary} onClick={()=>setConfirmExplode(false)}>Keep my layers</button></div>
+              </div>
+              : <button className={`${jobId ? secondary : button} mt-2 w-full py-2 font-medium`} disabled={busy || !project.metadata || parseExplodeList(explodeText).length === 0} onClick={()=>jobId ? setConfirmExplode(true) : void explode()}>Explode into {explodeOrder.length + 1} layers</button>}
+              {jobId && !confirmExplode && <p className="mt-1 text-[11px] text-subtle">This project already has layers. Exploding again starts over from the original audio.</p>}
+            </div>}
+            {project && <p className="flex items-center gap-2 pt-1 text-[11px] font-medium text-subtle"><span className="h-px flex-1 bg-line"/>or pull out one sound<span className="h-px flex-1 bg-line"/></p>}
             {sourceLayers.length>0 && <label className="block text-xs">Search within<select aria-label="Source layer" className={`${field} mt-1`} value={sourceLayerId} disabled={busy} onChange={e=>setSourceLayerId(e.target.value)}><option value="">Current remaining audio</option>{sourceLayers.map(layer=><option key={layer.id} value={layer.id}>{layer.name}{layer.start_offset ? ` (${layer.start_offset.toFixed(2)}s)` : ''}</option>)}</select></label>}
             {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} sourceLayerId={sourceLayerId || undefined} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
@@ -896,7 +1128,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
                 <PassesSelect className={field} value={clampPasses(passes,choices)} choices={choices} onChange={setPasses} disabled={busy}/>
               </div>
             </details>}
-            {project && <button className={`${button} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
+            {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata || !prompt.trim()} onClick={()=>void process()}>Separate with {FEATURES.separate}</button>}
             {routing && <p className="text-[11px] text-subtle" title="How the audio service separated this project">{describeRouting(routing)}</p>}
             {project && <button className={`${secondary} w-full py-2`} disabled={busy || !project.metadata} onClick={()=>void run(async()=>{if(project)await previewDirector(config,project,'Make the whole video more cinematic','cinematic','cinematic')})}>Preview cinematic audio</button>}
             {project && <div className="rounded-xl border border-line p-2 text-xs">
@@ -917,7 +1149,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           summary={status('preview') === 'done' ? 'Applied to the timeline' : undefined}>
           <div className="space-y-2 text-xs">
             {candidateId ? <p className="text-muted">{candidateKind!=='separation' ? 'Compare the original and edited mix above the timeline, then apply.' : 'Compare the original, the edited mix and the isolated sound above the timeline, then apply.'}</p> : null}
-            {undoId && <button className={secondary} disabled={busy} onClick={undoPreview}>Undo the last apply</button>}
+            {undoId && <div className="flex items-center gap-2"><button className={secondary} disabled={busy || !onUndo} onClick={onUndo}>Undo the apply</button><span className="text-subtle">or ⌘Z. Redo with ⇧⌘Z.</span></div>}
           </div>
         </Step>
 
@@ -944,6 +1176,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           </div>}
         </Step>
       </ol>
+      {jobId && !candidateId && <LayerTips/>}
     </div>
 
     {(busy || message || error) && <div className="border-t border-line px-3 py-2 text-xs">
@@ -969,6 +1202,24 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     {comparison && createPortal(comparison, document.body)}
   </section>
 })
+
+/** A starting list for a film scene. AudioSep hears sounds, not characters, so voices go in one layer to rename. */
+const DEFAULT_EXPLODE = 'people talking, heavy rain, thunder rumbling'
+const TIER_LABEL: Record<string, string> = { background: 'background', hits: 'hit', other: 'other', music: 'music', voices: 'voice' }
+const RECIPE_WHY: Record<string, string> = {
+  voices: 'taken first by a dialogue model, from the full mix',
+  background: 'steady sound; rain and thunder come from one storm pass, split by pitch',
+  music: 'taken after the dialogue and weather',
+  hits: 'short loud event, taken from the cleanest leftovers',
+  other: 'not in the rules, taken last as you typed it',
+}
+const TIER_WHY: Record<string, string> = {
+  background: 'steady sound under everything, taken out first so it does not bleed into later layers',
+  hits: 'short loud event, easy to find once the background is gone',
+  other: 'not in the rules, kept where you typed it between hits and music',
+  music: 'tonal and long, taken after the noisy sounds',
+  voices: 'taken last, from the cleanest leftovers',
+}
 
 type StepId = 'upload' | 'sound' | 'preview' | 'export'
 const STEP_INFO: Record<StepId, { n: number; title: string }> = { upload: { n: 1, title: 'Upload' }, sound: { n: 2, title: 'Pick a sound' }, preview: { n: 3, title: 'Preview and apply' }, export: { n: 4, title: 'Export' } }

@@ -9,6 +9,10 @@ import { MaskOverlay } from './MaskOverlay'
 import { useVideoSync } from '../hooks/useVideoSync'
 import { FEATURES } from '../features'
 import { FeatureTag } from './FeatureTag'
+import { fitRotated, rotateBox, turn } from '../rotation'
+import type { Rotation } from '../rotation'
+
+const ROTATE_BUTTON = 'flex h-6 w-6 items-center justify-center rounded-full text-muted transition-colors hover:bg-tint/[0.06] hover:text-fg'
 
 function Corner({ cls }: { cls: string }) {
   return <span className={`absolute h-3 w-3 border-tint/25 ${cls}`} />
@@ -27,8 +31,13 @@ interface Props {
   selection: VisualSelection | null
   onClearSelection: () => void
   onVisualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
+  /** Start a Moon pull rule that plays a sound whenever the selected object is on screen. */
+  onScreenSound?: (selection:VisualSelection) => void
   /** Seek requests from outside, such as the object list. `n` makes a repeat of the same time count. */
   seekTo?: { time: number; n: number } | null
+  /** Clockwise quarter turns to show the picture at. Boxes and masks turn with it. */
+  rotation?: Rotation
+  onRotate?: (rotation: Rotation) => void
   /** The project is an audio file (a song): there is no picture to show. */
   audioOnly?: boolean
 }
@@ -36,9 +45,24 @@ interface Props {
 /** Fixed bar heights for the audio-only placeholder; a shape, not the file's waveform. */
 const BARS = Array.from({ length: 48 }, (_, i) => 10 + Math.round(30 * Math.abs(Math.sin(i * 0.55) * Math.cos(i * 0.21))))
 
-export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onClearSelection, onVisualAction, seekTo, audioOnly = false }: Props) {
+export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onClearSelection, onVisualAction, onScreenSound, seekTo, rotation = 0, onRotate, audioOnly = false }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
+  // Boxes fade out while the picture swings round, then come back in their new places.
+  const [turning, setTurning] = useState(false)
+  // The angle the video is drawn at keeps counting past 360, so 270 to 0 turns one step forward, not three back.
+  const [spin, setSpin] = useState<number>(rotation)
+  const lastRotation = useRef<Rotation>(rotation)
+  useEffect(() => {
+    const step = ((rotation - lastRotation.current + 540) % 360) - 180
+    lastRotation.current = rotation
+    if (step === 0) return
+    setSpin(a => a + step)
+    setTurning(true)
+    const timer = window.setTimeout(() => setTurning(false), 320)
+    return () => window.clearTimeout(timer)
+  }, [rotation])
   const picker = useRef<HTMLInputElement>(null)
   const [previewTime, setPreviewTime] = useState(0)
   const [sound, setSound] = useState('')
@@ -59,10 +83,11 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
     if (el) { el.pause(); el.currentTime=seekTo.time }
   }, [seekTo, engine])
   useEffect(() => {
-    const el=video.current
-    if (!el) return
-    const update=()=>setBounds({width:el.clientWidth,height:el.clientHeight,videoWidth:el.videoWidth,videoHeight:el.videoHeight})
-    const observer=new ResizeObserver(update); observer.observe(el); el.addEventListener('loadedmetadata',update); update()
+    const el=video.current, box=frame.current
+    if (!el || !box) return
+    // Measure the frame, not the video: a turned video is sized from these bounds.
+    const update=()=>setBounds({width:box.clientWidth,height:box.clientHeight,videoWidth:el.videoWidth,videoHeight:el.videoHeight})
+    const observer=new ResizeObserver(update); observer.observe(box); el.addEventListener('loadedmetadata',update); update()
     return () => { observer.disconnect(); el.removeEventListener('loadedmetadata',update) }
   }, [src])
 
@@ -93,15 +118,15 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
   const overlay = (() => {
     if (!visual || bounds.width <= 0 || bounds.videoWidth <= 0) return null
     const w=bounds.width, h=bounds.height
-    const scale=Math.min(w/(bounds.videoWidth || visual.width), h/(bounds.videoHeight || visual.height))
-    const vw=(bounds.videoWidth || visual.width)*scale, vh=(bounds.videoHeight || visual.height)*scale
-    const left=(w-vw)/2, top=(h-vh)/2
+    // vw x vh is the picture as shown (turned); element places the unturned mask under it.
+    const fit=fitRotated(w,h,bounds.videoWidth || visual.width,bounds.videoHeight || visual.height,rotation)
+    const vw=fit.width, vh=fit.height, left=fit.left, top=fit.top
     const current=engine?.duration ? t : previewTime
-    const frame=frameAt(visual,current)
+    const visualFrame=frameAt(visual,current)
     const selectedTrack=selection?.track_id ?? null
     // With Show objects off, only the selected object stays visible.
-    const boxes=overlayBoxes(frame,selectedTrack).filter(b=>(!automaticTracks || automaticTracks.has(b.trackId)) && (showObjects || b.selected))
-    return {w,h,vw,vh,left,top,current,selectedTrack,boxes}
+    const boxes=overlayBoxes(visualFrame,selectedTrack).filter(b=>(!automaticTracks || automaticTracks.has(b.trackId)) && (showObjects || b.selected)).map(b=>({...b,box:rotateBox(b.box,rotation)}))
+    return {w,h,vw,vh,left,top,current,selectedTrack,boxes,element:fit.element}
   })()
   // The action card sits beside the selected object when it is on screen, else bottom left.
   const popoverStyle = (() => {
@@ -115,23 +140,29 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
     return { left: x, top: y }
   })()
 
+  // The unturned video, placed so that rotating it about its centre fills the frame. Native controls
+  // would turn sideways with the picture, so a turned clip plays from the transport instead.
+  const placed = bounds.width > 0 && bounds.videoWidth > 0 ? fitRotated(bounds.width,bounds.height,bounds.videoWidth,bounds.videoHeight,rotation).element : null
+  const turned = placed ? { ...placed, transform: `rotate(${spin}deg)` } : null
+
   if (src) {
     return (
-      <div className="shadow-card group relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-line bg-[#dce8f5]">
+      <div ref={frame} className="shadow-card group relative flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-line bg-[#dce8f5]">
         <video
           ref={video}
           src={src}
           muted
-          controls={!engine?.duration}
+          controls={!engine?.duration && !rotation}
           onTimeUpdate={e => setPreviewTime(e.currentTarget.currentTime)}
           playsInline
           preload="auto"
-          className="h-full w-full object-contain"
+          className={turned ? 'absolute max-w-none object-fill transition-[transform,width,height,left,top] duration-300 ease-out' : 'h-full w-full object-contain'}
+          style={turned ? turned : undefined}
           onLoadedMetadata={(e) => { const v = e.currentTarget; onDuration(v.duration); if (v.videoWidth && v.videoHeight) onAspect?.(v.videoWidth / v.videoHeight) }}
           onError={() => onError('This browser could not play the video.')}
         />
-        {overlay && <div className="pointer-events-none absolute inset-0" aria-label="Detected objects">
-          {overlay.selectedTrack !== null && overlay.boxes.filter(b=>b.selected).map(b=><MaskOverlay key={`mask-${b.object.detection_id}`} mask={b.object.mask} color={trackColor(b.trackId).rgb} style={{left:overlay.left,top:overlay.top,width:overlay.vw,height:overlay.vh}}/>)}
+        {overlay && <div className={`pointer-events-none absolute inset-0 transition-opacity duration-150 ${turning ? 'opacity-0' : ''}`} aria-label="Detected objects">
+          {overlay.selectedTrack !== null && overlay.boxes.filter(b=>b.selected).map(b=><MaskOverlay key={`mask-${b.object.detection_id}`} mask={b.object.mask} color={trackColor(b.trackId).rgb} style={overlay.element}/>)}
           {overlay.boxes.map(b => {
             const [x1,y1,x2,y2]=b.box
             return <button key={b.object.detection_id} type="button" title={`Select ${b.label}`} aria-label={`Select ${b.label}`} aria-pressed={b.selected}
@@ -151,10 +182,22 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
           <label className="block text-muted">Sound to edit<input aria-label="Selected object sound" className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15" value={soundDescription} onChange={e=>{setSound(e.target.value);setSoundSelection(selectionKey)}} placeholder={objectSound(selection.label) ? 'e.g. dog barking' : 'e.g. a man imitating a dog barking'} /></label>
           {!objectSound(selection.label) && <p className="text-[10px] text-subtle">Describe what you hear this person doing. Their outline does not identify their voice.</p>}
           <div className="grid grid-cols-3 gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !soundDescription.trim()} className={`rounded-lg px-2 py-1.5 font-medium capitalize transition-colors disabled:opacity-40 ${action==='isolate' ? 'bg-accent text-white hover:bg-[#1b62b3]' : 'border border-line text-fg hover:bg-surface-2'}`} onClick={()=>{setActionPending(true);void onVisualAction(selection,soundDescription,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action}</button>)}</div>
+          {onScreenSound && <button type="button" className="w-full rounded-lg border border-accent/40 bg-accent-soft px-2 py-1.5 font-medium text-accent transition-colors hover:border-accent/60" onClick={()=>onScreenSound(selection)}>Add a sound while it's on screen</button>}
           <p className="text-[10px] text-subtle">{visual?.selection_only ? 'Edits matching sounds throughout the clip. Similar sounds may also be affected.' : 'Seeing an object does not guarantee it makes a sound.'}</p>
         </div>}
         {input}
-        <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">{pickButton}</div>
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5">
+          <div className="opacity-0 transition-opacity group-hover:opacity-100">{pickButton}</div>
+          {onRotate && <div className="flex items-center rounded-full bg-white/90 p-0.5 text-fg shadow-sm backdrop-blur" role="group" aria-label="Rotate video">
+            <button type="button" aria-label="Rotate left" title="Rotate left" onClick={() => onRotate(turn(rotation, -1))} className={ROTATE_BUTTON}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 4v5h5" /><path d="M4.6 9A8 8 0 1 1 4 12" /></svg>
+            </button>
+            {rotation !== 0 && <button type="button" title="Reset rotation" aria-label={`Rotated ${rotation} degrees. Reset rotation`} onClick={() => onRotate(0)} className="rounded-full px-1 font-mono text-[10px] text-accent hover:text-fg">{rotation}°</button>}
+            <button type="button" aria-label="Rotate right" title="Rotate right" onClick={() => onRotate(turn(rotation, 1))} className={ROTATE_BUTTON}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 4v5h-5" /><path d="M19.4 9A8 8 0 1 0 20 12" /></svg>
+            </button>
+          </div>}
+        </div>
       </div>
     )
   }

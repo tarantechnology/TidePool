@@ -109,3 +109,98 @@ export function missingResidualMessage({ target, residual }: RemoveTargets, desc
   const missing = !target && !residual ? `no "${description}" stem and no residual` : !residual ? 'no residual audio' : `no "${description}" stem`
   return `Separation returned ${missing}, so nothing was muted. The stems are loaded; mute by hand, or separate again with a real model.`
 }
+
+/** The most sounds one Explode asks for, matching the backend's default prompt cap. */
+export const MAX_EXPLODE = 8
+
+/** The sounds an Explode separates, from a comma-separated list: trimmed, unique, at most MAX_EXPLODE. */
+export function parseExplodeList(text: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of text.split(',')) {
+    const sound = raw.trim().replace(/\s+/g, ' ')
+    const key = sound.toLowerCase()
+    if (!sound || key === RESIDUAL_NAME || seen.has(key)) continue
+    seen.add(key); out.push(sound)
+  }
+  return out.slice(0, MAX_EXPLODE)
+}
+
+/**
+ * Explode order. Each sound is taken from what earlier ones left, so the order decides
+ * what leaks where. The hierarchy, first to last:
+ *  1. Background beds: steady, broadband sounds (rain, wind, crowd) that sit under
+ *     everything. Out first, so their hiss does not bleed into every later layer.
+ *  2. Hits: short, loud events (thunder, explosions, punches) that are easy to find
+ *     once the bed is gone, and would otherwise drag the bed's texture with them.
+ *  3. Other sounds the rules do not know, kept in the order typed.
+ *  4. Music: tonal and long, and overlaps voices in pitch, so it goes after the noise.
+ *  5. Voices last: the layer that matters most is taken from the cleanest leftovers.
+ * Ties keep the order typed. Earlier tiers win when a sound matches several.
+ */
+export const EXPLODE_TIERS: ReadonlyArray<{ tier: string; words: readonly string[] }> = [
+  { tier: 'background', words: ['rain', 'drizzle', 'downpour', 'storm', 'wind', 'breeze', 'ocean', 'sea', 'waves', 'surf', 'river', 'stream', 'waterfall', 'crowd', 'audience', 'traffic', 'city', 'street', 'room tone', 'ambience', 'ambient', 'background', 'hum', 'buzz', 'hiss', 'static', 'noise', 'fire', 'crackling', 'engine', 'machinery', 'air conditioner', 'birds', 'insects', 'crickets', 'forest', 'jungle'] },
+  { tier: 'hits', words: ['thunder', 'lightning', 'explosion', 'blast', 'gunshot', 'gun', 'shot', 'bang', 'crash', 'impact', 'punch', 'hit', 'slam', 'smash', 'glass', 'thud', 'kick', 'whoosh', 'swoosh', 'footsteps', 'steps', 'door', 'knock', 'clap', 'siren', 'alarm', 'horn', 'beep', 'screech', 'scream', 'growl', 'roar', 'bark', 'barking'] },
+  { tier: 'other', words: [] },
+  { tier: 'music', words: ['music', 'soundtrack', 'score', 'orchestra', 'orchestral', 'song', 'melody', 'drums', 'drum', 'percussion', 'piano', 'guitar', 'bass', 'strings', 'violin', 'cello', 'choir', 'synth', 'beat', 'instrumental', 'band'] },
+  { tier: 'voices', words: ['talking', 'talk', 'speech', 'speaking', 'speaker', 'voice', 'voices', 'dialogue', 'dialog', 'conversation', 'narrator', 'narration', 'voiceover', 'whisper', 'whispering', 'shouting', 'yelling', 'singing', 'vocals', 'people', 'person', 'man', 'woman', 'men', 'women', 'child', 'kid', 'character'] },
+]
+
+const tierMatches = (sound: string, words: readonly string[]): boolean => {
+  const text = ` ${sound.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
+  return words.some((w) => text.includes(` ${w} `) || text.includes(` ${w}s `) || text.includes(` ${w}es `))
+}
+
+/** Which tier a sound falls in, by the hierarchy above. */
+export function explodeTier(sound: string): string {
+  const voices = EXPLODE_TIERS[EXPLODE_TIERS.length - 1]
+  // A voice described with a sound word ("man shouting over rain") is still a voice
+  // when it names who is making it; otherwise the first matching tier wins.
+  for (const { tier, words } of EXPLODE_TIERS) {
+    if (tier === 'other') continue
+    if (tierMatches(sound, words)) {
+      if (tier !== 'voices' && tierMatches(sound, ['talking', 'speech', 'speaking', 'voice', 'dialogue', 'narrator', 'singing', 'vocals', 'whispering', 'shouting', 'yelling'])) return voices.tier
+      return tier
+    }
+  }
+  return 'other'
+}
+
+/**
+ * The order the Explode recipe runs in when the server has it: voices first, with a
+ * dialogue model on the full mix; then backgrounds (rain and thunder share one storm
+ * pass, split at 200 Hz); then music; then hits and anything else, so short sounds
+ * like a screech are taken from the cleanest leftovers.
+ */
+export const RECIPE_TIERS = ['voices', 'background', 'music', 'hits', 'other'] as const
+
+/** Tier in the recipe: thunder is weather there, taken with the rain in one storm pass. */
+export function recipeTier(sound: string): string {
+  const tier = explodeTier(sound)
+  return tier === 'hits' && tierMatches(sound, ['thunder', 'thunderclap', 'thunderstorm', 'lightning', 'rumble', 'rumbling']) ? 'background' : tier
+}
+
+/** The sounds in Explode order: by tier, then as typed. `recipe` is the server recipe's order. */
+export function orderForExplode(sounds: readonly string[], recipe = false): string[] {
+  const rank = (s: string) => recipe ? RECIPE_TIERS.indexOf(recipeTier(s) as typeof RECIPE_TIERS[number]) : EXPLODE_TIERS.findIndex((t) => t.tier === explodeTier(s))
+  return sounds.map((s, i) => ({ s, i, r: rank(s) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.s)
+}
+
+/**
+ * The few layers worth editing in a scene, from what the listening step heard: voices,
+ * weather (rain brings its thunder rumble, since Explode splits one storm into both) and the
+ * single most distinctive short sound. Music and the other hits stay in the background layer;
+ * the editor still shows everything it heard, so they can be added by hand.
+ */
+export function focusSounds(heard: readonly { prompt: string; tier: string; score: number }[]): string[] {
+  const out: string[] = []
+  const add = (p: string) => { if (!out.some(o => o.toLowerCase() === p.toLowerCase())) out.push(p) }
+  // Every voice (talking, laughter, singing) goes into the one dialogue layer, so ask for it by its plainest name.
+  if (heard.some(h => h.tier === 'voices')) add('people talking')
+  const weather = heard.filter(h => h.tier === 'background' && /\b(rain|storm|drizzle|downpour|thunder)/i.test(h.prompt))
+  for (const h of weather) add(h.prompt)
+  if (weather.some(h => /rain|storm|drizzle|downpour/i.test(h.prompt)) && !out.some(p => /thunder/i.test(p))) add('thunder rumbling')
+  const hits = heard.filter(h => h.tier === 'hits' && !/thunder/i.test(h.prompt)).sort((a, b) => b.score - a.score)
+  if (hits[0]) add(hits[0].prompt)
+  return out
+}

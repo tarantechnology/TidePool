@@ -1,4 +1,4 @@
-import { clamp, MAX_GAIN, MAX_KEYFRAMES } from './edits'
+import { clamp, MAX_GAIN, MAX_KEYFRAMES, posToGain } from './edits'
 import type { Keyframe } from './types'
 
 // Pure keyframe edits. Every function returns a new array and keeps it sorted.
@@ -37,7 +37,7 @@ export function removeKeyframe(keyframes: Keyframe[], index: number): Keyframe[]
   return keyframes.filter((_, i) => i !== index)
 }
 
-/** Map a pointer position inside a lane to timeline coordinates (top of lane = MAX_GAIN). */
+/** Map a pointer position inside a lane to timeline coordinates (top of lane = MAX_GAIN, middle = 100%). */
 export function pointToKeyframe(
   clientX: number,
   clientY: number,
@@ -46,5 +46,5 @@ export function pointToKeyframe(
 ): Keyframe {
   const x = clamp((clientX - rect.left) / rect.width, 0, 1)
   const y = clamp((clientY - rect.top) / rect.height, 0, 1)
-  return { t: x * duration, value: (1 - y) * MAX_GAIN }
+  return { t: x * duration, value: Math.round(posToGain(1 - y) * 100) / 100 }
 }

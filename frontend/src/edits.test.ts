@@ -396,12 +396,12 @@ describe('parsePrompt percentages', () => {
 
   it('accepts both ends of the range and rejects past them', () => {
     expect(faderOf('set the siren to 0%')).toBe(0)
-    expect(faderOf('set the siren to 200%')).toBe(2)
-    const over = run('set the siren to 250%')
+    expect(faderOf('set the siren to 500%')).toBe(5)
+    const over = run('set the siren to 550%')
     expect(over.actions).toEqual([])
-    expect(over.message).toContain('between 0 and 200')
+    expect(over.message).toContain('between 0 and 500')
     expect(run('set the siren to -20%').actions).toEqual([])
-    expect(run('raise the siren by 250%').actions).toEqual([])
+    expect(run('raise the siren by 550%').actions).toEqual([])
   })
 
   it('reads decimals', () => {
@@ -415,7 +415,7 @@ describe('parsePrompt percentages', () => {
     expect(faderOf('make the siren quieter by 20%')).toBeCloseTo(0.8)
     expect(faderOf('raise the siren by 50%')).toBeCloseTo(1.5)
     expect(faderOf('make the siren louder by 50%', 0.5)).toBeCloseTo(0.75)
-    expect(faderOf('increase the siren by 50%', 1.8)).toBe(MAX_GAIN)
+    expect(faderOf('increase the siren by 50%', 4.5)).toBe(MAX_GAIN)
     expect(faderOf('make the siren 50% louder')).toBeCloseTo(1.5)
     expect(faderOf('make the siren 20% quieter')).toBeCloseTo(0.8)
   })
@@ -451,7 +451,7 @@ describe('parsePrompt percentages', () => {
     const silent = run('set the siren to 30% from 8 to 16 seconds', 0)
     expect(silent.actions).toEqual([])
     expect(silent.message).toContain('fader is at 0')
-    const tooLow = run('set the siren to 200% from 8 to 16 seconds', 0.5)
+    const tooLow = run('set the siren to 300% from 8 to 16 seconds', 0.5)
     expect(tooLow.actions).toEqual([])
     expect(tooLow.message).toContain('too low')
     expect(inRange('set the siren to 200% from 8 to 16 seconds', 1)).toEqual([1, 2, 2, 1])
@@ -849,5 +849,13 @@ describe('parsePrompt with instrument tags', () => {
   it('still prefers a name, and does not guess', () => {
     expect(parsePrompt('mute vocals', music, tracks).actions).toEqual([{ type: 'set_mute', stemId: 'v', muted: true }])
     expect(parsePrompt('mute the trumpet', music, tracks).actions).toEqual([])
+  })
+})
+
+describe('gainToPos / posToGain', () => {
+  it('keeps 100% in the middle and 500% at the top', async () => {
+    const { gainToPos, posToGain } = await import('./edits')
+    expect(gainToPos(0)).toBe(0); expect(gainToPos(1)).toBe(0.5); expect(gainToPos(5)).toBe(1); expect(gainToPos(3)).toBe(0.75)
+    for (const g of [0, 0.3, 1, 2.2, 5]) expect(posToGain(gainToPos(g))).toBeCloseTo(g)
   })
 })

@@ -11,6 +11,8 @@ ROOT = Path(os.getenv('STORAGE_ROOT', 'storage')).resolve()
 ROOT.mkdir(parents=True, exist_ok=True)
 DB = ROOT / 'soundcanvas.sqlite3'
 MAX_UPLOAD = int(os.getenv('MAX_UPLOAD_BYTES', str(500 * 1024 * 1024)))
+# Highest layer level, 5 = 500%. Exports end in a limiter so loud layers do not clip.
+MAX_GAIN = 5.0
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 log = logging.getLogger('soundcanvas')
 
@@ -152,6 +154,9 @@ def discard(pid, paths):
         with connect() as db:
             current={r['id']:r['revision'] for r in db.execute('SELECT id,revision FROM stems WHERE project_id=?',(pid,))}
             keep={r['path'] for r in db.execute('SELECT path FROM stems WHERE project_id=?',(pid,))}
+            # Undo and redo across server changes (app/checkpoints.py) can bring these back.
+            from .checkpoints import kept_paths
+            keep|=kept_paths(db,pid)
             doomed=set(paths)
             for h in db.execute('SELECT h.previous_rows,h.applied_revisions FROM candidate_history h JOIN jobs j ON j.id=h.candidate_id WHERE j.project_id=? AND h.undone=0',(pid,)):
                 rows=[r['path'] for r in json.loads(h['previous_rows'])]

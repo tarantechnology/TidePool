@@ -1,6 +1,23 @@
 import type { EditAction, EditList, Keyframe, MuteRange, Stem, TrackState } from './types'
 
-export const MAX_GAIN = 2
+/** Highest layer level: 5 = 500%. A limiter on the mix keeps loud layers from clipping. */
+export const MAX_GAIN = 5
+/** Default top of a follow_intensity curve: the old 200% ceiling, so following stays tasteful. */
+export const FOLLOW_MAX_GAIN = 2
+
+/**
+ * Slider and lane position (0 = bottom/left, 1 = top/right) for a gain, and back.
+ * Piecewise linear so 100% stays in the middle: the lower half is 0-100%, the upper
+ * half 100-500%.
+ */
+export function gainToPos(gain: number): number {
+  const g = Math.min(MAX_GAIN, Math.max(0, gain))
+  return g <= 1 ? g / 2 : 0.5 + ((g - 1) / (MAX_GAIN - 1)) / 2
+}
+export function posToGain(pos: number): number {
+  const p = Math.min(1, Math.max(0, pos))
+  return p <= 0.5 ? p * 2 : 1 + (p - 0.5) * 2 * (MAX_GAIN - 1)
+}
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
@@ -241,7 +258,7 @@ const PERCENT_RE = /(?<![\d.,])(-?(?:\d+(?:\.\d+)?|\.\d+))\s*(?:%|percent\b)/g
 /** Amounts with no exact meaning here. They get a question, never a guess. */
 const UNSUPPORTED_QUANTITY_RE =
   /\d\s*(?:d\s?b|decibels?|x|times)\b|\bx\s*\d|\b(?:two|three|four|five|ten)\s+times\b|\b(?:twice|thrice|double|triple|half|halve|quarter)\b/
-const MAX_PERCENT = 200
+const MAX_PERCENT = MAX_GAIN * 100
 
 const ASK_PERCENT = 'Give a percentage, for example "to 30%" or "by 20%".'
 

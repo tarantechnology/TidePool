@@ -349,7 +349,7 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     # A browser tab left open across an editor update may still send sound
     # generation requests to this older planning route. Never let its generic
     # planner incorrectly say that the configured generator cannot add sounds.
-    if re.search(r'\badd\b',body.prompt,re.I):
+    if re.search(r'\b(?:add|play)\b',body.prompt,re.I):
         from .replacement import parse_replacement
         try: addition=parse_replacement(body.prompt,body.duration)
         except ValueError: addition=None

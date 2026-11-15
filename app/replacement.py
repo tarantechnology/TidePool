@@ -349,7 +349,16 @@ def parse_replacement(text,duration):
     example=re.search(r'\s*[;,]\s*(?:use|using)\s+(?:the|that)\s+sound\s+((?:at|around|near)\s+\d+(?:\.\d+)?\s*(?:seconds?|secs?|s))\s+as\s+(?:an?\s+)?example[.!?]?\s*$',text,re.I)
     if example:
         text=text[:example.start()].rstrip()+' '+example.group(1)
-    visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?add\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:we\s+)?see\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)[.!?]?',text,re.I)
+    visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|play)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:we\s+)?see\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)[.!?]?',text,re.I)
+    if not visible:
+        visible=re.fullmatch(r'(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|play)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+(?:every\s+time|whenever|when)\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)\s+(?:appears|shows\s+up|is\s+visible)[.!?]?',text,re.I)
+    if not visible:
+        conditional=re.fullmatch(r'(?:every\s+time|whenever|when)\s+(?:the\s+)?([a-z][a-z -]{0,39}?)\s*#?\s*(\d+)\s+(?:appears|shows\s+up|is\s+visible)\s*,?\s*(?:please\s+)?(?:play|add)\s+(?:a\s+|an\s+|the\s+)?(.+?)[.!?]?',text,re.I)
+        if conditional:
+            label,track_id,effect=conditional.group(1).strip().lower(),int(conditional.group(2)),conditional.group(3).strip()
+            if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')
+            effect_request(effect)
+            return {'source':'','effect':effect,'time':None,'mode':'add','object_label':label,'object_track_id':track_id}
     if visible:
         effect,label,track_id=visible.group(1).strip(),visible.group(2).strip().lower(),int(visible.group(3))
         if not effect or len(effect)>100 or track_id>1000000: raise ValueError('Choose one sound and an object number from Find objects.')

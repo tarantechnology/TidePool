@@ -113,6 +113,8 @@ def test_parse_replacement_and_vague_requests():
     assert parse_replacement('Add a gong sound after the word "quant" has been said.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','spoken_word':'quant'}
     assert parse_replacement('add a gong whenever the word quant is said',10)=={'source':'','effect':'gong','time':None,'mode':'add','spoken_word':'quant'}
     assert parse_replacement('Add a gong every time we see person 5',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
+    assert parse_replacement('Every time person 5 appears, play a gong sound.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','object_label':'person','object_track_id':5}
+    assert parse_replacement('play a gong whenever person #5 shows up',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
     assert parse_replacement('replace the punch at 4 seconds with a quack',10)=={'source':'punch','effect':'quack','time':4}
     assert parse_replacement('Replace all knife chopping sounds with a quack; use the sound at 4 seconds as an example',10)=={'source':'knife chopping sounds','effect':'quack','time':4,'all_occurrences':True}
     assert parse_replacement('replace every punch with a gong, using that sound around 3.5s as an example.',10)=={'source':'punch','effect':'gong','time':3.5,'all_occurrences':True}
@@ -160,7 +162,9 @@ def test_add_effect_at_tracked_object_appearances_and_reject_stale_analysis(clie
     with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
     old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Add a gong every time we see person 5','stems':[],'tracks':[],'duration':5})
     assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
-    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Add a gong every time we see person 5'}
+    old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Every time person 5 appears, play a gong sound.','stems':[],'tracks':[],'duration':5})
+    assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
+    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Every time person 5 appears, play a gong sound.'}
     assert client.post(url,json=body).status_code==401
     assert client.post(url,headers=h,json=body).status_code==422
     with connect() as db:

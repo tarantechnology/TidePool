@@ -479,7 +479,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (replacement) {
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
-        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,/\badd\b/i.test(replacementText) ? undefined : sourceLayerId || undefined)
+        const isAddition=/\badd\b/i.test(replacementText) || (/\bplay\b/i.test(replacementText) && /\b(?:every\s+time|whenever|when)\b/i.test(replacementText))
+        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,isAddition ? undefined : sourceLayerId || undefined)
         try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
         try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
           if (error instanceof Error && /example timestamp/i.test(error.message)) pendingReplacement.current=replacementText

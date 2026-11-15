@@ -28,10 +28,13 @@ _PROFANITY_CLAUSES = [
     re.compile(rf"\b(?:on|to|over|for|at|during|in)?\s*(?:all\s+(?:of\s+)?)?(?:the|every|each|any|all|his|her|their)?\s*(?:{_PROFANITY_NOUN})\b", re.I),
 ]
 # "whenever he says McLovin", "every time someone says 'hey'", "on the word McLovin", "when they say "fake ID""
+#: The asked word or phrase: quoted (anything may follow) or bare (ends at punctuation, "and", "or" or the end).
+_TARGET = r"(?:[\"“'‘](?P<q>[^\"“”'‘’]+)[\"”'’]|(?P<w>[^\"“”‘’',.;!?]+?)(?=\s*(?:$|[,.;!?]|\band\b)))"
 _SAID = re.compile(rf"\b(?:whenever|every\s*time|each\s+time|any\s*time|when)\s+{_SUBJECT}\s+(?:says?|said|saying|yells?|shouts?)\s+"
-                   r"(?:the\s+(?:word|name|phrase)\s+)?[\"“'‘]?(?P<w>[^\"”’,.;!?]+?)[\"”'’]?(?=\s*(?:$|[,.;!?]|\band\b))", re.I)
-_ON_WORD = re.compile(r"\b(?:on|to|over|for|at|during)\s+(?:the\s+|every\s+|each\s+)?(?:word|name|phrase)s?\s+[\"“'‘]?(?P<w>[^\"”’,.;!?]+?)[\"”'’]?(?=\s*(?:$|[,.;!?]|\band\b))", re.I)
-_QUOTED_TAIL = re.compile(r"[\"“'‘](?P<w>[^\"”’]+)[\"”'’]")
+                   r"(?:the\s+(?:word|name|phrase)\s+)?"+_TARGET+r"", re.I)
+_ON_WORD = re.compile(r"(?:\b(?:on|to|over|for|at|during|in)\s+)?\b(?:(?:every|each|all|any)\s+)?(?:(?:instances?|occurrences?|mentions?|uses?|times?)\s+of\s+)?(?:the\s+|every\s+|each\s+)?(?:word|name|phrase)s?\s+"+_TARGET+r"", re.I)
+# "every instance of mohammed", "each time the name McLovin comes up"
+_INSTANCE = re.compile(r"\b(?:every|each|all|any)\s+(?:the\s+)?(?:instances?|occurrences?|mentions?|uses?)\s+of\s+(?:the\s+(?:word|name|phrase)\s+)?"+_TARGET+r"", re.I)
 
 # Effect words: only an ask that names an effect is a word effect. "Add a vine boom when he says 'what'" stays a
 # sound insert (app/replacement.py); "bleep/mute the swearing" stays the censorship flow.
@@ -51,31 +54,34 @@ def parse(prompt):
     text = str(prompt or '')
     if not _EFFECT.search(text): return None
     profanity = False; words: list[str] = []; rest = text
-    for pattern in (_SAID, _ON_WORD):
-        m = pattern.search(rest)
-        if m and not _QUOTED_TAIL.search(m.group(0)):
-            # Unquoted and the clause comes first ("whenever he says McLovin add echo"): the word stops at the ask.
-            cut = re.search(r"\s+(?:add|put|make|give|apply|turn|use|then)\b", m.group('w'), re.I) or _EFFECT.search(m.group('w'))
-            if cut and cut.start() > 0:
-                end = m.start('w') + cut.start()
-                m = pattern.match(rest[:end], m.start()) or m
-        if m and not re.fullmatch(rf"(?:a|an|any|the|some)?\s*(?:{_PROFANITY_NOUN})", m.group('w').strip(), re.I):
-            raw = m.group('w').strip()
-            quoted = _QUOTED_TAIL.findall(m.group(0))
-            phrases = quoted or [p for p in re.split(r"\s*(?:,|\bor\b|/)\s*", raw) if p]
-            for phrase in phrases:
-                key = ' '.join(norm(w) for w in phrase.split() if norm(w))
-                if key and key not in words: words.append(key)
-            rest = (rest[:m.start()] + ' ' + rest[m.end():])
-            break
+    # Profanity first, so "every bad word and the word X" never reads "word and the word X" as the asked word.
     for pattern in _PROFANITY_CLAUSES:
         m = pattern.search(rest)
         if m:
             profanity = True
             rest = rest[:m.start()] + ' ' + rest[m.end():]
             break
+    for pattern in (_SAID, _INSTANCE, _ON_WORD):
+        m = pattern.search(rest)
+        if m and m.group('w'):
+            # Unquoted and the clause comes first ("whenever he says McLovin add echo"): the word stops at the ask.
+            cut = re.search(r"\s+(?:add|put|make|give|apply|turn|use|then)\b", m.group('w'), re.I) or _EFFECT.search(m.group('w'))
+            if cut and cut.start() > 0:
+                end = m.start('w') + cut.start()
+                m = pattern.match(rest[:end], m.start()) or m
+        if m and not re.fullmatch(rf"(?:a|an|any|the|some)?\s*(?:{_PROFANITY_NOUN})", (m.group('q') or m.group('w')).strip(), re.I):
+            phrases = [m.group('q')] if m.group('q') else [p for p in re.split(r"\s*(?:,|\bor\b|/)\s*", m.group('w').strip()) if p]
+            for phrase in phrases:
+                key = ' '.join(norm(w) for w in phrase.split() if norm(w))
+                if key and key not in words: words.append(key)
+            rest = (rest[:m.start()] + ' ' + rest[m.end():])
     if not profanity and not words: return None
     rest = re.sub(r"\s+", ' ', rest).strip(' ,.;:-')
+    # Joiners left behind by the removed clauses: "make (every bad word) and (the word X) bass boosted".
+    for _ in range(3):
+        rest = re.sub(r"^(?:and|or|plus|also)\b\s*|\s*\b(?:and|or|plus)$", '', rest, flags=re.I).strip(' ,.;:-')
+        rest = re.sub(r"\b(?:and|or|plus)\s+(?:and|or|plus)\b", 'and', rest, flags=re.I)
+        rest = re.sub(r"^((?:please\s+)?(?:make|turn|get|have|give))\s+(?:and|or|plus)\b\s*", r"\1 ", rest, flags=re.I)
     rest = re.sub(r"\b(?:on|to|over|for|at|during|in|with)$", '', rest, flags=re.I).strip(' ,.;:-')
     return rest, {'profanity': profanity, 'words': words[:MAX_WORDS]}
 

@@ -4,7 +4,7 @@ import { chatRoute } from './chatRoute'
 import { fxRequest } from '../api/backend'
 
 describe('word effects', () => {
-  it.each(['bass boost the bad words', 'add echo whenever he says McLovin', 'muffle every time someone swears', 'put reverb on the word "fake ID"', 'deepen person 2 whenever he says McLovin'])('%s goes to the planner', text => {
+  it.each(['bass boost the bad words', 'add echo whenever he says McLovin', 'muffle every time someone swears', 'put reverb on the word "fake ID"', 'deepen person 2 whenever he says McLovin', "make every bad word and instance of the word 'mohammed' bass boosted", 'bass boost every instance of mohammed', 'bass boost the word mohammed'])('%s goes to the planner', text => {
     expect(requestsWordEffect(text)).toBe(true)
     expect(chatRoute(text)).toEqual({ fx: null, sfx: false, replacement: null, generate: false })
   })

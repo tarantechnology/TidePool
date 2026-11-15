@@ -457,7 +457,7 @@ export async function getPrepareVisual(config:BackendConfig, jobId:string, signa
 export interface Anchor {token:"+"|"-";start:number;end:number}
 export interface EditScope {action:"keep"|"mute"|"lower";interval?:{start:number;end:number}|null}
 export interface ObjectSelectionContext {analysis_id:string;detection_id:string;track_id:number;frame_index:number}
-export interface PreviewOptions {object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
+export interface PreviewOptions {source_stem_id?:string;object_selection?:ObjectSelectionContext;processing_interval?:{start:number;end:number};processing_time?:number;guidance?:{anchors:Anchor[]};edit_scope?:EditScope;visual_prompt?:unknown;profile?:"preview"|"quality";passes?:number}
 /** The object detector, as GET /capabilities reports it. Absent fields are null, not guessed. */
 export interface VisionCapability {automatic?:boolean;prompted?:boolean;retryable?:boolean;selectionOnly?:boolean;available:boolean;reason:string|null;model:string|null;weightsCached:boolean|null;device:string|null}
 /**
@@ -571,10 +571,10 @@ export async function generateSoundEffect(config:BackendConfig,projectId:string,
 export async function getSoundEffectJob(config:BackendConfig,id:string):Promise<{status:string;error?:string;result?:SoundEffectAsset}> {
   return (await (await request(config,`/api/sound-effect-jobs/${encodeURIComponent(id)}`)).json()) as {status:string;error?:string;result?:SoundEffectAsset}
 }
-export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
+export async function createReplacementPreview(config:BackendConfig,projectId:string,payload:{asset_id:string;effect_label:string;source_prompt:string;source_stem_id?:string;mode:'replace'|'add';intervals:Array<{start:number;end:number}>}):Promise<string> {
   return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/replacement-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json()) as {candidate_id:string}).candidate_id
 }
 
-export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string):Promise<string> {
-  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text})})).json()) as {candidate_id:string}).candidate_id
+export async function createAutomaticReplacement(config:BackendConfig,projectId:string,text:string,sourceStemId?:string):Promise<string> {
+  return ((await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/automatic-replacement`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:text,...(sourceStemId ? {source_stem_id:sourceStemId} : {})})})).json()) as {candidate_id:string}).candidate_id
 }

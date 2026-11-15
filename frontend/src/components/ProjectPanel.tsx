@@ -12,6 +12,7 @@ import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
 import { replacementFollowup } from '../agent/replacementFollowup'
 import { requestsSoundReplacement } from '../agent/replacementIntent'
+import { extractLayerScope, resolveSourceLayer } from '../agent/layerScope'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
@@ -118,6 +119,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [replacementOpen,setReplacementOpen]=useState(false)
   const [replacementSource,setReplacementSource]=useState('')
   const [replacementEffect,setReplacementEffect]=useState('')
+  const [sourceLayers,setSourceLayers]=useState<SavedStem[]>([])
+  const [sourceLayerId,setSourceLayerId]=useState('')
   const [effectsOpen,setEffectsOpen]=useState(false)
   const [effectsStems,setEffectsStems]=useState<SavedStem[]>([])
   const [effectsStem,setEffectsStem]=useState('')
@@ -154,6 +157,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { if (selectedVisual && capabilities?.visual !== false) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual, capabilities?.visual])
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
+  useEffect(()=>{let active=true;if(projectId && token)void getSavedStems({baseUrl,token},projectId).then(rows=>{if(active){setSourceLayers(rows);setSourceLayerId(id=>rows.some(r=>r.id===id)?id:'')}}).catch(()=>{if(active)setSourceLayers([])});return()=>{active=false}},[baseUrl,token,projectId,jobId])
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
   const audioOnly = project?.metadata?.has_video === false
   // A split replaces every layer, so it is offered only before the first separation.
@@ -302,11 +306,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       }
     }
   })
-  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection) => {
+  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection, sourceId?:string) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
     try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`) } catch { /* Ignore unavailable storage. */ }
-    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
+    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(sourceId?{source_stem_id:sourceId}:{}),...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
@@ -389,7 +393,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const scope:EditScope=instruction?.editScope || {action:instruction?.remove?'mute':editAction,...(timedEdit && editAction==='mute'?{interval:{start:editStart,end:editEnd}}:{})}
     let visual:unknown={}
     if(selection)visual={...selection as object,interval:{start_seconds:Number(rangeStart),end_seconds:Number(rangeEnd)}}
-    await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices))
+    await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices),processingRange,processingTime,undefined,sourceLayerId || undefined)
   })
   const splitSong = () => run(async () => {
     if (!project) return
@@ -460,7 +464,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (replacement) {
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
-        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText)
+        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,sourceLayerId || undefined)
         try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
         try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
           if (error instanceof Error && /example timestamp/i.test(error.message)) pendingReplacement.current=replacementText
@@ -469,6 +473,16 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         return {kind:'replacement',description:null,remove:false,actions:[],message:'Replacement preview ready. Compare before applying.'}
       }
       pendingReplacement.current=''
+      const scoped=extractLayerScope(text)
+      if (scoped) {
+        const instruction=separationCommand(scoped.text)
+        if(!instruction)return {kind:'clarify',description:null,remove:false,actions:[],message:'Describe the sound to isolate or remove from that layer.'}
+        const selected=resolveSourceLayer(scoped.name,await getSavedStems(cfg,current.project_id))
+        const scope:EditScope=instruction.editScope || {action:instruction.remove?'mute':'keep'}
+        setPrompt(instruction.description);setMessage(`Separating from ${selected.name}…`)
+        await previewSound(cfg,current,instruction.description,scope,{},null,false,[],clampPasses(passes,choices),null,instruction.processingTime ?? null,undefined,selected.id)
+        return {kind:'separate',description:instruction.description,remove:instruction.remove,actions:[],message:'Layer separation preview ready. Compare before applying.'}
+      }
       const local=separationCommand(text), music=musicCommand(text)
 
       const directCinematic = cinematicCommand(text, candidateKind==='cinematic'||candidateKind==='director')
@@ -524,7 +538,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const point=result.processing_time ?? null
         const range=point!==null ? null : scope.interval || processingRange
         setProcessingTime(point);setProcessingRange(range)
-        await previewSound(cfg,current,result.description,scope,result.use_visual?selectedVisual:{},null,false,guidance,clampPasses(passes,choices),range,point)
+        await previewSound(cfg,current,result.description,scope,result.use_visual?selectedVisual:{},null,false,guidance,clampPasses(passes,choices),range,point,undefined,sourceLayerId || undefined)
         result.message='Preview ready. Compare it above the timeline, then apply.'
       } else if (result.kind !== 'cinematic' && result.kind !== 'director') setMessage(result.message)
       return result
@@ -720,7 +734,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         <Step n={2} title="Pick a sound" tag={FEATURES.separate} status={status('sound')} open={open('sound') && hasProject} onToggle={() => hasProject && toggle('sound')}
           summary={status('sound') === 'done' && prompt.trim() ? prompt.trim() : undefined}>
           <div className="space-y-3">
-            {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
+            {sourceLayers.length>0 && <label className="block text-xs">Search within<select aria-label="Source layer" className={`${field} mt-1`} value={sourceLayerId} disabled={busy} onChange={e=>setSourceLayerId(e.target.value)}><option value="">Current remaining audio</option>{sourceLayers.map(layer=><option key={layer.id} value={layer.id}>{layer.name}{layer.start_offset ? ` (${layer.start_offset.toFixed(2)}s)` : ''}</option>)}</select></label>}
+            {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} sourceLayerId={sourceLayerId || undefined} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
             {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">Select an object to choose its sound. AudioSep separates the sound description.</p>}

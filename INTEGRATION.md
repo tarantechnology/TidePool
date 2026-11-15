@@ -265,6 +265,19 @@ the separator again; disabling one restores the separated target around that eve
 removing an impact may affect overlapping speech or music. Input audio and effect
 assets remain project-scoped and require the project token.
 
+Separation candidates and replacement requests may specify `source_stem_id` to
+process an existing project layer instead of the current residual. The source layer's
+audio is split into a new target and its own remainder, preserving its gain, mute,
+solo, automation and timeline offset on both parts; unrelated layers stay intact.
+Selections, example times and guidance are expressed in project time and translated
+to the selected file's local time for inference. Existing `stem_id` retry semantics
+are unchanged. Natural-language replacement accepts an explicit “in the … layer”
+or “from the … track” scope; ambiguous layer names require a choice. The editor's
+**Search within** selector also selects a source for separation and replacement.
+Manual discovery still searches the original recording, so it is disabled for a
+selected source in the replacement panel; users can specify a time or use an
+automatic text request. Isolation and removal remain approximate.
+
 On the November 2026 A40 Pod, Stable Audio 3 Small SFX generated a three-second
 quack with its gated checkpoint after account access was configured. A browser smoke
 check then generated an effect through the app and completed preview, apply and undo

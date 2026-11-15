@@ -4,7 +4,8 @@
 
 For each clip: Demucs dialogue (as Explode does), then the speaker split. Prints how many
 people were found, how long each talks, every turn, and how alike the clusters' voices are
-(centroid cosine; AUDIO_SPEAKER_SAME, default 0.70, is the merge line). Writes
+(centroid cosine) and their median pitch. Clusters merge into one person at cosine >= 0.82
+(AUDIO_SPEAKER_SAME), or >= 0.60 (AUDIO_SPEAKER_MAYBE) when their pitches are within 1.25x. Writes
 <clip>_person<N>.wav into --out so you can listen to each person.
 """
 from __future__ import annotations
@@ -53,12 +54,16 @@ def main() -> None:
         win, step = int(S.WINDOW_S * S.RATE // S.HOP), int(S.WINDOW_HOP_S * S.RATE // S.HOP)
         starts = [s for s in range(0, max(1, len(active) - win + 1), step) if active[s:s + win].mean() >= 0.5]
         if len(starts) >= 4:
-            emb = enc.embed(np.stack([np.pad(mono, (0, win * S.HOP))[s * S.HOP:(s + win) * S.HOP] for s in starts]))
+            padded = np.pad(mono, (0, win * S.HOP))
+            emb = enc.embed(np.stack([padded[s * S.HOP:(s + win) * S.HOP] for s in starts]))
             labels = S._cluster(emb, 4)
             ids, sim = S._centroid_sims(emb, labels)
+            pitch = S.window_pitch(padded, starts, win)
+            f0 = [S._cluster_pitch(pitch, labels, k) for k in ids]
             pairs = [f"{a}-{b}:{sim[a, b]:.2f}" for a in range(len(ids)) for b in range(a + 1, len(ids))]
             print(f"\n== {clip.name}: speech {active.mean() * 100:.0f}% of {len(active) / 100:.0f}s, "
-                  f"proposed {len(ids)} clusters {np.bincount(labels).tolist()}, centroid cosine {' '.join(pairs)}")
+                  f"proposed {len(ids)} clusters {np.bincount(labels).tolist()}, pitch Hz {[round(x) if x == x else None for x in f0]}, "
+                  f"centroid cosine {' '.join(pairs)}")
         out = S.split_speakers(dialogue, rate, enc)
         print(f"   -> {len(out.layers)} people, seconds {out.seconds}")
         for a, b, sp in out.turns:

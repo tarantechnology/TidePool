@@ -14,7 +14,7 @@ import { resolveActions } from './audio/resolve'
 import { isDurationMismatch } from './audio/videoSync'
 import { EditLog } from './components/EditLog'
 import { ProjectPanel } from './components/ProjectPanel'
-import { Mixer } from './components/Mixer'
+import { Mixer, ResetMix } from './components/Mixer'
 import { MoonIcon, MoonPullPanel, MotifStrip } from './components/MoonPull'
 import type { WithLayers } from './components/MoonPull'
 import { FEATURES } from './features'
@@ -683,6 +683,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
                 {laneView === 'mixer' ? (
                   <div className="relative flex min-h-0 flex-1 flex-col">
                   <div className="absolute top-1.5 left-3 z-30">{viewToggle}</div>
+                  <div className="absolute top-1.5 right-3 z-30"><ResetMix tracks={tracks} onActions={dispatchBatch} /></div>
                   <Mixer stems={stems} tracks={tracks} onAction={dispatch} onRename={canRename ? renameLayer : undefined}
                     onDelete={canRename && stems.length > 1 ? deleteLayer : undefined} residualId={residual?.id ?? null} residualLabel={residual?.label ?? null} />
                   </div>

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { gainToPos, isAudible, posToGain, toDb } from '../edits'
+import { gainToPos, isAudible, posToGain, resetMixActions, toDb } from '../edits'
 import type { EditAction, Stem, TrackState } from '../types'
 import { EditableName } from './EditableName'
 import { DeleteLayer } from './DeleteLayer'
@@ -13,6 +13,24 @@ interface Props {
   residualLabel?: string | null
   /** The residual itself can't be deleted. */
   residualId?: string | null
+}
+
+/** One button that flattens the mix in a single undo step. Volume curves, effects and layers are left alone. */
+export function ResetMix({ tracks, onActions }: { tracks: TrackState[]; onActions: (a: EditAction[]) => void }) {
+  const actions = resetMixActions(tracks)
+  const flat = actions.length === 0
+  return (
+    <button
+      type="button"
+      disabled={flat}
+      onClick={() => onActions(actions)}
+      title={flat ? 'Every layer is already at 100%' : 'Set every layer back to 100% and clear mute and solo. Undo with ⌘Z.'}
+      className="flex items-center gap-1 rounded-full border border-line bg-surface px-2.5 py-0.5 text-[10px] font-medium text-muted shadow-sm transition-colors hover:border-accent/50 hover:text-accent disabled:cursor-default disabled:opacity-50 disabled:hover:border-line disabled:hover:text-muted"
+    >
+      <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9" /><path d="M2.5 2.5v2.6h2.6" /></svg>
+      Reset mix
+    </button>
+  )
 }
 
 /** One tall slider per layer: how loud each sound is in the mix. Same faders as the Tide chart. */

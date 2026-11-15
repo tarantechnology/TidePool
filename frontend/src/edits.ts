@@ -33,6 +33,17 @@ export function initialTracks(stems: Stem[]): TrackState[] {
   }))
 }
 
+/** The actions that put every layer back to 100%, unmuted and unsoloed. Empty when the mix is already flat. */
+export function resetMixActions(tracks: TrackState[]): EditAction[] {
+  const out: EditAction[] = []
+  for (const t of tracks) {
+    if (t.gain !== 1) out.push({ type: 'set_gain', stemId: t.stemId, value: 1 })
+    if (t.muted) out.push({ type: 'set_mute', stemId: t.stemId, muted: false })
+    if (t.solo) out.push({ type: 'set_solo', stemId: t.stemId, solo: false })
+  }
+  return out
+}
+
 export function toEditList(tracks: TrackState[]): EditList {
   return { version: 1, tracks }
 }

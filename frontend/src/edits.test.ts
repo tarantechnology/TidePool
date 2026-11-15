@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyAction,
+  resetMixActions,
   automationFrom,
   effectiveGainAt,
   envelopeAt,
@@ -857,5 +858,19 @@ describe('gainToPos / posToGain', () => {
     const { gainToPos, posToGain } = await import('./edits')
     expect(gainToPos(0)).toBe(0); expect(gainToPos(1)).toBe(0.5); expect(gainToPos(5)).toBe(1); expect(gainToPos(3)).toBe(0.75)
     for (const g of [0, 0.3, 1, 2.2, 5]) expect(posToGain(gainToPos(g))).toBeCloseTo(g)
+  })
+})
+
+describe('resetMixActions', () => {
+  it('returns every layer to 100%, unmuted and unsoloed, leaving curves alone', () => {
+    const tracks: TrackState[] = [
+      { stemId: 'a', gain: 2.27, muted: false, solo: true, automation: [{ t: 1, value: 0.5 }] },
+      { stemId: 'b', gain: 0.34, muted: true, solo: false, automation: [] },
+      { stemId: 'c', gain: 1, muted: false, solo: false, automation: [] },
+    ]
+    const reset = resetMixActions(tracks).reduce(applyAction, tracks)
+    expect(reset.map((t) => [t.gain, t.muted, t.solo])).toEqual([[1, false, false], [1, false, false], [1, false, false]])
+    expect(reset[0].automation).toEqual(tracks[0].automation)
+    expect(resetMixActions(reset)).toEqual([])
   })
 })

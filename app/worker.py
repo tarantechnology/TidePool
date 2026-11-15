@@ -45,13 +45,15 @@ def ticking(job, stage, expected):
     """Advance a processing job's progress on a timer while a blocking call runs. Writes only
     while the job is still 'processing', so the final completion or failure write always wins."""
     done=threading.Event(); began=time.monotonic()
-    def write():
+    def write(initial=False):
         try:
-            with connect() as db: db.execute("UPDATE jobs SET stage=?,progress=MAX(progress,?) WHERE id=? AND status='processing'",(stage,eased(time.monotonic()-began,expected),job))
+            with connect() as db:
+                if initial: db.execute("UPDATE jobs SET stage=?,progress=MAX(progress,?) WHERE id=? AND status='processing'",(stage,eased(time.monotonic()-began,expected),job))
+                else: db.execute("UPDATE jobs SET progress=MAX(progress,?) WHERE id=? AND status='processing'",(eased(time.monotonic()-began,expected),job))
         except sqlite3.Error as exc: event('progress_failed',job_id=job,error=str(exc))
     def tick():
         while not done.wait(TICK_SECONDS): write()
-    write(); thread=threading.Thread(target=tick,daemon=True); thread.start()
+    write(True); thread=threading.Thread(target=tick,daemon=True); thread.start()
     try: yield
     finally: done.set(); thread.join()
 

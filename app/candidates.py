@@ -98,6 +98,8 @@ def build(project, payload, cid):
         # The selected layer becomes its own remainder, not the project residual.
         parent=by_id[source_layer_id]
         residual['role']=parent.get('role');residual['label']=parent.get('label')
+        if snapshot.get('promote_original'):
+            residual.update(name='residual',role='residual',label='everything else')
         for key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label','sound_start','sound_end'):
             target[key]=None
     else:residual['role']='residual'
@@ -197,6 +199,8 @@ def apply(job):
                 # The snapshot is unchanged, including every existing edit.
                 db.execute('UPDATE stems SET path=?,name=?,label=?,duration=?,start_offset=?,volume=?,muted=?,mute_ranges=?,revision=revision+1 WHERE id=? AND project_id=?',
                            (item['path'],item['name'],item.get('label'),item['duration'],item['start_offset'],item['volume'],item['muted'],item['mute_ranges'],item['id'],pid))
+                if snapshot.get('promote_original') and item['id']==snapshot.get('source_layer_id'):
+                    db.execute("UPDATE stems SET role='residual' WHERE id=? AND project_id=?",(item['id'],pid))
                 for key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label','sound_start','sound_end'):
                     if key in item:
                         value='COALESCE(?, '+key+')' if key in ('effect_group_id','effect_asset_id','effect_label','sound_group_id','sound_group_label') else '?'

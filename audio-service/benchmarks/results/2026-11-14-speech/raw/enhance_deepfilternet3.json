@@ -1,0 +1,1201 @@
+{
+ "load_seconds": 6.2,
+ "summary": {
+  "esc50_0dB": {
+   "n": 20,
+   "noisy_si_sdr": -0.01,
+   "enh_si_sdr_full": 14.46,
+   "enh_si_sdr_12": 9.48,
+   "si_sdr_improvement_full": 14.46
+  },
+  "esc50_5dB": {
+   "n": 20,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 16.74,
+   "enh_si_sdr_12": 13.55,
+   "si_sdr_improvement_full": 11.74
+  },
+  "esc50_10dB": {
+   "n": 20,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 19.14,
+   "enh_si_sdr_12": 17.33,
+   "si_sdr_improvement_full": 9.15
+  },
+  "pink_0dB": {
+   "n": 20,
+   "noisy_si_sdr": 0.22,
+   "enh_si_sdr_full": 8.06,
+   "enh_si_sdr_12": 6.15,
+   "si_sdr_improvement_full": 7.84
+  },
+  "pink_5dB": {
+   "n": 20,
+   "noisy_si_sdr": 5.22,
+   "enh_si_sdr_full": 11.44,
+   "enh_si_sdr_12": 10.21,
+   "si_sdr_improvement_full": 6.22
+  },
+  "pink_10dB": {
+   "n": 20,
+   "noisy_si_sdr": 10.22,
+   "enh_si_sdr_full": 14.6,
+   "enh_si_sdr_12": 13.96,
+   "si_sdr_improvement_full": 4.37
+  },
+  "clean_passthrough_si_sdr": 31.28
+ },
+ "latency_4min_stereo": [
+  {
+   "wall_seconds": 5.89,
+   "process_vram_peak_mib": 2854,
+   "torch_peak_mib": 1416
+  },
+  {
+   "wall_seconds": 3.68,
+   "process_vram_peak_mib": 2854,
+   "torch_peak_mib": 1416
+  },
+  {
+   "wall_seconds": 3.86,
+   "process_vram_peak_mib": 2854,
+   "torch_peak_mib": 1416
+  }
+ ],
+ "chunk_seconds": 60.0,
+ "rows": [
+  {
+   "utt": "1089-134686-0006",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.05,
+   "enh_si_sdr_full": 8.95,
+   "enh_si_sdr_12": 7.26
+  },
+  {
+   "utt": "1089-134686-0006",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.03,
+   "enh_si_sdr_full": 12.47,
+   "enh_si_sdr_12": 11.61
+  },
+  {
+   "utt": "1089-134686-0006",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.02,
+   "enh_si_sdr_full": 15.61,
+   "enh_si_sdr_12": 15.42
+  },
+  {
+   "utt": "1089-134686-0006",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.16,
+   "enh_si_sdr_full": 9.0,
+   "enh_si_sdr_12": 6.81
+  },
+  {
+   "utt": "1089-134686-0006",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.19,
+   "enh_si_sdr_full": 12.54,
+   "enh_si_sdr_12": 11.13
+  },
+  {
+   "utt": "1089-134686-0006",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.2,
+   "enh_si_sdr_full": 14.4,
+   "enh_si_sdr_12": 13.75
+  },
+  {
+   "utt": "1089-134686-0006",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 36.84
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.08,
+   "enh_si_sdr_full": 8.03,
+   "enh_si_sdr_12": 6.65
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.04,
+   "enh_si_sdr_full": 10.68,
+   "enh_si_sdr_12": 10.48
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.02,
+   "enh_si_sdr_full": 15.76,
+   "enh_si_sdr_12": 15.27
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.05,
+   "enh_si_sdr_full": 7.59,
+   "enh_si_sdr_12": 5.76
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.97,
+   "enh_si_sdr_full": 10.42,
+   "enh_si_sdr_12": 9.41
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.99,
+   "enh_si_sdr_full": 13.77,
+   "enh_si_sdr_12": 13.27
+  },
+  {
+   "utt": "1089-134686-0018",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 39.48
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.02,
+   "enh_si_sdr_full": 17.82,
+   "enh_si_sdr_12": 10.95
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.99,
+   "enh_si_sdr_full": 20.52,
+   "enh_si_sdr_12": 15.63
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.99,
+   "enh_si_sdr_full": 23.19,
+   "enh_si_sdr_12": 20.06
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.38,
+   "enh_si_sdr_full": 10.08,
+   "enh_si_sdr_12": 7.52
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.37,
+   "enh_si_sdr_full": 11.12,
+   "enh_si_sdr_12": 10.02
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.36,
+   "enh_si_sdr_full": 14.47,
+   "enh_si_sdr_12": 13.88
+  },
+  {
+   "utt": "1089-134686-0030",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 31.4
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.04,
+   "enh_si_sdr_full": 19.73,
+   "enh_si_sdr_12": 11.04
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.98,
+   "enh_si_sdr_full": 21.26,
+   "enh_si_sdr_12": 15.49
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.99,
+   "enh_si_sdr_full": 22.9,
+   "enh_si_sdr_12": 19.56
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.09,
+   "enh_si_sdr_full": 8.67,
+   "enh_si_sdr_12": 6.37
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.08,
+   "enh_si_sdr_full": 12.81,
+   "enh_si_sdr_12": 11.0
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.08,
+   "enh_si_sdr_full": 16.81,
+   "enh_si_sdr_12": 15.62
+  },
+  {
+   "utt": "1089-134691-0019",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 34.45
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.01,
+   "enh_si_sdr_full": 13.85,
+   "enh_si_sdr_12": 9.7
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 16.82,
+   "enh_si_sdr_12": 13.96
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 19.72,
+   "enh_si_sdr_12": 17.94
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.43,
+   "enh_si_sdr_full": 5.54,
+   "enh_si_sdr_12": 4.47
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.43,
+   "enh_si_sdr_full": 8.57,
+   "enh_si_sdr_12": 8.09
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.43,
+   "enh_si_sdr_full": 12.71,
+   "enh_si_sdr_12": 12.46
+  },
+  {
+   "utt": "1089-134691-0023",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 35.33
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.02,
+   "enh_si_sdr_full": 15.6,
+   "enh_si_sdr_12": 10.45
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.01,
+   "enh_si_sdr_full": 18.01,
+   "enh_si_sdr_12": 14.79
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.01,
+   "enh_si_sdr_full": 20.19,
+   "enh_si_sdr_12": 18.66
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.12,
+   "enh_si_sdr_full": 4.94,
+   "enh_si_sdr_12": 3.92
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.12,
+   "enh_si_sdr_full": 9.48,
+   "enh_si_sdr_12": 8.65
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.12,
+   "enh_si_sdr_full": 13.19,
+   "enh_si_sdr_12": 12.78
+  },
+  {
+   "utt": "1188-133604-0004",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 23.14
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.0,
+   "enh_si_sdr_full": 13.57,
+   "enh_si_sdr_12": 9.6
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 15.14,
+   "enh_si_sdr_12": 13.35
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 17.62,
+   "enh_si_sdr_12": 17.09
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.19,
+   "enh_si_sdr_full": 9.21,
+   "enh_si_sdr_12": 7.04
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.16,
+   "enh_si_sdr_full": 12.48,
+   "enh_si_sdr_12": 11.21
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.15,
+   "enh_si_sdr_full": 15.4,
+   "enh_si_sdr_12": 14.8
+  },
+  {
+   "utt": "1188-133604-0005",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 22.92
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.0,
+   "enh_si_sdr_full": 18.01,
+   "enh_si_sdr_12": 11.02
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 19.82,
+   "enh_si_sdr_12": 15.5
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 21.21,
+   "enh_si_sdr_12": 19.44
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.71,
+   "enh_si_sdr_full": 7.9,
+   "enh_si_sdr_12": 6.18
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.71,
+   "enh_si_sdr_full": 12.23,
+   "enh_si_sdr_12": 11.03
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.71,
+   "enh_si_sdr_full": 14.53,
+   "enh_si_sdr_12": 14.11
+  },
+  {
+   "utt": "1188-133604-0016",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 22.85
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.03,
+   "enh_si_sdr_full": 10.8,
+   "enh_si_sdr_12": 8.15
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.02,
+   "enh_si_sdr_full": 12.94,
+   "enh_si_sdr_12": 11.44
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.01,
+   "enh_si_sdr_full": 15.66,
+   "enh_si_sdr_12": 14.86
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.03,
+   "enh_si_sdr_full": 7.38,
+   "enh_si_sdr_12": 5.46
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.03,
+   "enh_si_sdr_full": 11.18,
+   "enh_si_sdr_12": 9.82
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.04,
+   "enh_si_sdr_full": 13.74,
+   "enh_si_sdr_12": 13.18
+  },
+  {
+   "utt": "1188-133604-0026",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 26.87
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.0,
+   "enh_si_sdr_full": 12.14,
+   "enh_si_sdr_12": 9.07
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 15.77,
+   "enh_si_sdr_12": 13.55
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 18.67,
+   "enh_si_sdr_12": 17.48
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.35,
+   "enh_si_sdr_full": 7.83,
+   "enh_si_sdr_12": 6.0
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.33,
+   "enh_si_sdr_full": 11.74,
+   "enh_si_sdr_12": 10.36
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.32,
+   "enh_si_sdr_full": 16.3,
+   "enh_si_sdr_12": 15.15
+  },
+  {
+   "utt": "121-121726-0007",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 25.36
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.04,
+   "enh_si_sdr_full": 11.41,
+   "enh_si_sdr_12": 8.2
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.98,
+   "enh_si_sdr_full": 13.47,
+   "enh_si_sdr_12": 11.46
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.99,
+   "enh_si_sdr_full": 16.3,
+   "enh_si_sdr_12": 14.94
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.51,
+   "enh_si_sdr_full": 8.01,
+   "enh_si_sdr_12": 6.36
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.51,
+   "enh_si_sdr_full": 11.03,
+   "enh_si_sdr_12": 10.03
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.51,
+   "enh_si_sdr_full": 14.39,
+   "enh_si_sdr_12": 13.88
+  },
+  {
+   "utt": "121-127105-0015",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 21.73
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.02,
+   "enh_si_sdr_full": 10.4,
+   "enh_si_sdr_12": 8.41
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.99,
+   "enh_si_sdr_full": 12.16,
+   "enh_si_sdr_12": 11.85
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.99,
+   "enh_si_sdr_full": 13.66,
+   "enh_si_sdr_12": 14.5
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.18,
+   "enh_si_sdr_full": 4.97,
+   "enh_si_sdr_12": 4.06
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.18,
+   "enh_si_sdr_full": 8.77,
+   "enh_si_sdr_12": 8.29
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.18,
+   "enh_si_sdr_full": 12.48,
+   "enh_si_sdr_12": 12.41
+  },
+  {
+   "utt": "1221-135766-0011",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 23.12
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.0,
+   "enh_si_sdr_full": 34.56,
+   "enh_si_sdr_12": 11.87
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 35.88,
+   "enh_si_sdr_12": 16.82
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 36.66,
+   "enh_si_sdr_12": 21.76
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.13,
+   "enh_si_sdr_full": 10.08,
+   "enh_si_sdr_12": 7.48
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.11,
+   "enh_si_sdr_full": 12.8,
+   "enh_si_sdr_12": 11.17
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.09,
+   "enh_si_sdr_full": 15.39,
+   "enh_si_sdr_12": 14.52
+  },
+  {
+   "utt": "1284-1180-0005",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 38.97
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.0,
+   "enh_si_sdr_full": 13.25,
+   "enh_si_sdr_12": 9.72
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 13.64,
+   "enh_si_sdr_12": 13.09
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 14.0,
+   "enh_si_sdr_12": 15.22
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.38,
+   "enh_si_sdr_full": 8.68,
+   "enh_si_sdr_12": 6.51
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.41,
+   "enh_si_sdr_full": 12.43,
+   "enh_si_sdr_12": 10.86
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.43,
+   "enh_si_sdr_full": 15.79,
+   "enh_si_sdr_12": 15.02
+  },
+  {
+   "utt": "1284-1180-0011",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 33.12
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.01,
+   "enh_si_sdr_full": 13.94,
+   "enh_si_sdr_12": 9.75
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.01,
+   "enh_si_sdr_full": 13.67,
+   "enh_si_sdr_12": 12.33
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 17.0,
+   "enh_si_sdr_12": 16.29
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.07,
+   "enh_si_sdr_full": 10.92,
+   "enh_si_sdr_12": 8.2
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.08,
+   "enh_si_sdr_full": 13.12,
+   "enh_si_sdr_12": 11.5
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.08,
+   "enh_si_sdr_full": 15.63,
+   "enh_si_sdr_12": 14.89
+  },
+  {
+   "utt": "1284-1180-0027",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 32.48
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.01,
+   "enh_si_sdr_full": 13.07,
+   "enh_si_sdr_12": 9.71
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.0,
+   "enh_si_sdr_full": 17.07,
+   "enh_si_sdr_12": 14.29
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.0,
+   "enh_si_sdr_full": 19.26,
+   "enh_si_sdr_12": 17.96
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.13,
+   "enh_si_sdr_full": 7.45,
+   "enh_si_sdr_12": 5.66
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.13,
+   "enh_si_sdr_full": 11.54,
+   "enh_si_sdr_12": 10.19
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.13,
+   "enh_si_sdr_full": 14.5,
+   "enh_si_sdr_12": 13.76
+  },
+  {
+   "utt": "1284-1180-0030",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 38.16
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.06,
+   "enh_si_sdr_full": 10.35,
+   "enh_si_sdr_12": 8.28
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.96,
+   "enh_si_sdr_full": 12.81,
+   "enh_si_sdr_12": 12.05
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.98,
+   "enh_si_sdr_full": 15.69,
+   "enh_si_sdr_12": 15.54
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.15,
+   "enh_si_sdr_full": 8.78,
+   "enh_si_sdr_12": 6.96
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.14,
+   "enh_si_sdr_full": 11.83,
+   "enh_si_sdr_12": 10.77
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.13,
+   "enh_si_sdr_full": 14.6,
+   "enh_si_sdr_12": 14.05
+  },
+  {
+   "utt": "1320-122612-0003",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 29.58
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": -0.2,
+   "enh_si_sdr_full": 14.54,
+   "enh_si_sdr_12": 9.8
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 4.89,
+   "enh_si_sdr_full": 17.9,
+   "enh_si_sdr_12": 14.44
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 9.94,
+   "enh_si_sdr_full": 20.25,
+   "enh_si_sdr_12": 18.51
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.31,
+   "enh_si_sdr_full": 7.95,
+   "enh_si_sdr_12": 6.14
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.33,
+   "enh_si_sdr_full": 11.01,
+   "enh_si_sdr_12": 9.89
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.34,
+   "enh_si_sdr_full": 14.28,
+   "enh_si_sdr_12": 13.69
+  },
+  {
+   "utt": "1320-122612-0006",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 38.88
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.02,
+   "enh_si_sdr_full": 14.02,
+   "enh_si_sdr_12": 9.63
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.01,
+   "enh_si_sdr_full": 17.09,
+   "enh_si_sdr_12": 13.99
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.01,
+   "enh_si_sdr_full": 19.37,
+   "enh_si_sdr_12": 17.48
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.05,
+   "enh_si_sdr_full": 10.75,
+   "enh_si_sdr_12": 7.78
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.03,
+   "enh_si_sdr_full": 13.72,
+   "enh_si_sdr_12": 11.69
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.02,
+   "enh_si_sdr_full": 15.72,
+   "enh_si_sdr_12": 14.62
+  },
+  {
+   "utt": "1320-122617-0005",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 33.45
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "esc50",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.04,
+   "enh_si_sdr_full": 15.1,
+   "enh_si_sdr_12": 10.33
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "esc50",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.02,
+   "enh_si_sdr_full": 17.67,
+   "enh_si_sdr_12": 14.79
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "esc50",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.01,
+   "enh_si_sdr_full": 20.16,
+   "enh_si_sdr_12": 18.66
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "pink",
+   "snr_db": 0,
+   "noisy_si_sdr": 0.15,
+   "enh_si_sdr_full": 5.48,
+   "enh_si_sdr_12": 4.42
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "pink",
+   "snr_db": 5,
+   "noisy_si_sdr": 5.17,
+   "enh_si_sdr_full": 10.03,
+   "enh_si_sdr_12": 9.13
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "pink",
+   "snr_db": 10,
+   "noisy_si_sdr": 10.17,
+   "enh_si_sdr_full": 13.82,
+   "enh_si_sdr_12": 13.33
+  },
+  {
+   "utt": "1320-122617-0006",
+   "noise": "none",
+   "snr_db": null,
+   "noisy_si_sdr": null,
+   "enh_si_sdr_full": 37.48
+  }
+ ],
+ "noise_files": [
+  "airplane__1-11687-A-47.wav",
+  "airplane__1-24796-A-47.wav",
+  "car_horn__1-17124-A-43.wav",
+  "car_horn__1-19026-A-43.wav",
+  "chirping_birds__1-100038-A-14.wav",
+  "chirping_birds__1-34495-A-14.wav",
+  "clock_alarm__1-13613-A-37.wav",
+  "clock_alarm__1-14262-A-37.wav",
+  "clock_tick__1-21934-A-38.wav",
+  "clock_tick__1-21935-A-38.wav",
+  "crackling_fire__1-17150-A-12.wav",
+  "crackling_fire__1-17565-A-12.wav",
+  "dog__1-100032-A-0.wav",
+  "dog__1-110389-A-0.wav",
+  "door_wood_creaks__1-51805-A-33.wav",
+  "door_wood_creaks__1-51805-B-33.wav",
+  "door_wood_knock__1-101336-A-30.wav",
+  "door_wood_knock__1-103995-A-30.wav",
+  "engine__1-18527-A-44.wav",
+  "engine__1-18527-B-44.wav",
+  "footsteps__1-155858-A-25.wav",
+  "footsteps__1-155858-B-25.wav",
+  "helicopter__1-172649-A-40.wav",
+  "helicopter__1-172649-B-40.wav",
+  "keyboard_typing__1-137-A-32.wav",
+  "keyboard_typing__1-53501-A-32.wav",
+  "rain__1-17367-A-10.wav",
+  "rain__1-21189-A-10.wav",
+  "siren__1-31482-A-42.wav",
+  "siren__1-31482-B-42.wav"
+ ],
+ "libdf": "shim"
+}

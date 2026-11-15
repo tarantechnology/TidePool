@@ -1,0 +1,192 @@
+{
+ "capabilities": {
+  "words": {
+   "available": true,
+   "backend": "faster_whisper",
+   "is_mock": false,
+   "model_id": "large-v3-turbo",
+   "license": "code MIT (SYSTRAN/faster-whisper); weights MIT (OpenAI Whisper)",
+   "loaded": true,
+   "load_error": null,
+   "align": {
+    "available": true,
+    "model_id": "torchaudio/WAV2VEC2_ASR_BASE_960H",
+    "languages": [
+     "en"
+    ],
+    "default": true
+   },
+   "vad": true,
+   "input_sample_rate": 16000,
+   "profanity_list": {
+    "source": "builtin:profanity_en.txt",
+    "entries": 91
+   },
+   "min_pause_seconds": 0.7,
+   "max_duration_seconds": 600.0
+  },
+  "enhance": {
+   "available": true,
+   "backend": "deepfilternet",
+   "is_mock": false,
+   "model_id": "DeepFilterNet3",
+   "license": "MIT OR Apache-2.0 (code and pretrained DeepFilterNet3 weights, Rikorose/DeepFilterNet)",
+   "loaded": true,
+   "load_error": null,
+   "model_sample_rate": 48000,
+   "atten_lim_db": {
+    "default": null,
+    "min": 0,
+    "max": 100
+   },
+   "output": {
+    "formats": [
+     "pcm_f32le",
+     "pcm_s16le"
+    ],
+    "return_modes": [
+     "base64",
+     "file"
+    ],
+    "length": "same as input",
+    "channels": "same as input (1 or 2)"
+   },
+   "max_duration_seconds": 600.0
+  },
+  "beats": {
+   "available": true,
+   "backend": "beat_this",
+   "is_mock": false,
+   "model_id": "final0",
+   "license": "MIT (code and published weights, CPJKU/beat_this)",
+   "loaded": true,
+   "load_error": null,
+   "downbeats": true,
+   "fallback": "librosa",
+   "max_duration_seconds": 600.0
+  }
+ },
+ "health_speech": {
+  "words": {
+   "backend": "faster_whisper",
+   "model_id": "large-v3-turbo",
+   "is_mock": false,
+   "loaded": true,
+   "license": "code MIT (SYSTRAN/faster-whisper); weights MIT (OpenAI Whisper)",
+   "device": "cuda",
+   "compute_type": "float16",
+   "beam_size": 5,
+   "batch_size": 8,
+   "vad": true,
+   "load_error": null
+  },
+  "aligner": {
+   "aligner": "wav2vec2",
+   "model_id": "torchaudio/WAV2VEC2_ASR_BASE_960H",
+   "loaded": true,
+   "license": "MIT (fairseq wav2vec 2.0 weights via torchaudio)",
+   "languages": [
+    "en"
+   ],
+   "load_error": null
+  },
+  "enhance": {
+   "backend": "deepfilternet",
+   "model_id": "DeepFilterNet3",
+   "is_mock": false,
+   "loaded": true,
+   "license": "MIT OR Apache-2.0 (code and pretrained DeepFilterNet3 weights, Rikorose/DeepFilterNet)",
+   "sample_rate": 48000,
+   "device": "cuda",
+   "libdf": "shim",
+   "chunk_seconds": 60.0,
+   "load_error": null
+  },
+  "beats": {
+   "backend": "beat_this",
+   "model_id": "final0",
+   "is_mock": false,
+   "loaded": true,
+   "license": "MIT (code and published weights, CPJKU/beat_this)",
+   "downbeats": true,
+   "device": "cuda",
+   "dbn": false,
+   "checkpoint_source": "hf-mirror:Audante/beat-this-final0",
+   "load_error": null
+  }
+ },
+ "words": {
+  "status": 200,
+  "wall_seconds": 0.34,
+  "text": "What the fuck is going on here?",
+  "profanity": [
+   "fuck",
+   "going"
+  ],
+  "fillers": [],
+  "aligned": true,
+  "model": {
+   "backend": "faster_whisper",
+   "model_id": "large-v3-turbo",
+   "is_mock": false,
+   "device": "cuda",
+   "compute_type": "float16",
+   "vad": true,
+   "filler_prompt": true,
+   "align_model": "torchaudio/WAV2VEC2_ASR_BASE_960H"
+  },
+  "warnings": []
+ },
+ "enhance": {
+  "status": 200,
+  "wall_seconds": 4.53,
+  "sample_rate": 16000,
+  "channels": 1,
+  "sample_count": 320000,
+  "atten_lim_db": 20.0,
+  "levels": {
+   "rms_dbfs_in": -25.31,
+   "rms_dbfs_out": -27.24,
+   "peak_dbfs_in": -4.17,
+   "peak_dbfs_out": -5.14,
+   "removed_rms_dbfs": -31.69
+  },
+  "model": {
+   "backend": "deepfilternet",
+   "model_id": "DeepFilterNet3",
+   "is_mock": false,
+   "device": "cuda",
+   "libdf": "shim"
+  },
+  "warnings": [],
+  "input_sample_count": 320000,
+  "wav_bytes": 1280044
+ },
+ "beats": {
+  "status": 200,
+  "wall_seconds": 2.21,
+  "tempo_bpm": 125.0,
+  "beats_per_bar": 4,
+  "downbeats_available": true,
+  "model": {
+   "backend": "beat_this",
+   "model_id": "final0",
+   "is_mock": false,
+   "device": "cuda",
+   "dbn": false
+  },
+  "warnings": [],
+  "beats": 507,
+  "downbeats": 191,
+  "first_downbeats": [
+   1.62,
+   3.38,
+   5.14,
+   6.82
+  ]
+ },
+ "error_example": {
+  "status": 422,
+  "code": "INVALID_MEDIA"
+ }
+}

@@ -31,6 +31,8 @@ interface Props {
   selection: VisualSelection | null
   onClearSelection: () => void
   onVisualAction: (selection:VisualSelection, description:string, action:'isolate'|'mute'|'lower') => Promise<void>
+  /** Start a Moon pull rule that plays a sound whenever the selected object is on screen. */
+  onScreenSound?: (selection:VisualSelection) => void
   /** Seek requests from outside, such as the object list. `n` makes a repeat of the same time count. */
   seekTo?: { time: number; n: number } | null
   /** Clockwise quarter turns to show the picture at. Boxes and masks turn with it. */
@@ -43,7 +45,7 @@ interface Props {
 /** Fixed bar heights for the audio-only placeholder; a shape, not the file's waveform. */
 const BARS = Array.from({ length: 48 }, (_, i) => 10 + Math.round(30 * Math.abs(Math.sin(i * 0.55) * Math.cos(i * 0.21))))
 
-export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onClearSelection, onVisualAction, seekTo, rotation = 0, onRotate, audioOnly = false }: Props) {
+export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError, visual, onSelection, selection, onClearSelection, onVisualAction, onScreenSound, seekTo, rotation = 0, onRotate, audioOnly = false }: Props) {
   const t = useEngineTime(engine)
   const video = useRef<HTMLVideoElement>(null)
   const frame = useRef<HTMLDivElement>(null)
@@ -180,6 +182,7 @@ export function VideoPanel({ engine, src, onPick, onDuration, onAspect, onError,
           <label className="block text-muted">Sound to edit<input aria-label="Selected object sound" className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15" value={soundDescription} onChange={e=>{setSound(e.target.value);setSoundSelection(selectionKey)}} placeholder={objectSound(selection.label) ? 'e.g. dog barking' : 'e.g. a man imitating a dog barking'} /></label>
           {!objectSound(selection.label) && <p className="text-[10px] text-subtle">Describe what you hear this person doing. Their outline does not identify their voice.</p>}
           <div className="grid grid-cols-3 gap-1">{(['isolate','mute','lower'] as const).map(action=><button key={action} disabled={actionPending || !soundDescription.trim()} className={`rounded-lg px-2 py-1.5 font-medium capitalize transition-colors disabled:opacity-40 ${action==='isolate' ? 'bg-accent text-white hover:bg-[#1b62b3]' : 'border border-line text-fg hover:bg-surface-2'}`} onClick={()=>{setActionPending(true);void onVisualAction(selection,soundDescription,action).catch(e=>onError(e instanceof Error ? e.message : String(e))).finally(()=>setActionPending(false))}}>{action}</button>)}</div>
+          {onScreenSound && <button type="button" className="w-full rounded-lg border border-accent/40 bg-accent-soft px-2 py-1.5 font-medium text-accent transition-colors hover:border-accent/60" onClick={()=>onScreenSound(selection)}>Add a sound while it's on screen</button>}
           <p className="text-[10px] text-subtle">{visual?.selection_only ? 'Edits matching sounds throughout the clip. Similar sounds may also be affected.' : 'Seeing an object does not guarantee it makes a sound.'}</p>
         </div>}
         {input}

@@ -2,7 +2,7 @@ import { describe as group, expect, it } from 'vitest'
 import { envelopeAt, MAX_KEYFRAMES } from '../edits'
 import type { Stem } from '../types'
 import {
-  applyGainPull, cleanMoments, describe, echoGain, echoTimes, findPhrase, gainWindows, loudMoments, newRule, pickLayer,
+  applyGainPull, cleanMoments, describe, echoGain, echoTimes, findPhrase, gainWindows, layerGain, loudMoments, newRule, pickLayer,
   RECIPES, responseFor, ruleState, signature,
 } from './rules'
 import type { Rule } from './rules'
@@ -111,7 +111,7 @@ group('rules', () => {
   })
 
   it('reads as one sentence', () => {
-    const rule: Rule = { ...newRule(stems, 0, RECIPES[0]), meaning: 'a character lies' }
+    const rule: Rule = { ...newRule(stems, 0, RECIPES.find((r) => r.id === 'lie')), meaning: 'a character lies' }
     expect(describe(rule, stems)).toBe('Whenever “a character lies”, Thunder rumbling answers with its loudest sound')
     expect(describe({ ...rule, targetStemId: 'r', response: { kind: 'hush', amount: 0.5 } }, stems)).toBe('Whenever “a character lies”, Heavy rain hushes')
     expect(describe({ ...rule, response: { kind: 'effect', effect: 'deepen', amount: 0.5 } }, stems)).toBe('Whenever “a character lies”, Thunder rumbling deepens')
@@ -131,5 +131,18 @@ group('rules', () => {
     expect(r).toEqual({ kind: 'effect', effect: 'deepen', amount: 0.3 })
     expect(responseFor('echo', r, 't')).toEqual({ kind: 'echo', sourceStemId: 't', source: null, anchor: 'start', amount: 0.3 })
     expect(responseFor('hush', r, 't')).toEqual({ kind: 'hush', amount: 0.3 })
+  })
+})
+
+group('add a sound', () => {
+  it('describes the added layer and ignores the chosen layer in its signature', () => {
+    const rule: Rule = { ...newRule([], 0, RECIPES.find((r) => r.id === 'screen')), meaning: 'the hero is on screen' }
+    expect(rule.response).toEqual({ kind: 'layer', assetId: '', assetName: '', amount: 0.6 })
+    const named: Rule = { ...rule, response: { kind: 'layer', assetId: 'a'.repeat(32), assetName: 'Theme', amount: 0.6 } }
+    expect(describe(named, [])).toBe('Whenever “the hero is on screen”, “Theme” plays on a new layer')
+    expect(signature({ ...named, targetStemId: 'x' })).toBe(signature({ ...named, targetStemId: 'y' }))
+    expect(responseFor('layer', { kind: 'swell', amount: 0.3 }, 'x')).toEqual({ kind: 'layer', assetId: '', assetName: '', amount: 0.3 })
+    expect(layerGain(0)).toBe(0.2)
+    expect(layerGain(1)).toBe(1.4)
   })
 })

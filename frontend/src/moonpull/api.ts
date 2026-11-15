@@ -33,9 +33,19 @@ export const applyEffect = (c: BackendConfig, pid: string, sid: string, body: { 
 export const applyEcho = (c: BackendConfig, pid: string, sid: string, body: { source_stem_id: string; source_range: [number, number] | null; times: number[]; gain: number; rule: string }) =>
   call<{ moonpull_file: string }>(c, `${base(pid, sid)}/echo`, body)
 
+/** Adds a layer that plays the sound during each range. job_id names the layers to load next. */
+export const addLayer = (c: BackendConfig, pid: string, body: { asset_id: string; name: string; ranges: Array<[number, number]>; gain: number; rule: string }) =>
+  call<{ stem: { id: string }; job_id: string }>(c, `/api/projects/${encodeURIComponent(pid)}/moonpull/layer`, body)
+
 export const revert = (c: BackendConfig, pid: string, sid: string, file: string) => call<unknown>(c, `${base(pid, sid)}/revert`, { file })
 
 export const findMotif = (c: BackendConfig, pid: string, sid: string, seconds = 2) =>
   call<{ start: number; end: number }>(c, `${base(pid, sid)}/motif?seconds=${seconds}`)
 
 export const transcribe = (c: BackendConfig, pid: string, sid: string) => call<Transcript>(c, `${base(pid, sid)}/transcript`, {})
+
+/** The job a withLayers result says to load the layers from, when its work changed which layers exist. */
+export function layersJob(result: unknown): string | null {
+  const id = result && typeof result === 'object' ? (result as { layersJobId?: unknown }).layersJobId : undefined
+  return typeof id === 'string' && id ? id : null
+}

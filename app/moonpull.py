@@ -213,3 +213,49 @@ def transcribe(path, offset=0.0):
     try: cache.write_text(json.dumps(data))
     except OSError: pass
     return parse_transcript(data, offset)
+
+
+# Layer: a sound (an uploaded clip or a generated effect) that plays during every moment, on a new
+# layer of its own, so "whenever this person is on screen, their music plays" stays mixable.
+
+LAYER_FADE_IN = 0.08
+LAYER_FADE_OUT = 0.4
+
+
+def place_sound(sound_path, ranges, total, dest, sr=48000, gain=1.0, loop=True):
+    """Write ``total`` seconds of audio to ``dest``: silence, with the sound starting at each range.
+
+    The sound restarts at every range (a theme that answers each appearance). It loops to fill a
+    range longer than itself when ``loop`` is set, and is cut short with a fade where the range ends.
+    Ranges are in the new file's own seconds (timeline seconds, since it starts at 0).
+    """
+    snd, snd_sr = _read(sound_path)
+    if snd_sr != sr:
+        idx = np.arange(int(len(snd) * sr / snd_sr)) * (snd_sr / sr)
+        snd = np.stack([np.interp(idx, np.arange(len(snd)), snd[:, c]) for c in range(snd.shape[1])], axis=1).astype(np.float32)
+    if len(snd) < int(0.05 * sr): raise ValueError('The sound is too short')
+    snd = _match_channels(snd, 2)
+    n_total = int(round(total * sr))
+    if n_total <= 0: raise ValueError('The clip has no length')
+    out = np.zeros((n_total, 2), dtype=np.float32)
+    placed = 0
+    for start, end in ranges:
+        a, b = max(0, int(round(start * sr))), min(n_total, int(round(end * sr)))
+        if b - a < int(0.05 * sr): continue
+        n = b - a
+        if loop and n > len(snd):
+            piece = np.tile(snd, (int(np.ceil(n / len(snd))), 1))[:n]
+        else:
+            piece = snd[:n].copy()
+        m = len(piece)
+        env = np.ones(m, dtype=np.float32)
+        fin, fout = min(int(LAYER_FADE_IN * sr), m // 4), min(int(LAYER_FADE_OUT * sr), m // 3)
+        if fin > 0: env[:fin] = np.linspace(0, 1, fin, endpoint=False)
+        # Only fade out where the range cuts the sound off; a sound that ends by itself keeps its tail.
+        if fout > 0 and (loop or n < len(snd)): env[-fout:] = np.minimum(env[-fout:], np.linspace(1, 0, fout))
+        out[a:a + m] += piece * env[:, None] * float(gain)
+        placed += 1
+    if placed == 0: raise ValueError('None of the moments fall inside the clip')
+    Path(dest).parent.mkdir(parents=True, exist_ok=True)
+    sf.write(dest, soft_limit(out), sr, subtype='FLOAT')
+    return Path(dest)

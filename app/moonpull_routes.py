@@ -133,3 +133,50 @@ def moonpull_transcript(pid: str, sid: str, authorization: str | None = Header(N
     try: return mp.transcribe(row['path'], row['start_offset'])
     except mp.TranscriptError as exc: raise HTTPException(503, str(exc)) from exc
     except RuntimeError as exc: raise HTTPException(500, str(exc)) from exc
+
+
+class LayerRequest(BaseModel):
+    #: A sound uploaded or generated under /sound-effects (music uploads use long=true).
+    asset_id: str = Field(min_length=32, max_length=32)
+    name: str = Field(min_length=1, max_length=60)
+    ranges: list[Range] = Field(min_length=1, max_length=mp.MAX_RANGES)
+    gain: float = Field(default=1.0, ge=0, le=2, allow_inf_nan=False)
+    loop: bool = True
+    rule: str | None = Field(default=None, max_length=120)
+
+
+@router.post('/api/projects/{pid}/moonpull/layer')
+def moonpull_layer(pid: str, body: LayerRequest, authorization: str | None = Header(None)):
+    """Add a new layer that plays the sound during every moment (timeline seconds). Remove it by
+    deleting the layer with fold=false. Returns the new stem and a job to load the layers from."""
+    import json
+    import math
+    from .candidates import completed_job
+    from .core import probe, project_dir, uid
+    from .main import auth, refuse_during_refine
+    from .replacement import asset_path
+    p = auth(pid, authorization); refuse_during_refine(pid)
+    try: sound = asset_path(pid, body.asset_id)
+    except ValueError as exc: raise HTTPException(404, 'That sound is gone; upload or generate it again.') from exc
+    if not Path(sound).exists(): raise HTTPException(404, 'That sound is gone; upload or generate it again.')
+    try: total = float(json.loads(p['metadata'] or '{}')['duration'])
+    except (KeyError, TypeError, ValueError): total = probe(p['audio'])['duration']
+    for a, b in body.ranges:
+        if not (math.isfinite(a) and math.isfinite(b)) or b <= a: raise HTTPException(422, 'Each moment needs start < end')
+    sid = uid()
+    dest = project_dir(pid) / 'stems' / (uid() + '.wav')
+    _render(lambda: mp.place_sound(sound, sorted(body.ranges), total, dest, gain=body.gain, loop=body.loop))
+    name = body.name.strip()
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if db.execute("SELECT 1 FROM jobs WHERE project_id=? AND kind IN ('process','normalize','refine') AND status IN ('queued','processing')", (pid,)).fetchone():
+            dest.unlink(missing_ok=True)
+            raise HTTPException(409, 'Wait for the running separation to finish, then try again.')
+        if not db.execute('SELECT 1 FROM stems WHERE project_id=? LIMIT 1', (pid,)).fetchone():
+            dest.unlink(missing_ok=True)
+            raise HTTPException(409, 'Separate the audio into layers first.')
+        db.execute('INSERT INTO stems(id,project_id,name,path,duration,role,label,prompt,sample_rate,channels,format) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                   (sid, pid, name, str(dest), total, 'added', name, body.rule, 48000, 2, 'wav'))
+        out = stem(db.execute('SELECT * FROM stems WHERE project_id=? AND id=?', (pid, sid)).fetchone())
+        jid = completed_job(db, pid)
+    return {'stem': out, 'job_id': jid}

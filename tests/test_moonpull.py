@@ -168,3 +168,44 @@ def test_transcript_route_uses_openai_and_caches(client, tmp_path, monkeypatch):
     other = [s for s in stems.values() if s['id'] != sid][0]['id']
     r = client.post(f'/api/projects/{pid}/stems/{other}/moonpull/transcript', headers=h)
     assert r.status_code == 503 and 'not configured' in r.json()['detail']
+
+
+def test_place_sound_restarts_loops_and_stays_silent_between(tmp_path):
+    sound = tone(tmp_path / 's.wav', seconds=0.5, sr=44100)
+    out = mp.place_sound(sound, [(1.0, 2.2), (4.0, 4.3)], 6.0, tmp_path / 'layer.wav')
+    b, sr = sf.read(out, always_2d=True)
+    assert sr == 48000 and b.shape == (6 * 48000, 2)
+    rms = lambda lo, hi: float(np.sqrt(np.mean(b[int(lo * sr):int(hi * sr)] ** 2)))
+    assert rms(0, 0.99) == 0 and rms(2.21, 3.99) == 0 and rms(4.31, 6) == 0
+    # Loops to fill the 1.2 s range from a 0.5 s sound, and plays again at the second moment.
+    assert rms(1.6, 1.7) > 0.05 and rms(4.1, 4.15) > 0.05
+    assert np.abs(b).max() < 1.0
+    with pytest.raises(ValueError): mp.place_sound(sound, [(7.0, 8.0)], 6.0, tmp_path / 'x.wav')
+
+
+def test_layer_route_adds_a_layer_that_deletes_cleanly(client, tmp_path):
+    pid, h, stems = project_with_layers(client, tmp_path)
+    music = tone(tmp_path / 'theme.wav', seconds=20, freq=330)
+    with music.open('rb') as f:
+        assert client.post(f'/api/projects/{pid}/sound-effects/upload', headers=h, files={'file': ('theme.wav', f, 'audio/wav')}).status_code == 422
+    with music.open('rb') as f:
+        r = client.post(f'/api/projects/{pid}/sound-effects/upload?long=true', headers=h, files={'file': ('theme.wav', f, 'audio/wav')})
+    assert r.status_code == 200, r.text
+    aid = r.json()['asset_id']
+    url = f'/api/projects/{pid}/moonpull/layer'
+    assert client.post(url, json={'asset_id': aid, 'name': 'Theme', 'ranges': [[0.5, 1.5]]}).status_code == 401
+    assert client.post(url, headers=h, json={'asset_id': '0' * 32, 'name': 'Theme', 'ranges': [[0.5, 1.5]]}).status_code == 404
+    assert client.post(url, headers=h, json={'asset_id': aid, 'name': 'Theme', 'ranges': [[2.0, 1.0]]}).status_code == 422
+    r = client.post(url, headers=h, json={'asset_id': aid, 'name': 'Theme', 'ranges': [[0.5, 1.5], [2.5, 3.0]], 'rule': 'Hero on screen'})
+    assert r.status_code == 200, r.text
+    added = r.json()
+    assert added['stem']['label'] == 'Theme' and added['stem']['role'] == 'added' and added['stem']['start_offset'] == 0
+    job = client.get('/api/jobs/' + added['job_id'], headers=h).json()
+    assert added['stem']['id'] in {s['id'] for s in job['stems']}
+    audio = client.get(f"/api/projects/{pid}/stems/{added['stem']['id']}/audio", headers=h)
+    assert audio.status_code == 200
+    names = {s['name'] for s in client.get(f'/api/projects/{pid}/stems', headers=h).json()}
+    assert 'Theme' in names and len(names) == len(stems) + 1
+    r = client.delete(f"/api/projects/{pid}/stems/{added['stem']['id']}?fold=false", headers=h)
+    assert r.status_code == 200
+    assert {s['name'] for s in client.get(f'/api/projects/{pid}/stems', headers=h).json()} == set(stems)

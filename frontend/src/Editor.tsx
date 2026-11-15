@@ -18,7 +18,8 @@ import { Mixer } from './components/Mixer'
 import { MoonIcon, MoonPullPanel, MotifStrip } from './components/MoonPull'
 import type { WithLayers } from './components/MoonPull'
 import { FEATURES } from './features'
-import { loadRules, saveRules } from './moonpull/rules'
+import { loadRules, newRule, RECIPES, saveRules } from './moonpull/rules'
+import { followSelection, parseOnScreenCommand } from './moonpull/onscreen'
 import type { Rule } from './moonpull/rules'
 import type { ProjectPanelHandle } from './components/ProjectPanel'
 import { Logo } from './components/Logo'
@@ -167,6 +168,19 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
   const [moonRule, setMoonRule] = useState<string | null>(null)
   const openRule = useCallback((id: string) => { setMoonRule(id); setMoonOpen(true) }, [])
   const getTracks = useCallback(() => tracksRef.current, [])
+  /**
+   * A Moon pull rule that plays a sound whenever someone is on screen. Who it is comes from a click
+   * on the video; until then the rule waits with the picker open.
+   */
+  const startScreenRule = useCallback((trackId: number | null, meaning: string, soundHint = '') => {
+    const recipe = RECIPES.find((r) => r.id === 'screen')
+    let made = newRule(stemsRef.current, rules.list.length, recipe)
+    made = { ...made, meaning: meaning.slice(0, 60), ...(soundHint ? { soundHint } : {}) }
+    made = followSelection(made, visual, trackId, engine?.duration ?? 0)
+    setRules((rs) => [...rs, made])
+    openRule(made.id)
+    return made
+  }, [rules.list.length, visual, engine, setRules, openRule])
 
   useEffect(() => {
     tracksRef.current = tracks
@@ -384,6 +398,18 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
       if (!engine) return { message: 'Engine not ready.', ok: false }
       if (!projectPanel.current) return {message:'Project controls are not ready.',ok:false}
       const req = { prompt: text, stems, tracks: tracksRef.current, duration: engine.duration }
+      // "Whenever X is on screen, add Y" becomes a Moon pull rule; who X is comes from a click on the video.
+      const screen = parseOnScreenCommand(text)
+      if (screen) {
+        if (stems.length === 0 || !projectStems.projectId) return { message: 'First separate the clip into layers (Explode). Then ask again, or click the person in the video and choose “Add a sound while it’s on screen”.', ok: false }
+        const made = startScreenRule(visualSelection?.track_id ?? null, `${screen.subject} is on screen`, screen.sound)
+        const found = made.moments.length
+        const who = visualSelection ? `${visualSelection.label} #${visualSelection.track_id}` : ''
+        const next = !visual ? 'Find objects in the video first (steps panel), then click the person.'
+          : !who ? 'Click the person in the video to fill in when they are on screen.'
+            : `Following ${who}: on screen ${found} time${found === 1 ? '' : 's'}.`
+        return { message: `Opened a Moon pull rule. ${next} Then upload the music (or generate a short sound) and press Apply rule.`, ok: true }
+      }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
       if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'censorship' || plan.kind === 'clip_edit') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
@@ -403,7 +429,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
       }
       return { message: [res.message, ...warnings].join(' '), ok: actions.length > 0 }
     },
-    [engine, stems, setSteps],
+    [engine, stems, setSteps, startScreenRule, visual, visualSelection, projectStems.projectId],
   )
 
   useEffect(() => {
@@ -612,6 +638,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
               onClearSelection={() => setVisualSelection(null)}
               seekTo={seekTo}
               audioOnly={!videoSrc && projectStems.audioOnly === true}
+              onScreenSound={hasLayers && canRename ? (s) => startScreenRule(s.track_id, `${s.label} #${s.track_id} is on screen`) : undefined}
               onVisualAction={async (selection,description,action) => { if (!projectPanel.current) throw new Error('Project controls are not ready.'); await projectPanel.current.visualAction(selection,description,action) }}
             />
               </div>
@@ -704,7 +731,8 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
             {moonOpen && engine && hasLayers && (
               <div className="absolute inset-0 z-20 flex flex-col bg-canvas pb-3">
                 <MoonPullPanel rules={rules.list} setRules={setRules} selectedId={moonRule} onSelect={setMoonRule} stems={stems} getTracks={getTracks}
-                  engine={engine} duration={duration} withLayers={withLayers} onAutomation={setRuleAutomation} onClose={() => setMoonOpen(false)} />
+                  engine={engine} duration={duration} withLayers={withLayers} onAutomation={setRuleAutomation} onClose={() => setMoonOpen(false)}
+                  visual={visual} selection={visualSelection} />
               </div>
             )}
 

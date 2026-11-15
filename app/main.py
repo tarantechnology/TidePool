@@ -537,7 +537,8 @@ def effect_job(jid: str, authorization: str | None=Header(None)):
     return get_job(jid,'sfx_generation',authorization)
 
 @app.post('/api/projects/{pid}/sound-effects/upload')
-async def upload_effect(pid: str, file: UploadFile=File(...), authorization: str | None=Header(None)):
+async def upload_effect(pid: str, file: UploadFile=File(...), long: bool=False, authorization: str | None=Header(None)):
+    """A short effect (15 s), or with long=true a music clip of up to 3 minutes for Moon pull's added layers."""
     auth(pid,authorization)
     directory=project_dir(pid)/'effects';directory.mkdir(parents=True,exist_ok=True)
     aid=uid();temp=directory/(aid+'.upload');out=directory/(aid+'.wav');size=0
@@ -545,10 +546,10 @@ async def upload_effect(pid: str, file: UploadFile=File(...), authorization: str
         with temp.open('wb') as target:
             while chunk:=await file.read(1024*1024):
                 size+=len(chunk)
-                if size>20*1024*1024: raise HTTPException(413,'Sound effect must be under 20 MB.')
+                if size>(80 if long else 20)*1024*1024: raise HTTPException(413,'Music must be under 80 MB.' if long else 'Sound effect must be under 20 MB.')
                 target.write(chunk)
         info=probe(temp)
-        if not 0<info['duration']<=15: raise HTTPException(422,'Sound effect must be between 0 and 15 seconds.')
+        if not 0<info['duration']<=(180 if long else 15): raise HTTPException(422,'Music must be at most 3 minutes long.' if long else 'Sound effect must be between 0 and 15 seconds.')
         run('ffmpeg','-v','error','-y','-i',str(temp),'-vn','-ar','48000','-ac','2','-c:a','pcm_f32le',str(out))
         return {'asset_id':aid,'duration':probe(out)['duration'],'source':'uploaded'}
     except HTTPException:

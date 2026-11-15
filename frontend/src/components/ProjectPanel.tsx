@@ -40,6 +40,7 @@ import { DropLoader } from './DropLoader'
 import { FEATURES } from '../features'
 import { FeatureTag } from './FeatureTag'
 import { LayerTips } from './LayerTips'
+import { layersJob } from '../moonpull/api'
 
 const field = 'w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15'
 const button = 'rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1b62b3] disabled:opacity-40'
@@ -596,7 +597,9 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       await flush()
       if (reload) await beginStep(config, project.project_id, label)
       const result = await work(config, project.project_id, await getSavedStems(config, project.project_id))
-      if (reload) { await onLoadStems(new HttpStemSource(config, jobId), 'Project stems'); await endStep(config) }
+      // Work that adds or removes a layer names the job that lists the new set of layers.
+      const next = layersJob(result) ?? jobId
+      if (reload) { await onLoadStems(new HttpStemSource(config, next), 'Project stems'); if (next !== jobId) setJobId(next); await endStep(config) }
       setMessage('')
       return result
     } catch (e) { setMessage(''); throw e }

@@ -600,9 +600,10 @@ export async function startRefine(config:BackendConfig,projectId:string,stemId:s
 }
 
 export interface SoundEffectAsset {asset_id:string;duration:number;source:string}
-export async function uploadSoundEffect(config:BackendConfig,projectId:string,file:File):Promise<SoundEffectAsset> {
+/** long: a music clip of up to 3 minutes instead of a 15 second effect. */
+export async function uploadSoundEffect(config:BackendConfig,projectId:string,file:File,long=false):Promise<SoundEffectAsset> {
   const data=new FormData();data.append('file',file)
-  return (await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/sound-effects/upload`,{method:'POST',body:data})).json()) as SoundEffectAsset
+  return (await (await request(config,`/api/projects/${encodeURIComponent(projectId)}/sound-effects/upload${long?'?long=true':''}`,{method:'POST',body:data})).json()) as SoundEffectAsset
 }
 export async function generateSoundEffect(config:BackendConfig,projectId:string,prompt:string):Promise<string> {
   const result=await request(config,`/api/projects/${encodeURIComponent(projectId)}/sound-effects/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})})

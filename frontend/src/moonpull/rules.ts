@@ -17,6 +17,8 @@ export type PullResponse =
   | { kind: 'effect'; effect: Effect; amount: number }
   /** A motif sound (the loudest stretch of a layer, or a chosen stretch) lands at each moment. */
   | { kind: 'echo'; sourceStemId: string; source: [number, number] | null; anchor: 'start' | 'end'; amount: number }
+  /** A sound (uploaded music, or a generated effect) plays during each moment, on a new layer of its own. */
+  | { kind: 'layer'; assetId: string; assetName: string; amount: number }
 
 export interface Moment {
   start: number
@@ -28,6 +30,8 @@ export interface Moment {
 export type Applied =
   | { kind: 'gain'; stemId: string; before: Keyframe[]; after: Keyframe[]; signature: string }
   | { kind: 'audio'; stemId: string; file: string; signature: string; at: number }
+  /** The layer the rule added. Removing the rule deletes it. */
+  | { kind: 'layer'; stemId: string; signature: string }
 
 export interface Rule {
   id: string
@@ -38,9 +42,14 @@ export interface Rule {
   response: PullResponse
   moments: Moment[]
   applied?: Applied
+  /** Tracked objects the moments follow, for a rule made from who is on screen. */
+  trackIds?: number[]
+  /** What the user asked to hear, to start a generated sound from. */
+  soundHint?: string
 }
 
 export const RESPONSES: Array<{ kind: PullResponse['kind'] | Effect; label: string; verb: string }> = [
+  { kind: 'layer', label: 'Add a sound', verb: 'plays' },
   { kind: 'echo', label: 'Echo a sound', verb: 'answers with' },
   { kind: 'swell', label: 'Swell', verb: 'swells' },
   { kind: 'hush', label: 'Hush', verb: 'hushes' },
@@ -59,11 +68,14 @@ export const GAIN_LEAD = { swell: 0.3, hush: 0.25 }
 export const GAIN_TAIL = { swell: 1.2, hush: 0.4 }
 
 export const responseKey = (r: PullResponse): PullResponse['kind'] | Effect => (r.kind === 'effect' ? r.effect : r.kind)
+/** Volume as the added layer is mixed: 0.1..1 to 0.2..1.4. */
+export const layerGain = (amount: number) => Math.round((0.2 + 1.2 * clamp(amount, 0, 1)) * 100) / 100
 export const isGain = (r: PullResponse): r is Extract<PullResponse, { kind: 'swell' | 'hush' }> => r.kind === 'swell' || r.kind === 'hush'
 
 export function responseFor(key: PullResponse['kind'] | Effect, previous: PullResponse, fallbackSource: string): PullResponse {
   const amount = previous.amount
   if (key === 'swell' || key === 'hush') return { kind: key, amount }
+  if (key === 'layer') return previous.kind === 'layer' ? previous : { kind: 'layer', assetId: '', assetName: '', amount }
   if (key === 'echo') return previous.kind === 'echo' ? previous : { kind: 'echo', sourceStemId: fallbackSource, source: null, anchor: 'start', amount }
   if (key === 'effect') return previous
   return { kind: 'effect', effect: key, amount }
@@ -71,7 +83,9 @@ export function responseFor(key: PullResponse['kind'] | Effect, previous: PullRe
 
 /** What a rule's result depends on. A rule whose signature differs from what was applied is out of date. */
 export function signature(rule: Pick<Rule, 'targetStemId' | 'response' | 'moments'>): string {
-  return JSON.stringify([rule.targetStemId, rule.response, rule.moments.map((m) => [m.start, m.end])])
+  // An added sound makes its own layer, so the chosen layer does not matter to it.
+  const target = rule.response.kind === 'layer' ? '' : rule.targetStemId
+  return JSON.stringify([target, rule.response, rule.moments.map((m) => [m.start, m.end])])
 }
 
 export type RuleState = 'draft' | 'applied' | 'changed'
@@ -222,7 +236,7 @@ export interface Recipe {
   layer: string[]
   response: (stems: Stem[]) => PullResponse
   /** Where its moments usually come from. */
-  source: 'lines' | 'loud' | 'mark'
+  source: 'lines' | 'loud' | 'mark' | 'screen'
   loudLayer?: string[]
 }
 
@@ -232,6 +246,8 @@ const VOICE = ['talk', 'voice', 'dialog', 'speech', 'people', 'speak']
 
 /** Starting points that show what a rule can be. Each one is an ordinary rule once picked. */
 export const RECIPES: Recipe[] = [
+  { id: 'screen', meaning: 'Someone is on screen', title: 'Their own theme', example: 'Whenever this person is on screen, their music plays.', layer: [],
+    response: () => ({ kind: 'layer', assetId: '', assetName: '', amount: 0.6 }), source: 'screen' },
   { id: 'lie', meaning: 'A lie', title: 'The storm knows a lie', example: 'Whenever a character lies, the thunder answers.', layer: THUNDER,
     response: (s) => ({ kind: 'echo', sourceStemId: pickLayer(s, THUNDER), source: null, anchor: 'end', amount: 0.7 }), source: 'lines' },
   { id: 'words', meaning: 'Words matter', title: 'Words cut through', example: 'Whenever someone speaks, the rain steps back.', layer: RAIN,
@@ -261,6 +277,7 @@ export function describe(rule: Rule, stems: Stem[]): string {
   const name = (id: string) => stems.find((s) => s.id === id)?.label ?? 'a missing layer'
   const target = name(rule.targetStemId)
   const r = rule.response
+  if (r.kind === 'layer') return `Whenever “${rule.meaning}”, ${r.assetName ? `“${r.assetName}”` : 'a sound'} plays on a new layer`
   const what =
     r.kind === 'echo' ? `${target} answers with ${r.sourceStemId === rule.targetStemId ? 'its' : `${name(r.sourceStemId)}'s`} ${r.source ? 'chosen' : 'loudest'} sound`
       : r.kind === 'effect' ? `${target} ${RESPONSES.find((x) => x.kind === r.effect)?.verb}`

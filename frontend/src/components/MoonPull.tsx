@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { AudioEngine } from '../audio/engine'
-import type { BackendConfig, SavedStem } from '../api/backend'
+import type { BackendConfig, SavedStem, SoundEffectAsset, VisualMetadata } from '../api/backend'
+import { deleteStem, fetchStemBlobUrl, generateSoundEffect, getSoundEffectJob, uploadSoundEffect } from '../api/backend'
+import { objectTracks, trackColor } from '../objects'
+import type { VisualSelection } from '../visual'
+import { followSelection, onScreenMoments } from '../moonpull/onscreen'
 import { FEATURES } from '../features'
 import { useEngineTime } from '../hooks/useEngineTime'
 import * as api from '../moonpull/api'
 import type { Transcript } from '../moonpull/api'
 import {
-  applyGainPull, cleanMoments, describe, echoGain, echoTimes, findPhrase, isGain, loudMoments, MAX_MOMENTS, newRule, pickLayer,
+  applyGainPull, cleanMoments, describe, echoGain, echoTimes, findPhrase, isGain, layerGain, loudMoments, MAX_MOMENTS, newRule, pickLayer,
   RECIPES, RESPONSES, responseFor, responseKey, ruleState, signature,
 } from '../moonpull/rules'
 import type { Moment, Recipe, Rule } from '../moonpull/rules'
@@ -98,6 +102,16 @@ interface PanelProps {
   withLayers: WithLayers | null
   onAutomation: (stemId: string, keyframes: Keyframe[]) => void
   onClose: () => void
+  /** Tracked objects in the video, when the detector has run. */
+  visual: VisualMetadata | null
+  /** The object last clicked in the video. */
+  selection: VisualSelection | null
+}
+
+/** Delete a layer a rule added, if it is still there. Returns the job that lists the layers left. */
+async function dropLayer(config: BackendConfig, pid: string, saved: SavedStem[], stemId: string): Promise<string | null> {
+  if (!saved.some((s) => s.id === stemId)) return null
+  return (await deleteStem(config, pid, stemId, false)).job_id
 }
 
 /** Transcripts by project layer and file, so reopening the panel does not read the lines again. */
@@ -109,7 +123,8 @@ export function MoonPullPanel(props: PanelProps) {
   const [adding, setAdding] = useState(rules.length === 0)
 
   const create = (recipe?: Recipe) => {
-    const rule = newRule(stems, rules.length, recipe)
+    let rule = newRule(stems, rules.length, recipe)
+    if (recipe?.source === 'screen') rule = followSelection(rule, props.visual, props.selection?.track_id, props.duration)
     if (recipe?.source === 'loud' && recipe.loudLayer) {
       const src = pickLayer(stems, recipe.loudLayer)
       const s = props.engine.getSamples(src)
@@ -193,11 +208,11 @@ function Recipes({ stems, onPick }: { stems: Stem[]; onPick: (r?: Recipe) => voi
 
 /* ------------------------------------------------------------------ One rule */
 
-function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine, duration, withLayers, onAutomation }: PanelProps & { rule: Rule }) {
+function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine, duration, withLayers, onAutomation, visual, selection }: PanelProps & { rule: Rule }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
-  const [source, setSource] = useState<'lines' | 'loud' | null>(null)
+  const [source, setSource] = useState<'lines' | 'loud' | 'screen' | null>(rule.response.kind === 'layer' || rule.trackIds ? 'screen' : null)
   const update = (patch: Partial<Rule>) => setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, ...patch } : r)))
   const moments = useMemo(() => cleanMoments(rule.moments, duration), [rule.moments, duration])
   const r = rule.response
@@ -230,11 +245,28 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
   }
 
   const apply = () => run(state === 'draft' ? 'Applying the rule…' : 'Applying the rule again…', async () => {
-    if (!target) throw new Error('Choose the layer this rule changes.')
     if (moments.length === 0) throw new Error('Add at least one moment first.')
     const sig = signature({ ...rule, moments })
+    if (r.kind === 'layer') {
+      if (!r.assetId) throw new Error('Upload or generate the sound first.')
+      if (!withLayers) throw new Error('Adding a sound needs separated project layers. Separate the clip first.')
+      if (!takeOffGain()) return
+      const previous = rule.applied
+      if (previous?.kind === 'audio') assertNewest(previous)
+      const name = (r.assetName || 'Added sound').slice(0, 60)
+      const added = await withLayers(`Moon pull: ${rule.meaning}`, async (config, pid, saved) => {
+        if (previous?.kind === 'audio') await api.revert(config, pid, previous.stemId, previous.file)
+        if (previous?.kind === 'layer') await dropLayer(config, pid, saved, previous.stemId)
+        const res = await api.addLayer(config, pid, { asset_id: r.assetId, name, ranges: moments.map((m) => [m.start, m.end]), gain: layerGain(r.amount), rule: rule.meaning })
+        return { stemId: res.stem.id, layersJobId: res.job_id }
+      }, true)
+      update({ moments, applied: { kind: 'layer', stemId: added.stemId, signature: sig } })
+      setNote(`“${name}” is a new layer now, playing at ${moments.length} moment${moments.length > 1 ? 's' : ''}. Set its volume in the Mixer; Remove takes it out again.`)
+      return
+    }
+    if (!target) throw new Error('Choose the layer this rule changes.')
     if (isGain(r)) {
-      if (rule.applied?.kind === 'audio') { await removeAudio(); await nextFrame() }
+      if (rule.applied && rule.applied.kind !== 'gain') { await removeAudio(); await nextFrame() }
       if (!takeOffGain()) return
       const before = getTracks().find((t) => t.stemId === target.id)?.automation ?? []
       // Taking a different layer's result off does not touch this one; the same layer goes back to `before` above.
@@ -250,13 +282,14 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
     if (!takeOffGain()) return
     const previous = rule.applied
     if (previous?.kind === 'audio') assertNewest(previous)
-    const file = await withLayers(`Moon pull: ${rule.meaning}`, async (config, pid) => {
+    const { file } = await withLayers(`Moon pull: ${rule.meaning}`, async (config, pid, saved) => {
       if (previous?.kind === 'audio') await api.revert(config, pid, previous.stemId, previous.file)
+      const layersJobId = previous?.kind === 'layer' ? await dropLayer(config, pid, saved, previous.stemId) : null
       if (r.kind === 'effect') {
-        return (await api.applyEffect(config, pid, target.id, { effect: r.effect, ranges: moments.map((m) => [m.start, m.end]), amount: r.amount, rule: rule.meaning })).moonpull_file
+        return { layersJobId, file: (await api.applyEffect(config, pid, target.id, { effect: r.effect, ranges: moments.map((m) => [m.start, m.end]), amount: r.amount, rule: rule.meaning })).moonpull_file }
       }
       if (r.kind === 'echo') {
-        return (await api.applyEcho(config, pid, target.id, { source_stem_id: r.sourceStemId, source_range: r.source, times: echoTimes(moments, r.anchor), gain: echoGain(r.amount), rule: rule.meaning })).moonpull_file
+        return { layersJobId, file: (await api.applyEcho(config, pid, target.id, { source_stem_id: r.sourceStemId, source_range: r.source, times: echoTimes(moments, r.anchor), gain: echoGain(r.amount), rule: rule.meaning })).moonpull_file }
       }
       throw new Error('Unknown response')
     }, true)
@@ -266,8 +299,12 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
 
   const removeAudio = async () => {
     const a = rule.applied
-    if (!a || a.kind !== 'audio') return
+    if (!a || a.kind === 'gain') return
     if (!withLayers) throw new Error('Open the project to remove this rule from its audio.')
+    if (a.kind === 'layer') {
+      await withLayers(`Moon pull: removing ${rule.meaning}`, async (config, pid, saved) => ({ layersJobId: await dropLayer(config, pid, saved, a.stemId) }), true)
+      return
+    }
     assertNewest(a)
     await withLayers(`Moon pull: removing ${rule.meaning}`, (config, pid) => api.revert(config, pid, a.stemId, a.file), true)
   }
@@ -279,14 +316,14 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
   }
 
   const remove = () => run('Removing the rule from the audio…', async () => {
-    if (rule.applied?.kind === 'audio') await removeAudio()
+    if (rule.applied && rule.applied.kind !== 'gain') await removeAudio()
     else if (!takeOffGain()) return
     update({ applied: undefined })
     setNote('Removed. The layer is back to how it was before this rule.')
   })
 
   const discard = () => run('Deleting the rule…', async () => {
-    if (rule.applied?.kind === 'audio') await removeAudio()
+    if (rule.applied && rule.applied.kind !== 'gain') await removeAudio()
     else if (!takeOffGain()) return
     setRules((rs) => rs.filter((x) => x.id !== rule.id))
     onSelect(null)
@@ -302,11 +339,13 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
 
       <fieldset className="space-y-2">
         <legend className="mb-1 text-[11px] font-medium text-fg-2">the sound</legend>
-        <select className={field} value={rule.targetStemId} aria-label="Layer this rule changes"
-          onChange={(e) => update({ targetStemId: e.target.value, response: r.kind === 'echo' && r.sourceStemId === rule.targetStemId ? { ...r, sourceStemId: e.target.value } : r })}>
-          {!target && <option value={rule.targetStemId}>Choose a layer</option>}
-          {stems.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </select>
+        {r.kind !== 'layer' && (
+          <select className={field} value={rule.targetStemId} aria-label="Layer this rule changes"
+            onChange={(e) => update({ targetStemId: e.target.value, response: r.kind === 'echo' && r.sourceStemId === rule.targetStemId ? { ...r, sourceStemId: e.target.value } : r })}>
+            {!target && <option value={rule.targetStemId}>Choose a layer</option>}
+            {stems.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        )}
         <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="What the sound does">
           {RESPONSES.map((x) => (
             <button key={x.kind} type="button" role="radio" aria-checked={key === x.kind}
@@ -316,9 +355,10 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
             </button>
           ))}
         </div>
+        {r.kind === 'layer' && <SoundChoice rule={rule} withLayers={withLayers} update={update} />}
         {r.kind === 'echo' && <EchoSource rule={rule} stems={stems} engine={engine} withLayers={withLayers} update={update} />}
         <label className="flex items-center gap-2">
-          <span className="w-16 shrink-0 text-[11px] text-muted">Strength</span>
+          <span className="w-16 shrink-0 text-[11px] text-muted">{r.kind === 'layer' ? 'Volume' : 'Strength'}</span>
           <input type="range" min={0.1} max={1} step={0.05} value={r.amount} aria-label="Strength"
             onChange={(e) => update({ response: { ...r, amount: Number(e.target.value) } })}
             className="fader flex-1" style={{ ['--pos' as string]: `${((r.amount - 0.1) / 0.9) * 100}%` } as CSSProperties} />
@@ -337,9 +377,12 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
           <button type="button" className={secondary} onClick={mark} title="Adds 1.5 seconds from the playhead. Press M while the panel is open.">Mark the playhead</button>
           <button type="button" className={secondary} aria-pressed={source === 'lines'} onClick={() => setSource(source === 'lines' ? null : 'lines')}>From lines…</button>
           <button type="button" className={secondary} aria-pressed={source === 'loud'} onClick={() => setSource(source === 'loud' ? null : 'loud')}>When a layer is loud…</button>
+          <button type="button" className={secondary} aria-pressed={source === 'screen'} onClick={() => setSource(source === 'screen' ? null : 'screen')}>While someone is on screen…</button>
         </div>
         <MarkKey onMark={mark} />
         {source === 'lines' && <LinesPicker stems={stems} withLayers={withLayers} onAdd={(ms) => setMoments([...rule.moments, ...ms])} />}
+        {source === 'screen' && <ScreenPicker rule={rule} visual={visual} selection={selection} engine={engine} duration={duration}
+          onUse={(trackIds, ms) => update({ trackIds, moments: ms })} />}
         {source === 'loud' && <LoudPicker stems={stems} engine={engine} duration={duration} onAdd={(ms) => setMoments(ms)} />}
         {moments.length === 0 ? (
           <p className="rounded-lg bg-surface-2 px-2.5 py-2 text-[11px] text-muted">No moments yet. Play the clip and mark each time the meaning happens, or take them from what is said.</p>
@@ -363,7 +406,7 @@ function RuleEditor({ rule, rules, setRules, onSelect, stems, getTracks, engine,
       <div className="rounded-xl bg-accent-soft/70 px-3 py-2.5">
         <p className="text-[11px] leading-snug text-fg-2">{describe(rule, stems)}, {moments.length === 0 ? 'once you add moments.' : `${moments.length} time${moments.length > 1 ? 's' : ''} in this clip.`}</p>
         <div className="mt-2 flex flex-wrap items-center gap-1.5 whitespace-nowrap">
-          <button type="button" className={primary} disabled={Boolean(busy) || moments.length === 0 || state === 'applied' || (needsServer && !withLayers)} onClick={() => void apply()}>
+          <button type="button" className={primary} disabled={Boolean(busy) || moments.length === 0 || state === 'applied' || (needsServer && !withLayers) || (r.kind === 'layer' && !r.assetId)} onClick={() => void apply()}>
             {state === 'draft' ? 'Apply rule' : state === 'changed' ? 'Apply changes' : 'Holding'}
           </button>
           {rule.applied && <button type="button" className={secondary} disabled={Boolean(busy)} onClick={() => void remove()} title="Take this rule off its layer">Remove</button>}
@@ -520,6 +563,115 @@ function LoudPicker({ stems, engine, duration, onAdd }: { stems: Stem[]; engine:
       </div>
       <button type="button" className={primary} disabled={found.length === 0} onClick={() => onAdd(found)}>Use these {found.length} moments</button>
       <p className="text-[10px] text-subtle">Replaces the list. Hears loudness only, so music on the same layer counts too.</p>
+    </div>
+  )
+}
+
+/**
+ * Moments from who is on screen. The person is picked by clicking them in the video (or ticking
+ * them here); the tracker's frames say when they are visible. A camera cut can give the same person
+ * a new number, so several can be ticked.
+ */
+function ScreenPicker({ rule, visual, selection, engine, duration, onUse }: {
+  rule: Rule; visual: VisualMetadata | null; selection: VisualSelection | null; engine: AudioEngine; duration: number
+  onUse: (trackIds: number[], moments: Moment[]) => void
+}) {
+  const tracks = useMemo(() => (visual ? objectTracks(visual) : []), [visual])
+  const picked = rule.trackIds ?? []
+  const choose = (ids: number[]) => { if (visual) onUse(ids, onScreenMoments(visual, ids, duration)) }
+  // A click on someone in the video while this is open ticks them.
+  const clicked = selection?.track_id
+  useEffect(() => {
+    if (clicked === null || clicked === undefined || !visual || picked.includes(clicked)) return
+    choose([...picked, clicked])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clicked])
+  if (!visual) {
+    return <p className="mb-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] text-amber-900">Nobody has been found in the video yet. In the steps panel, open Objects in the video and press Find objects in video. Then click the person in the video.</p>
+  }
+  const seconds = visual.processed_duration_seconds
+  return (
+    <div className="mb-2 space-y-1.5 rounded-lg border border-line p-2">
+      <p className="text-[11px] text-muted">Click the person in the video, or tick them here. If a cut gives them a new number, tick that one too.</p>
+      {tracks.length === 0 ? <p className="text-[11px] text-muted">No people or objects were tracked in this video.</p> : (
+        <ul className="max-h-40 space-y-px overflow-y-auto">
+          {tracks.map((t) => (
+            <li key={t.trackId}>
+              <label className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 hover:bg-surface-2">
+                <input type="checkbox" className="accent-[#2270c8]" checked={picked.includes(t.trackId)}
+                  onChange={() => choose(picked.includes(t.trackId) ? picked.filter((x) => x !== t.trackId) : [...picked, t.trackId])} />
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: trackColor(t.trackId).css }} />
+                <span className="text-[11px] text-fg">{t.label} #{t.trackId}</span>
+                <button type="button" className="ml-auto font-mono text-[10px] text-accent hover:underline" onClick={(e) => { e.preventDefault(); engine.seek(t.firstSeconds) }} title="Jump there">
+                  {fmt(t.firstSeconds)}–{fmt(t.lastSeconds)} s
+                </button>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      {seconds < duration - 0.5 && (
+        <p className="text-[11px] text-amber-800">The tracker looked at the first {fmt(seconds)} s of this clip, so moments after that are not found. Mark later ones with the playhead.</p>
+      )}
+    </div>
+  )
+}
+
+/** The sound an "Add a sound" rule plays: uploaded music, or a short generated effect that loops. */
+function SoundChoice({ rule, withLayers, update }: { rule: Rule; withLayers: WithLayers | null; update: (p: Partial<Rule>) => void }) {
+  const r = rule.response
+  const [prompt, setPrompt] = useState(rule.soundHint ?? '')
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+  const [preview, setPreview] = useState<{ id: string; url: string } | null>(null)
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url) }, [preview])
+  if (r.kind !== 'layer') return null
+  if (!withLayers) return <p className="text-[11px] text-amber-800">Adding a sound works on separated project layers.</p>
+  const choose = (asset: SoundEffectAsset, name: string) => update({ response: { ...r, assetId: asset.asset_id, assetName: name.slice(0, 60) } })
+  const load = (label: string, work: (c: BackendConfig, pid: string) => Promise<{ asset: SoundEffectAsset; name: string }>) => {
+    setBusy(label); setError('')
+    void withLayers(label, async (c, pid) => {
+      const got = await work(c, pid)
+      const url = await fetchStemBlobUrl(c, `/api/projects/${encodeURIComponent(pid)}/sound-effects/${got.asset.asset_id}/audio`)
+      return { ...got, url }
+    }, false)
+      .then(({ asset, name, url }) => { choose(asset, name); setPreview({ id: asset.asset_id, url }) })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(''))
+  }
+  const upload = (file: File) => load('Uploading the sound…', async (c, pid) => ({ asset: await uploadSoundEffect(c, pid, file, true), name: file.name.replace(/\.[^.]+$/, '') }))
+  const generate = () => load('Generating the sound…', async (c, pid) => {
+    let id: string
+    try { id = await generateSoundEffect(c, pid, prompt.trim()) } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new Error(/unavailable|503/i.test(msg) ? 'Sound generation is not set up on this server. Upload a music clip instead.' : msg)
+    }
+    for (;;) {
+      const job = await getSoundEffectJob(c, id)
+      if (job.status === 'failed') throw new Error(job.error || 'Generation failed. Upload a music clip instead.')
+      if (job.status === 'completed') {
+        if (!job.result) throw new Error('Generation returned no sound.')
+        return { asset: job.result, name: prompt.trim() }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+  })
+  return (
+    <div className="space-y-1.5 rounded-lg border border-line px-2.5 py-2">
+      <p className="text-[11px] text-fg-2">{r.assetId ? <>Plays <span className="font-medium">“{r.assetName}”</span> on a new layer, from the start each time, looping if the moment is longer.</> : 'Choose the sound to play. It goes on a new layer of its own.'}</p>
+      {preview && preview.id === r.assetId && <audio controls src={preview.url} className="h-8 w-full" aria-label="The chosen sound" />}
+      <label className="block">
+        <span className="mb-0.5 block text-[11px] text-muted">Upload music or a sound (up to 3 minutes)</span>
+        <input type="file" accept="audio/*,video/*" disabled={Boolean(busy)} className="block w-full text-[11px]"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
+      </label>
+      <div className="flex gap-1.5">
+        <input className={field} value={prompt} placeholder="Or describe a short sound to generate" maxLength={300} onChange={(e) => setPrompt(e.target.value)} aria-label="Sound to generate" />
+        <button type="button" className={secondary + ' shrink-0'} disabled={Boolean(busy) || !prompt.trim()} onClick={generate}>Generate</button>
+      </div>
+      <p className="text-[10px] text-subtle">Generated sounds are short effects (about 3 seconds) that loop; for real music, upload a clip.</p>
+      {busy && <p role="status" className="text-[11px] text-accent">{busy}</p>}
+      {error && <p role="alert" className="text-[11px] text-red-700">{error}</p>}
     </div>
   )
 }

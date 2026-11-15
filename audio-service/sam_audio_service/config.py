@@ -148,6 +148,40 @@ class Settings:
     # 10 s windows analysed per stem (active regions only, spread across the song).
     stem_label_max_windows: int = field(default_factory=lambda: _int("AUDIO_STEM_LABEL_MAX_WINDOWS", 12))
 
+    # Speech and rhythm tools (speech/): /v1/words, /v1/enhance, /v1/beats. Each is opt-in
+    # ("off" = endpoint answers UNSUPPORTED_OPERATION), loaded on first use, and has its own lock,
+    # so a transcription never waits behind a separation and vice versa.
+    # Word timestamps: off | mock | faster_whisper.
+    words_backend: str = field(default_factory=lambda: os.getenv("AUDIO_WORDS_BACKEND", "off"))
+    # faster-whisper model name or CTranslate2 directory / HF repo (large-v3, large-v3-turbo, ...).
+    words_model: str = field(default_factory=lambda: os.getenv("AUDIO_WORDS_MODEL", "large-v3-turbo"))
+    # CTranslate2 compute type; "auto" -> float16 on CUDA, int8 on CPU.
+    words_compute_type: str = field(default_factory=lambda: os.getenv("AUDIO_WORDS_COMPUTE_TYPE", "auto"))
+    words_beam_size: int = field(default_factory=lambda: _int("AUDIO_WORDS_BEAM_SIZE", 5))
+    words_batch_size: int = field(default_factory=lambda: _int("AUDIO_WORDS_BATCH_SIZE", 8))  # >1: batched pipeline
+    words_vad: bool = field(default_factory=lambda: _bool("AUDIO_WORDS_VAD", True))
+    # Word-boundary refinement: off | wav2vec2 (CTC forced alignment, WhisperX-style; English only).
+    words_align: str = field(default_factory=lambda: os.getenv("AUDIO_WORDS_ALIGN", "wav2vec2"))
+    # One entry per line (see speech/profanity_en.txt); unset -> the bundled English list.
+    words_profanity_file: str | None = field(default_factory=lambda: os.getenv("AUDIO_WORDS_PROFANITY_FILE") or None)
+    # Gap between words that /v1/words reports as a pause ("remove the long pauses").
+    words_min_pause_seconds: float = field(default_factory=lambda: _float("AUDIO_WORDS_MIN_PAUSE_SECONDS", 0.7))
+    # Speech enhancement: off | mock | deepfilternet.
+    enhance_backend: str = field(default_factory=lambda: os.getenv("AUDIO_ENHANCE_BACKEND", "off"))
+    enhance_model: str = field(default_factory=lambda: os.getenv("AUDIO_ENHANCE_MODEL", "DeepFilterNet3"))
+    # Default attenuation limit in dB (how much noise may be removed); unset = unlimited.
+    enhance_atten_limit_db: float | None = field(default_factory=lambda: _opt_float("AUDIO_ENHANCE_ATTEN_LIMIT_DB"))
+    # Seconds per model window for long inputs (0 = whole file in one pass).
+    enhance_chunk_seconds: float = field(default_factory=lambda: _float("AUDIO_ENHANCE_CHUNK_SECONDS", 60.0))
+    # Beats/downbeats/tempo: off | mock | beat_this | librosa.
+    beats_backend: str = field(default_factory=lambda: os.getenv("AUDIO_BEATS_BACKEND", "off"))
+    beats_model: str = field(default_factory=lambda: os.getenv("AUDIO_BEATS_MODEL", "final0"))  # beat_this checkpoint
+    beats_dbn: bool = field(default_factory=lambda: _bool("AUDIO_BEATS_DBN", False))  # beat_this: madmom DBN post-processing
+    # When beat_this cannot load or run: librosa (beats + tempo, no downbeats) | off.
+    beats_fallback: str = field(default_factory=lambda: os.getenv("AUDIO_BEATS_FALLBACK", "librosa"))
+    # The speech/beat models run on this device ("auto" = AUDIO_DEVICE).
+    speech_device: str = field(default_factory=lambda: os.getenv("AUDIO_SPEECH_DEVICE", "auto"))
+
     # Limits.
     max_duration_seconds: float = field(default_factory=lambda: _float("AUDIO_MAX_DURATION_SECONDS", 600.0))
     max_input_bytes: int = field(default_factory=lambda: _int("AUDIO_MAX_INPUT_BYTES", 500 * 1024 * 1024))
@@ -346,6 +380,41 @@ class Settings:
             raise ValueError("AUDIO_ROUTER_CLASSIFIER must be 'off', 'mock', 'panns' or 'ast'")
         if not 0 <= self.router_music_threshold <= 1:
             raise ValueError("AUDIO_ROUTER_MUSIC_THRESHOLD must be in [0, 1]")
+        self._validate_speech()
+
+    def _validate_speech(self) -> None:
+        if self.words_backend not in {"off", "mock", "faster_whisper"}:
+            raise ValueError("AUDIO_WORDS_BACKEND must be 'off', 'mock' or 'faster_whisper'")
+        if not self.words_model:
+            raise ValueError("AUDIO_WORDS_MODEL must not be empty")
+        if self.words_compute_type not in {"auto", "float16", "int8_float16", "int8", "float32", "bfloat16", "int8_bfloat16"}:
+            raise ValueError("AUDIO_WORDS_COMPUTE_TYPE must be auto, float16, int8_float16, int8, float32, bfloat16 or int8_bfloat16")
+        if not 1 <= self.words_beam_size <= 10:
+            raise ValueError("AUDIO_WORDS_BEAM_SIZE must be between 1 and 10")
+        if not 1 <= self.words_batch_size <= 32:
+            raise ValueError("AUDIO_WORDS_BATCH_SIZE must be between 1 and 32")
+        if self.words_align not in {"off", "wav2vec2"}:
+            raise ValueError("AUDIO_WORDS_ALIGN must be 'off' or 'wav2vec2'")
+        if self.words_profanity_file and not Path(self.words_profanity_file).is_file():
+            raise ValueError(f"AUDIO_WORDS_PROFANITY_FILE does not exist: {self.words_profanity_file}")
+        if not 0.1 <= self.words_min_pause_seconds <= 10:
+            raise ValueError("AUDIO_WORDS_MIN_PAUSE_SECONDS must be in [0.1, 10]")
+        if self.enhance_backend not in {"off", "mock", "deepfilternet"}:
+            raise ValueError("AUDIO_ENHANCE_BACKEND must be 'off', 'mock' or 'deepfilternet'")
+        if self.enhance_model not in {"DeepFilterNet3", "DeepFilterNet2", "DeepFilterNet"}:
+            raise ValueError("AUDIO_ENHANCE_MODEL must be DeepFilterNet3, DeepFilterNet2 or DeepFilterNet")
+        if self.enhance_atten_limit_db is not None and not 0 < self.enhance_atten_limit_db <= 100:
+            raise ValueError("AUDIO_ENHANCE_ATTEN_LIMIT_DB must be in (0, 100]")
+        if self.enhance_chunk_seconds != 0 and not 5 <= self.enhance_chunk_seconds <= 600:
+            raise ValueError("AUDIO_ENHANCE_CHUNK_SECONDS must be 0 or in [5, 600]")
+        if self.beats_backend not in {"off", "mock", "beat_this", "librosa"}:
+            raise ValueError("AUDIO_BEATS_BACKEND must be 'off', 'mock', 'beat_this' or 'librosa'")
+        if not self.beats_model:
+            raise ValueError("AUDIO_BEATS_MODEL must not be empty")
+        if self.beats_fallback not in {"off", "librosa"}:
+            raise ValueError("AUDIO_BEATS_FALLBACK must be 'off' or 'librosa'")
+        if self.speech_device not in {"auto", "cpu", "mps"} and not self.speech_device.startswith("cuda"):
+            raise ValueError("AUDIO_SPEECH_DEVICE must be auto, cpu, mps, cuda or cuda:N")
 
 
 def load_settings() -> Settings:

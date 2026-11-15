@@ -5,7 +5,7 @@ import type { AudioEngine } from '../audio/engine'
 import { gainToPos, isAudible, MAX_KEYFRAMES, posToGain, spliceAutomation, stemStart } from '../edits'
 import { useEngineTime } from '../hooks/useEngineTime'
 import { addKeyframe, moveKeyframe, pointToKeyframe, removeKeyframe } from '../keyframes'
-import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
+import type { EditAction, FxChip, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
 import { FEATURES } from '../features'
@@ -32,6 +32,8 @@ interface Props {
   onKindChange: (stemId: string, kind: StemKind) => void
   /** Edits are going to a backend, so a curve it would reject gets a marker. */
   syncing: boolean
+  /** Preview a layer without one of its applied effects. Absent: chips are shown read-only. */
+  onRemoveFx?: (stemId: string, chip: FxChip) => void
   /** Rename a layer; absent when layers are not project stems. */
   onRename?: (stemId: string, name: string) => Promise<void>
   onDelete?: (stemId: string, fold: boolean) => Promise<void>
@@ -126,7 +128,7 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, onRename, onDelete, residualLabel = null, residualId = null, header, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onActions, onClipEdit, onKindChange, syncing, onRename, onDelete, residualLabel = null, residualId = null, header, canTrim, onKeepRange, onSplitRange, onCutRange, exportClips, canUndoClip, canRedoClip, onUndoClip, onRedoClip, onRemoveFx }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [selecting, setSelecting] = useState(false)
@@ -360,6 +362,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onActions,
                 residualId={residualId}
                 unsynced={syncing && hasStepKeyframes(track.automation)}
                 compact={laneHeight(stem.id) < COMPACT_BELOW}
+                onRemoveFx={onRemoveFx ? (chip) => onRemoveFx(stem.id, chip) : undefined}
                 clipActions={stem.isEffectClip ? <span className="flex gap-1"><button type="button" aria-label={`Move ${stem.label} earlier`} title="Move 0.1 seconds earlier" onClick={()=>onClipEdit(stem.id,'move',Math.max(0,stemStart(stem)-.1))}>←</button><button type="button" aria-label={`Move ${stem.label} later`} title="Move 0.1 seconds later" onClick={()=>onClipEdit(stem.id,'move',Math.min(Math.max(0,duration-stem.duration),stemStart(stem)+.1))}>→</button><button type="button" aria-label={`Delete ${stem.label}`} title="Remove this effect clip" onClick={()=>onClipEdit(stem.id,'delete')}>×</button></span> : undefined}
               />
               <div className="relative overflow-hidden bg-gradient-to-b from-tint/[0.02] to-transparent">

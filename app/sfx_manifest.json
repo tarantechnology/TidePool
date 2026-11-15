@@ -1,0 +1,2615 @@
+{
+ "pack": "tidepool-meme-sfx",
+ "version": 1,
+ "licence_policy": "Only CC0-1.0 assets; procedural sounds are synthesized by app/sfx_synth.py.",
+ "sounds": [
+  {
+   "id": "crickets",
+   "title": "Crickets (awkward silence)",
+   "category": "ambience",
+   "tags": [
+    "crickets",
+    "awkward",
+    "silence",
+    "night",
+    "nobody laughed"
+   ],
+   "aliases": [
+    "crickets",
+    "cricket",
+    "awkward silence",
+    "chirping crickets",
+    "nobody laughed"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#crickets",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "crickets.flac",
+   "hit": null,
+   "duration": 4.336,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -22.0,
+   "true_peak_dbtp": -8.0
+  },
+  {
+   "id": "wind_gust",
+   "title": "Tumbleweed wind",
+   "category": "ambience",
+   "tags": [
+    "wind",
+    "tumbleweed",
+    "empty",
+    "awkward",
+    "desert",
+    "silence"
+   ],
+   "aliases": [
+    "wind",
+    "tumbleweed",
+    "desert wind",
+    "empty room",
+    "gust"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#wind_gust",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "wind_gust.flac",
+   "hit": null,
+   "duration": 3.999,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -22.0,
+   "true_peak_dbtp": -10.0
+  },
+  {
+   "id": "airhorn",
+   "title": "Air horn",
+   "category": "comedy",
+   "tags": [
+    "airhorn",
+    "air horn",
+    "mlg",
+    "hype",
+    "celebration",
+    "meme",
+    "party"
+   ],
+   "aliases": [
+    "airhorn",
+    "air horn",
+    "mlg airhorn",
+    "mlg horn",
+    "party horn",
+    "hype horn",
+    "stadium horn"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#airhorn",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "airhorn.flac",
+   "hit": null,
+   "duration": 1.5,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -14.0,
+   "true_peak_dbtp": -10.9
+  },
+  {
+   "id": "boing",
+   "title": "Spring boing",
+   "category": "comedy",
+   "tags": [
+    "boing",
+    "spring",
+    "bounce",
+    "cartoon",
+    "jump"
+   ],
+   "aliases": [
+    "boing",
+    "spring",
+    "boing boing",
+    "bounce",
+    "jaw harp",
+    "doing"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#boing",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "boing.flac",
+   "hit": null,
+   "duration": 1.0,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -20.2,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "cartoon_run",
+   "title": "Cartoon run (scramble)",
+   "category": "comedy",
+   "tags": [
+    "run",
+    "cartoon",
+    "feet",
+    "escape",
+    "scramble"
+   ],
+   "aliases": [
+    "cartoon run",
+    "running feet",
+    "scramble",
+    "run away",
+    "scurry"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#cartoon_run",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "cartoon_run.flac",
+   "hit": null,
+   "duration": 1.57,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -4.3
+  },
+  {
+   "id": "cartoon_zip",
+   "title": "Zip away",
+   "category": "comedy",
+   "tags": [
+    "zip",
+    "zoom",
+    "exit",
+    "cartoon",
+    "fast"
+   ],
+   "aliases": [
+    "zip",
+    "zip away",
+    "zoom off",
+    "zoom",
+    "dash"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#cartoon_zip",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "cartoon_zip.flac",
+   "hit": null,
+   "duration": 0.35,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -10.8
+  },
+  {
+   "id": "clown_horn",
+   "title": "Clown horn (honk honk)",
+   "category": "comedy",
+   "tags": [
+    "honk",
+    "clown",
+    "horn",
+    "bike horn",
+    "circus"
+   ],
+   "aliases": [
+    "honk",
+    "honk honk",
+    "clown horn",
+    "bike horn",
+    "bulb horn",
+    "goose honk"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#clown_horn",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "clown_horn.flac",
+   "hit": null,
+   "duration": 0.64,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -9.7
+  },
+  {
+   "id": "cowbell",
+   "title": "Cowbell",
+   "category": "comedy",
+   "tags": [
+    "cowbell",
+    "percussion",
+    "more cowbell"
+   ],
+   "aliases": [
+    "cowbell",
+    "more cowbell",
+    "bell hit"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#cowbell",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "cowbell.flac",
+   "hit": null,
+   "duration": 0.45,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -2.6
+  },
+  {
+   "id": "drum_fill",
+   "title": "Ba-dum (no cymbal)",
+   "category": "comedy",
+   "tags": [
+    "drum",
+    "joke",
+    "badum",
+    "tom"
+   ],
+   "aliases": [
+    "ba dum",
+    "badum",
+    "drum fill",
+    "tom fill"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#drum_fill",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "drum_fill.flac",
+   "hit": null,
+   "duration": 0.553,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -4.6
+  },
+  {
+   "id": "drumroll",
+   "title": "Drumroll with crash",
+   "category": "comedy",
+   "tags": [
+    "drumroll",
+    "suspense",
+    "reveal",
+    "drum",
+    "announcement"
+   ],
+   "aliases": [
+    "drumroll",
+    "drum roll",
+    "drumroll please",
+    "snare roll"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#drumroll",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "drumroll.flac",
+   "hit": 2.5,
+   "duration": 4.227,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.7,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "falling_whistle",
+   "title": "Falling bomb whistle",
+   "category": "comedy",
+   "tags": [
+    "falling",
+    "whistle",
+    "bomb",
+    "drop",
+    "cartoon"
+   ],
+   "aliases": [
+    "falling whistle",
+    "bomb whistle",
+    "falling bomb",
+    "incoming"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#falling_whistle",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "falling_whistle.flac",
+   "hit": null,
+   "duration": 2.2,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -11.7
+  },
+  {
+   "id": "pop",
+   "title": "Pop",
+   "category": "comedy",
+   "tags": [
+    "pop",
+    "bubble",
+    "cork",
+    "appear"
+   ],
+   "aliases": [
+    "pop",
+    "bubble pop",
+    "cork pop",
+    "plop",
+    "blip"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#pop",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "pop.flac",
+   "hit": null,
+   "duration": 0.12,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -4.3
+  },
+  {
+   "id": "rimshot",
+   "title": "Rimshot (ba-dum-tss)",
+   "category": "comedy",
+   "tags": [
+    "rimshot",
+    "joke",
+    "drum",
+    "punchline",
+    "comedy"
+   ],
+   "aliases": [
+    "rimshot",
+    "ba dum tss",
+    "badum tss",
+    "ba dum tiss",
+    "joke drum",
+    "drum sting",
+    "badumtss",
+    "ba-dum-tss"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#rimshot",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "rimshot.flac",
+   "hit": 0.38,
+   "duration": 2.127,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -1.2
+  },
+  {
+   "id": "sad_trombone",
+   "title": "Sad trombone (wah wah wah)",
+   "category": "comedy",
+   "tags": [
+    "fail",
+    "sad",
+    "trombone",
+    "loser",
+    "comedy"
+   ],
+   "aliases": [
+    "sad trombone",
+    "wah wah wah",
+    "wah wah",
+    "womp womp",
+    "fail horn",
+    "sad horn",
+    "price is wrong",
+    "you lose"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#sad_trombone",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "sad_trombone.flac",
+   "hit": null,
+   "duration": 3.081,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -3.6
+  },
+  {
+   "id": "slide_whistle_down",
+   "title": "Slide whistle down",
+   "category": "comedy",
+   "tags": [
+    "whistle",
+    "slide",
+    "down",
+    "cartoon",
+    "fall"
+   ],
+   "aliases": [
+    "slide whistle down",
+    "whistle down",
+    "falling whistle",
+    "descending whistle"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#slide_whistle_down",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "slide_whistle_down.flac",
+   "hit": null,
+   "duration": 1.0,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -12.2
+  },
+  {
+   "id": "slide_whistle_up",
+   "title": "Slide whistle up",
+   "category": "comedy",
+   "tags": [
+    "whistle",
+    "slide",
+    "up",
+    "cartoon",
+    "rise"
+   ],
+   "aliases": [
+    "slide whistle",
+    "slide whistle up",
+    "whistle up",
+    "rising whistle",
+    "cartoon whistle"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#slide_whistle_up",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "slide_whistle_up.flac",
+   "hit": null,
+   "duration": 0.9,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -12.3
+  },
+  {
+   "id": "squeak_toy",
+   "title": "Squeaky toy",
+   "category": "comedy",
+   "tags": [
+    "squeak",
+    "toy",
+    "rubber",
+    "dog toy",
+    "cute"
+   ],
+   "aliases": [
+    "squeak",
+    "squeaky toy",
+    "rubber duck",
+    "dog toy",
+    "squeeze"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#squeak_toy",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "squeak_toy.flac",
+   "hit": null,
+   "duration": 0.57,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -10.3
+  },
+  {
+   "id": "tada",
+   "title": "Ta-da fanfare",
+   "category": "comedy",
+   "tags": [
+    "tada",
+    "fanfare",
+    "reveal",
+    "magic",
+    "success"
+   ],
+   "aliases": [
+    "tada",
+    "ta da",
+    "ta-da",
+    "fanfare",
+    "voila",
+    "presto",
+    "reveal fanfare"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#tada",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "tada.flac",
+   "hit": 0.18,
+   "duration": 2.391,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -4.9
+  },
+  {
+   "id": "victory_fanfare",
+   "title": "Victory fanfare",
+   "category": "comedy",
+   "tags": [
+    "victory",
+    "win",
+    "fanfare",
+    "success",
+    "trumpet"
+   ],
+   "aliases": [
+    "victory",
+    "victory fanfare",
+    "win",
+    "winner",
+    "we did it",
+    "trumpet fanfare",
+    "triumph"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#victory_fanfare",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "victory_fanfare.flac",
+   "hit": null,
+   "duration": 3.015,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -7.7
+  },
+  {
+   "id": "whoopee_cushion",
+   "title": "Whoopee cushion",
+   "category": "comedy",
+   "tags": [
+    "fart",
+    "whoopee",
+    "cushion",
+    "prank",
+    "toot"
+   ],
+   "aliases": [
+    "whoopee cushion",
+    "fart",
+    "toot",
+    "raspberry",
+    "prank cushion"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#whoopee_cushion",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "whoopee_cushion.flac",
+   "hit": null,
+   "duration": 1.1,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -2.9
+  },
+  {
+   "id": "applause",
+   "title": "Applause",
+   "category": "crowd",
+   "tags": [
+    "applause",
+    "clapping",
+    "audience",
+    "crowd",
+    "ovation"
+   ],
+   "aliases": [
+    "applause",
+    "clapping",
+    "claps",
+    "round of applause",
+    "audience applause",
+    "ovation",
+    "clap"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#applause",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "applause.flac",
+   "hit": null,
+   "duration": 4.38,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -2.0
+  },
+  {
+   "id": "cheer",
+   "title": "Crowd cheer",
+   "category": "crowd",
+   "tags": [
+    "cheer",
+    "crowd",
+    "yay",
+    "celebration",
+    "hooray"
+   ],
+   "aliases": [
+    "cheer",
+    "cheering",
+    "crowd cheer",
+    "yay",
+    "hooray",
+    "woo",
+    "crowd goes wild"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#cheer",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "cheer.flac",
+   "hit": null,
+   "duration": 4.29,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -3.2
+  },
+  {
+   "id": "chuckle",
+   "title": "Small audience chuckle",
+   "category": "crowd",
+   "tags": [
+    "chuckle",
+    "laugh",
+    "audience",
+    "giggle"
+   ],
+   "aliases": [
+    "chuckle",
+    "giggle",
+    "small laugh",
+    "light laughter",
+    "snicker"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#chuckle",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "chuckle.flac",
+   "hit": null,
+   "duration": 1.686,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -5.7
+  },
+  {
+   "id": "crowd_aww",
+   "title": "Crowd \"aww\"",
+   "category": "crowd",
+   "tags": [
+    "aww",
+    "cute",
+    "crowd",
+    "sympathy",
+    "adorable"
+   ],
+   "aliases": [
+    "aww",
+    "awww",
+    "crowd aww",
+    "so cute",
+    "audience aww"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#crowd_aww",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "crowd_aww.flac",
+   "hit": null,
+   "duration": 2.198,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -6.2
+  },
+  {
+   "id": "crowd_boo",
+   "title": "Crowd boo",
+   "category": "crowd",
+   "tags": [
+    "boo",
+    "crowd",
+    "disapprove",
+    "heckle"
+   ],
+   "aliases": [
+    "boo",
+    "booing",
+    "crowd boo",
+    "audience boo",
+    "boo hiss"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#crowd_boo",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "crowd_boo.flac",
+   "hit": null,
+   "duration": 2.834,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -5.1
+  },
+  {
+   "id": "crowd_gasp",
+   "title": "Crowd gasp",
+   "category": "crowd",
+   "tags": [
+    "gasp",
+    "shock",
+    "crowd",
+    "surprise"
+   ],
+   "aliases": [
+    "crowd gasp",
+    "audience gasp",
+    "everyone gasps"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#crowd_gasp",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "crowd_gasp.flac",
+   "hit": null,
+   "duration": 1.223,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -5.3
+  },
+  {
+   "id": "crowd_ooh",
+   "title": "Crowd \"ooh\"",
+   "category": "crowd",
+   "tags": [
+    "ooh",
+    "crowd",
+    "impressed",
+    "wow"
+   ],
+   "aliases": [
+    "ooh",
+    "oooh",
+    "crowd ooh",
+    "audience ooh",
+    "ohh"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#crowd_ooh",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "crowd_ooh.flac",
+   "hit": null,
+   "duration": 1.976,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -6.7
+  },
+  {
+   "id": "evil_laugh",
+   "title": "Evil laugh (mwahaha)",
+   "category": "crowd",
+   "tags": [
+    "evil",
+    "laugh",
+    "villain",
+    "mwahaha"
+   ],
+   "aliases": [
+    "evil laugh",
+    "mwahaha",
+    "villain laugh",
+    "muahaha"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#evil_laugh",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "evil_laugh.flac",
+   "hit": null,
+   "duration": 3.405,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -1.6
+  },
+  {
+   "id": "laugh_track",
+   "title": "Laugh track (studio audience)",
+   "category": "crowd",
+   "tags": [
+    "laugh",
+    "audience",
+    "sitcom",
+    "funny",
+    "crowd"
+   ],
+   "aliases": [
+    "laugh track",
+    "laughter",
+    "audience laugh",
+    "sitcom laugh",
+    "crowd laughing",
+    "laugh",
+    "canned laughter",
+    "studio laugh",
+    "people laughing",
+    "audience laughing"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#laugh_track",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "laugh_track.flac",
+   "hit": null,
+   "duration": 3.629,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -3.1
+  },
+  {
+   "id": "braam",
+   "title": "Cinematic braam",
+   "category": "drama",
+   "tags": [
+    "braam",
+    "trailer",
+    "horn",
+    "epic",
+    "cinematic"
+   ],
+   "aliases": [
+    "braam",
+    "inception horn",
+    "trailer horn",
+    "epic horn",
+    "bwaaam"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#braam",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "braam.flac",
+   "hit": null,
+   "duration": 4.333,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -6.7
+  },
+  {
+   "id": "dramatic_sting",
+   "title": "Dramatic sting (dun dun dunnn)",
+   "category": "drama",
+   "tags": [
+    "dramatic",
+    "sting",
+    "dun dun dun",
+    "reveal",
+    "shock",
+    "plot twist"
+   ],
+   "aliases": [
+    "dramatic sting",
+    "dun dun dun",
+    "dun dun dunnn",
+    "dramatic chipmunk",
+    "plot twist",
+    "dramatic music",
+    "shock sting"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#dramatic_sting",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "dramatic_sting.flac",
+   "hit": 0.6,
+   "duration": 3.991,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -3.4
+  },
+  {
+   "id": "gong",
+   "title": "Gong",
+   "category": "drama",
+   "tags": [
+    "gong",
+    "asian",
+    "announcement",
+    "hit",
+    "meditation"
+   ],
+   "aliases": [
+    "gong",
+    "gong hit",
+    "tam tam",
+    "big gong"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#gong",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "gong.flac",
+   "hit": null,
+   "duration": 6.229,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -3.6
+  },
+  {
+   "id": "suspense_drone",
+   "title": "Suspense drone",
+   "category": "drama",
+   "tags": [
+    "suspense",
+    "drone",
+    "tension",
+    "horror",
+    "ominous",
+    "awkward"
+   ],
+   "aliases": [
+    "suspense",
+    "suspense drone",
+    "tension drone",
+    "ominous",
+    "horror drone",
+    "creepy",
+    "uneasy"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#suspense_drone",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "suspense_drone.flac",
+   "hit": null,
+   "duration": 7.173,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -20.0,
+   "true_peak_dbtp": -7.9
+  },
+  {
+   "id": "suspense_sting",
+   "title": "Horror strings sting",
+   "category": "drama",
+   "tags": [
+    "horror",
+    "strings",
+    "scream",
+    "jump scare",
+    "sting",
+    "scary"
+   ],
+   "aliases": [
+    "horror sting",
+    "jump scare",
+    "scary strings",
+    "screeching violins",
+    "shower scene",
+    "scary"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#suspense_sting",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "suspense_sting.flac",
+   "hit": null,
+   "duration": 2.438,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -5.6
+  },
+  {
+   "id": "bass_drop",
+   "title": "Bass drop",
+   "category": "impact",
+   "tags": [
+    "bass",
+    "drop",
+    "edm",
+    "beat drop"
+   ],
+   "aliases": [
+    "bass drop",
+    "drop the bass",
+    "beat drop",
+    "edm drop"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#bass_drop",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "bass_drop.flac",
+   "hit": null,
+   "duration": 2.0,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -14.0,
+   "true_peak_dbtp": -5.5
+  },
+  {
+   "id": "bonk",
+   "title": "Cartoon bonk",
+   "category": "impact",
+   "tags": [
+    "bonk",
+    "head",
+    "cartoon",
+    "hit",
+    "meme"
+   ],
+   "aliases": [
+    "bonk",
+    "head bonk",
+    "go to jail bonk",
+    "conk"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#bonk",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "bonk.flac",
+   "hit": null,
+   "duration": 0.538,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.6,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "boom_impact",
+   "title": "Cinematic boom impact",
+   "category": "impact",
+   "tags": [
+    "boom",
+    "impact",
+    "trailer",
+    "hit",
+    "cinematic"
+   ],
+   "aliases": [
+    "boom",
+    "impact",
+    "big boom",
+    "cinematic hit",
+    "trailer hit",
+    "trailer boom"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#boom_impact",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "boom_impact.flac",
+   "hit": null,
+   "duration": 4.079,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -14.0,
+   "true_peak_dbtp": -2.9
+  },
+  {
+   "id": "explosion",
+   "title": "Explosion",
+   "category": "impact",
+   "tags": [
+    "explosion",
+    "blast",
+    "bomb",
+    "kaboom"
+   ],
+   "aliases": [
+    "explosion",
+    "kaboom",
+    "blast",
+    "bomb",
+    "blow up"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#explosion",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "explosion.flac",
+   "hit": null,
+   "duration": 3.843,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -14.8,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "glass_shatter",
+   "title": "Glass shatter",
+   "category": "impact",
+   "tags": [
+    "glass",
+    "break",
+    "shatter",
+    "window"
+   ],
+   "aliases": [
+    "glass break",
+    "glass shatter",
+    "window smash",
+    "breaking glass"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#glass_shatter",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "glass_shatter.flac",
+   "hit": null,
+   "duration": 1.589,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "heartbeat",
+   "title": "Heartbeat",
+   "category": "impact",
+   "tags": [
+    "heart",
+    "heartbeat",
+    "tension",
+    "pulse"
+   ],
+   "aliases": [
+    "heartbeat",
+    "heart beat",
+    "heart pounding",
+    "pulse"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#heartbeat",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "heartbeat.flac",
+   "hit": null,
+   "duration": 2.29,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.8,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "metal_clang",
+   "title": "Metal clang",
+   "category": "impact",
+   "tags": [
+    "metal",
+    "clang",
+    "pan",
+    "hit"
+   ],
+   "aliases": [
+    "clang",
+    "metal hit",
+    "frying pan",
+    "pan hit",
+    "anvil"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#metal_clang",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "metal_clang.flac",
+   "hit": null,
+   "duration": 2.192,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -3.3
+  },
+  {
+   "id": "punch",
+   "title": "Punch hit",
+   "category": "impact",
+   "tags": [
+    "punch",
+    "fight",
+    "hit",
+    "cartoon"
+   ],
+   "aliases": [
+    "punch",
+    "hit",
+    "fight punch",
+    "smack",
+    "whack"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#punch",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "punch.flac",
+   "hit": null,
+   "duration": 0.441,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -14.0,
+   "true_peak_dbtp": -4.8
+  },
+  {
+   "id": "slap",
+   "title": "Slap",
+   "category": "impact",
+   "tags": [
+    "slap",
+    "hit",
+    "face"
+   ],
+   "aliases": [
+    "slap",
+    "face slap",
+    "smack"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#slap",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "slap.flac",
+   "hit": null,
+   "duration": 0.242,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -19.1,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "sub_drop",
+   "title": "Sub drop",
+   "category": "impact",
+   "tags": [
+    "sub",
+    "drop",
+    "bass",
+    "transition"
+   ],
+   "aliases": [
+    "sub drop",
+    "bass sweep",
+    "low drop"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#sub_drop",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "sub_drop.flac",
+   "hit": null,
+   "duration": 2.2,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -4.4
+  },
+  {
+   "id": "thud",
+   "title": "Body thud",
+   "category": "impact",
+   "tags": [
+    "thud",
+    "fall",
+    "drop",
+    "land"
+   ],
+   "aliases": [
+    "thud",
+    "body fall",
+    "fall down",
+    "drop"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#thud",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "thud.flac",
+   "hit": null,
+   "duration": 0.6,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.2,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "vine_boom",
+   "title": "Deep boom (vine-boom style)",
+   "category": "impact",
+   "tags": [
+    "boom",
+    "meme",
+    "bass",
+    "dramatic",
+    "reveal"
+   ],
+   "aliases": [
+    "vine boom",
+    "vine thud",
+    "meme boom",
+    "bass boom",
+    "dramatic boom",
+    "boom meme"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#vine_boom",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "vine_boom.flac",
+   "hit": null,
+   "duration": 2.057,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -14.0,
+   "true_peak_dbtp": -6.6
+  },
+  {
+   "id": "cymbal_crash",
+   "title": "Cymbal crash",
+   "category": "transition",
+   "tags": [
+    "cymbal",
+    "crash",
+    "hit",
+    "drum"
+   ],
+   "aliases": [
+    "cymbal",
+    "crash",
+    "cymbal crash",
+    "crash cymbal"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#cymbal_crash",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "cymbal_crash.flac",
+   "hit": null,
+   "duration": 2.579,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -4.2
+  },
+  {
+   "id": "record_rewind",
+   "title": "Rewind",
+   "category": "transition",
+   "tags": [
+    "rewind",
+    "tape",
+    "back",
+    "flashback",
+    "reverse"
+   ],
+   "aliases": [
+    "rewind",
+    "tape rewind",
+    "record rewind",
+    "go back",
+    "flashback",
+    "rewind sound"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#record_rewind",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "record_rewind.flac",
+   "hit": null,
+   "duration": 1.4,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -4.6
+  },
+  {
+   "id": "record_scratch",
+   "title": "Record scratch",
+   "category": "transition",
+   "tags": [
+    "record",
+    "scratch",
+    "stop",
+    "freeze frame",
+    "dj",
+    "meme"
+   ],
+   "aliases": [
+    "record scratch",
+    "vinyl scratch",
+    "scratch",
+    "freeze frame",
+    "needle scratch",
+    "yep thats me",
+    "dj scratch"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#record_scratch",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "record_scratch.flac",
+   "hit": null,
+   "duration": 0.58,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -2.6
+  },
+  {
+   "id": "record_stop",
+   "title": "Tape stop (power down)",
+   "category": "transition",
+   "tags": [
+    "tape stop",
+    "power down",
+    "slow down",
+    "record stop"
+   ],
+   "aliases": [
+    "tape stop",
+    "record stop",
+    "power down",
+    "slow down",
+    "turntable stop",
+    "wind down"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#record_stop",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "record_stop.flac",
+   "hit": null,
+   "duration": 1.1,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -2.1
+  },
+  {
+   "id": "reverse_cymbal",
+   "title": "Reverse cymbal",
+   "category": "transition",
+   "tags": [
+    "reverse",
+    "cymbal",
+    "swell",
+    "transition"
+   ],
+   "aliases": [
+    "reverse cymbal",
+    "reversed crash",
+    "swell",
+    "suck in"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#reverse_cymbal",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "reverse_cymbal.flac",
+   "hit": null,
+   "duration": 2.0,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.9,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "riser",
+   "title": "Tension riser",
+   "category": "transition",
+   "tags": [
+    "riser",
+    "build up",
+    "tension",
+    "transition",
+    "buildup"
+   ],
+   "aliases": [
+    "riser",
+    "build up",
+    "buildup",
+    "rise",
+    "tension riser",
+    "uplifter"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#riser",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "riser.flac",
+   "hit": null,
+   "duration": 3.859,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -3.9
+  },
+  {
+   "id": "riser_short",
+   "title": "Short riser",
+   "category": "transition",
+   "tags": [
+    "riser",
+    "short",
+    "build up",
+    "transition"
+   ],
+   "aliases": [
+    "short riser",
+    "quick riser",
+    "mini build up"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#riser_short",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "riser_short.flac",
+   "hit": null,
+   "duration": 1.68,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -3.3
+  },
+  {
+   "id": "whoosh",
+   "title": "Whoosh",
+   "category": "transition",
+   "tags": [
+    "whoosh",
+    "swoosh",
+    "transition",
+    "swipe",
+    "fast"
+   ],
+   "aliases": [
+    "whoosh",
+    "woosh",
+    "swoosh",
+    "swish",
+    "transition whoosh",
+    "swipe"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#whoosh",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "whoosh.flac",
+   "hit": 0.35,
+   "duration": 0.596,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -8.2
+  },
+  {
+   "id": "whoosh_deep",
+   "title": "Deep whoosh",
+   "category": "transition",
+   "tags": [
+    "whoosh",
+    "deep",
+    "heavy",
+    "cinematic",
+    "pass by"
+   ],
+   "aliases": [
+    "deep whoosh",
+    "heavy whoosh",
+    "big whoosh",
+    "pass by"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#whoosh_deep",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "whoosh_deep.flac",
+   "hit": 0.6,
+   "duration": 1.006,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -4.8
+  },
+  {
+   "id": "whoosh_fast",
+   "title": "Fast whoosh",
+   "category": "transition",
+   "tags": [
+    "whoosh",
+    "fast",
+    "swipe",
+    "zoom"
+   ],
+   "aliases": [
+    "fast whoosh",
+    "quick whoosh",
+    "swish",
+    "whip"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#whoosh_fast",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "whoosh_fast.flac",
+   "hit": 0.17,
+   "duration": 0.291,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -4.9
+  },
+  {
+   "id": "zoom_in",
+   "title": "Dramatic zoom",
+   "category": "transition",
+   "tags": [
+    "zoom",
+    "dramatic",
+    "zoom in",
+    "focus",
+    "meme"
+   ],
+   "aliases": [
+    "dramatic zoom",
+    "zoom in",
+    "zoom",
+    "camera zoom",
+    "dramatic zoom sound"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#zoom_in",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "zoom_in.flac",
+   "hit": 0.55,
+   "duration": 1.049,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -7.8
+  },
+  {
+   "id": "alarm_clock",
+   "title": "Alarm clock ring",
+   "category": "ui",
+   "tags": [
+    "alarm",
+    "clock",
+    "wake up",
+    "ring",
+    "bell"
+   ],
+   "aliases": [
+    "alarm",
+    "alarm clock",
+    "wake up",
+    "ringing",
+    "school bell"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#alarm_clock",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "alarm_clock.flac",
+   "hit": null,
+   "duration": 2.2,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -7.9
+  },
+  {
+   "id": "camera_shutter",
+   "title": "Camera shutter",
+   "category": "ui",
+   "tags": [
+    "camera",
+    "shutter",
+    "photo",
+    "snapshot",
+    "picture"
+   ],
+   "aliases": [
+    "camera",
+    "camera shutter",
+    "photo",
+    "take a picture",
+    "snapshot",
+    "shutter click"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#camera_shutter",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "camera_shutter.flac",
+   "hit": null,
+   "duration": 0.128,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -1.4
+  },
+  {
+   "id": "cash_register",
+   "title": "Cash register (ka-ching)",
+   "category": "ui",
+   "tags": [
+    "money",
+    "cash",
+    "register",
+    "ka-ching",
+    "sale",
+    "profit"
+   ],
+   "aliases": [
+    "cash register",
+    "ka-ching",
+    "kaching",
+    "cha ching",
+    "money",
+    "cha-ching",
+    "sale",
+    "till"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#cash_register",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "cash_register.flac",
+   "hit": 0.12,
+   "duration": 1.795,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -8.0
+  },
+  {
+   "id": "censor_bleep",
+   "title": "Censor bleep (1 kHz)",
+   "category": "ui",
+   "tags": [
+    "bleep",
+    "censor",
+    "beep",
+    "swear"
+   ],
+   "aliases": [
+    "bleep",
+    "censor",
+    "censor beep",
+    "beep",
+    "swear beep"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#censor_bleep",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "censor_bleep.flac",
+   "hit": null,
+   "duration": 0.6,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -14.9
+  },
+  {
+   "id": "clock_ticking",
+   "title": "Clock ticking",
+   "category": "ui",
+   "tags": [
+    "clock",
+    "tick",
+    "time",
+    "waiting",
+    "countdown"
+   ],
+   "aliases": [
+    "clock",
+    "ticking",
+    "tick tock",
+    "clock ticking",
+    "waiting"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#clock_ticking",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "clock_ticking.flac",
+   "hit": null,
+   "duration": 3.54,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -30.6,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "coin",
+   "title": "Coin pickup",
+   "category": "ui",
+   "tags": [
+    "coin",
+    "game",
+    "pickup",
+    "retro",
+    "collect"
+   ],
+   "aliases": [
+    "coin",
+    "coin pickup",
+    "collect coin",
+    "retro coin",
+    "point"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#coin",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "coin.flac",
+   "hit": null,
+   "duration": 0.47,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -10.7
+  },
+  {
+   "id": "correct_chime",
+   "title": "Correct answer chime",
+   "category": "ui",
+   "tags": [
+    "correct",
+    "right",
+    "success",
+    "chime",
+    "yes"
+   ],
+   "aliases": [
+    "correct",
+    "correct answer",
+    "right answer",
+    "success chime",
+    "chime",
+    "yes",
+    "ding ding"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#correct_chime",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "correct_chime.flac",
+   "hit": null,
+   "duration": 1.549,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -6.1
+  },
+  {
+   "id": "countdown_beeps",
+   "title": "Countdown beeps (3-2-1)",
+   "category": "ui",
+   "tags": [
+    "countdown",
+    "beep",
+    "race",
+    "start",
+    "timer"
+   ],
+   "aliases": [
+    "countdown",
+    "countdown beeps",
+    "3 2 1",
+    "race start",
+    "timer beeps"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#countdown_beeps",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "countdown_beeps.flac",
+   "hit": 3.0,
+   "duration": 3.62,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -10.0
+  },
+  {
+   "id": "ding",
+   "title": "Ding (bell)",
+   "category": "ui",
+   "tags": [
+    "ding",
+    "bell",
+    "correct",
+    "idea",
+    "notification"
+   ],
+   "aliases": [
+    "ding",
+    "bell ding",
+    "ding ding",
+    "idea",
+    "lightbulb",
+    "bell"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#ding",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "ding.flac",
+   "hit": null,
+   "duration": 2.189,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -5.8
+  },
+  {
+   "id": "door_knock",
+   "title": "Door knock",
+   "category": "ui",
+   "tags": [
+    "knock",
+    "door",
+    "knocking",
+    "visitor"
+   ],
+   "aliases": [
+    "knock",
+    "knock knock",
+    "door knock",
+    "knocking"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#door_knock",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "door_knock.flac",
+   "hit": null,
+   "duration": 0.768,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -1.6
+  },
+  {
+   "id": "doorbell",
+   "title": "Doorbell (ding-dong)",
+   "category": "ui",
+   "tags": [
+    "doorbell",
+    "ding dong",
+    "door",
+    "visitor"
+   ],
+   "aliases": [
+    "doorbell",
+    "ding dong",
+    "door bell",
+    "someone at the door"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#doorbell",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "doorbell.flac",
+   "hit": null,
+   "duration": 2.517,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -6.1
+  },
+  {
+   "id": "error_beep",
+   "title": "Error beep",
+   "category": "ui",
+   "tags": [
+    "error",
+    "beep",
+    "denied",
+    "computer"
+   ],
+   "aliases": [
+    "error",
+    "error beep",
+    "denied",
+    "access denied",
+    "computer error"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#error_beep",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "error_beep.flac",
+   "hit": null,
+   "duration": 0.36,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -9.2
+  },
+  {
+   "id": "game_over",
+   "title": "Game over",
+   "category": "ui",
+   "tags": [
+    "game over",
+    "lose",
+    "retro",
+    "fail",
+    "death"
+   ],
+   "aliases": [
+    "game over",
+    "you died",
+    "you lose",
+    "player died",
+    "lose"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#game_over",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "game_over.flac",
+   "hit": null,
+   "duration": 1.879,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -10.6
+  },
+  {
+   "id": "glitch",
+   "title": "Digital glitch",
+   "category": "ui",
+   "tags": [
+    "glitch",
+    "error",
+    "digital",
+    "stutter",
+    "malfunction"
+   ],
+   "aliases": [
+    "glitch",
+    "digital glitch",
+    "malfunction",
+    "stutter",
+    "bug"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#glitch",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "glitch.flac",
+   "hit": null,
+   "duration": 0.815,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -2.4
+  },
+  {
+   "id": "jump",
+   "title": "Retro jump",
+   "category": "ui",
+   "tags": [
+    "jump",
+    "game",
+    "retro",
+    "hop"
+   ],
+   "aliases": [
+    "jump",
+    "hop",
+    "boing jump",
+    "game jump"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#jump",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "jump.flac",
+   "hit": null,
+   "duration": 0.22,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -12.9
+  },
+  {
+   "id": "laser",
+   "title": "Laser zap",
+   "category": "ui",
+   "tags": [
+    "laser",
+    "zap",
+    "pew",
+    "shoot",
+    "sci-fi"
+   ],
+   "aliases": [
+    "laser",
+    "pew",
+    "pew pew",
+    "zap",
+    "blaster",
+    "ray gun"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#laser",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "laser.flac",
+   "hit": null,
+   "duration": 0.3,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -7.0
+  },
+  {
+   "id": "level_up",
+   "title": "Level up",
+   "category": "ui",
+   "tags": [
+    "level up",
+    "game",
+    "achievement",
+    "retro",
+    "success"
+   ],
+   "aliases": [
+    "level up",
+    "achievement",
+    "power level",
+    "upgrade"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#level_up",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "level_up.flac",
+   "hit": null,
+   "duration": 0.77,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -12.6
+  },
+  {
+   "id": "magic_sparkle",
+   "title": "Magic sparkle",
+   "category": "ui",
+   "tags": [
+    "magic",
+    "sparkle",
+    "twinkle",
+    "fairy",
+    "shine"
+   ],
+   "aliases": [
+    "magic",
+    "sparkle",
+    "twinkle",
+    "fairy dust",
+    "shimmer",
+    "magic wand"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#magic_sparkle",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "magic_sparkle.flac",
+   "hit": null,
+   "duration": 2.118,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -19.0,
+   "true_peak_dbtp": -12.1
+  },
+  {
+   "id": "mouse_click",
+   "title": "Mouse click",
+   "category": "ui",
+   "tags": [
+    "click",
+    "mouse",
+    "button",
+    "select"
+   ],
+   "aliases": [
+    "click",
+    "mouse click",
+    "button click",
+    "tap"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#mouse_click",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "mouse_click.flac",
+   "hit": null,
+   "duration": 0.09,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -22.4,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "notification",
+   "title": "Notification ping",
+   "category": "ui",
+   "tags": [
+    "notification",
+    "ping",
+    "message",
+    "alert",
+    "phone"
+   ],
+   "aliases": [
+    "notification",
+    "ping",
+    "message",
+    "text message",
+    "alert",
+    "new message"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#notification",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "notification.flac",
+   "hit": null,
+   "duration": 0.56,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -8.1
+  },
+  {
+   "id": "phone_vibrate",
+   "title": "Phone vibrate",
+   "category": "ui",
+   "tags": [
+    "phone",
+    "vibrate",
+    "buzz",
+    "call"
+   ],
+   "aliases": [
+    "vibrate",
+    "phone buzz",
+    "phone vibrate",
+    "buzzing phone"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#phone_vibrate",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "phone_vibrate.flac",
+   "hit": null,
+   "duration": 1.746,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -19.0,
+   "true_peak_dbtp": -15.1
+  },
+  {
+   "id": "power_up",
+   "title": "Power up",
+   "category": "ui",
+   "tags": [
+    "power up",
+    "boost",
+    "game",
+    "retro"
+   ],
+   "aliases": [
+    "power up",
+    "powerup",
+    "boost",
+    "mushroom",
+    "buff"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#power_up",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "power_up.flac",
+   "hit": null,
+   "duration": 0.7,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -17.0,
+   "true_peak_dbtp": -11.3
+  },
+  {
+   "id": "teleport",
+   "title": "Teleport zap",
+   "category": "ui",
+   "tags": [
+    "teleport",
+    "zap",
+    "sci-fi",
+    "magic",
+    "warp"
+   ],
+   "aliases": [
+    "teleport",
+    "warp",
+    "beam me up",
+    "zap",
+    "vanish"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#teleport",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "teleport.flac",
+   "hit": null,
+   "duration": 0.9,
+   "channels": 2,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -12.0
+  },
+  {
+   "id": "tv_static",
+   "title": "TV static burst",
+   "category": "ui",
+   "tags": [
+    "static",
+    "tv",
+    "glitch",
+    "noise",
+    "signal lost"
+   ],
+   "aliases": [
+    "static",
+    "tv static",
+    "white noise",
+    "signal lost",
+    "interference"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#tv_static",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "tv_static.flac",
+   "hit": null,
+   "duration": 1.2,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -20.0,
+   "true_peak_dbtp": -6.7
+  },
+  {
+   "id": "typing",
+   "title": "Keyboard typing",
+   "category": "ui",
+   "tags": [
+    "typing",
+    "keyboard",
+    "hacker",
+    "computer",
+    "writing"
+   ],
+   "aliases": [
+    "typing",
+    "keyboard",
+    "keyboard typing",
+    "hacking",
+    "hacker typing",
+    "clacking"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#typing",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "typing.flac",
+   "hit": null,
+   "duration": 2.462,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -25.3,
+   "true_peak_dbtp": -1.0
+  },
+  {
+   "id": "wrong_buzzer",
+   "title": "Wrong answer buzzer",
+   "category": "ui",
+   "tags": [
+    "wrong",
+    "buzzer",
+    "fail",
+    "incorrect",
+    "game show",
+    "no"
+   ],
+   "aliases": [
+    "wrong",
+    "wrong buzzer",
+    "wrong answer",
+    "buzzer",
+    "incorrect",
+    "eh eh",
+    "game show buzzer",
+    "nope"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#wrong_buzzer",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "wrong_buzzer.flac",
+   "hit": null,
+   "duration": 1.0,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -9.6
+  },
+  {
+   "id": "bruh",
+   "title": "Bruh (synthetic voice)",
+   "category": "voice",
+   "tags": [
+    "bruh",
+    "meme",
+    "voice",
+    "disappointed",
+    "really"
+   ],
+   "aliases": [
+    "bruh",
+    "bro",
+    "bruh moment",
+    "bruh sound"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#bruh",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "bruh.flac",
+   "hit": null,
+   "duration": 0.624,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -2.8
+  },
+  {
+   "id": "gasp",
+   "title": "Gasp",
+   "category": "voice",
+   "tags": [
+    "gasp",
+    "shock",
+    "surprise",
+    "inhale",
+    "omg"
+   ],
+   "aliases": [
+    "gasp",
+    "shocked gasp",
+    "surprised",
+    "inhale",
+    "oh my"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#gasp",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "gasp.flac",
+   "hit": null,
+   "duration": 0.45,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -18.0,
+   "true_peak_dbtp": -4.8
+  },
+  {
+   "id": "huh",
+   "title": "Huh? (confused voice)",
+   "category": "voice",
+   "tags": [
+    "huh",
+    "confused",
+    "what",
+    "question",
+    "voice"
+   ],
+   "aliases": [
+    "huh",
+    "huh?",
+    "what?",
+    "confused",
+    "say what"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#huh",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "huh.flac",
+   "hit": null,
+   "duration": 0.42,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -16.0,
+   "true_peak_dbtp": -5.3
+  },
+  {
+   "id": "oof",
+   "title": "Oof hit (synthetic voice)",
+   "category": "voice",
+   "tags": [
+    "oof",
+    "hurt",
+    "ouch",
+    "hit",
+    "game",
+    "meme"
+   ],
+   "aliases": [
+    "oof",
+    "ouch",
+    "ow",
+    "oof sound",
+    "hurt",
+    "damage",
+    "player hurt"
+   ],
+   "licence": "CC0-1.0",
+   "source": "procedural",
+   "source_url": "https://github.com/tarantechnology/TidePool/blob/main/app/sfx_synth.py#oof",
+   "author": "TidePool contributors (procedural synthesis)",
+   "file": "oof.flac",
+   "hit": null,
+   "duration": 0.32,
+   "channels": 1,
+   "sample_rate": 48000,
+   "loudness_lufs": -15.0,
+   "true_peak_dbtp": -3.1
+  }
+ ]
+}

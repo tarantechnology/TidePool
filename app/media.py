@@ -1,10 +1,13 @@
 import base64
+from contextlib import contextmanager
 import json
 import math
 import os
 import subprocess
 from functools import cache
 from pathlib import Path
+import re
+import subprocess
 import httpx
 from . import guidance
 from .core import max_passes, run, probe, uid
@@ -47,6 +50,54 @@ def fake_music_stems(audio, directory, requested, report):
     return results
 
 
+# Stems come back as 16-bit PCM unless a caller asks otherwise: ample for editing, half the transfer of float32.
+# guidance.options() always asks for pcm_f32le, music_stems splits included: the service's encode_wav_pcm16 hard-clips
+# at +/-1.0, so a stem above full scale would no longer sum back to the mix. Switch splits to s16 only once the service
+# guarantees headroom (e.g. a shared gain or float fallback); until then this default only applies to bare callers.
+STEM_OUTPUT_FORMAT = 'pcm_s16le'
+
+
+# FLAC is integer PCM: float samples beyond full scale would clip (a 1.40 peak comes back as 1.00).
+FLAC_SAFE_PEAK = 0.999
+
+
+def source_peak(audio):
+    """Linear sample peak over all channels (FFmpeg astats, one decode pass); None when it cannot be measured."""
+    try:
+        out = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', str(audio), '-vn', '-af',
+                              'astats=measure_perchannel=none:measure_overall=Peak_level', '-f', 'null', '-'],
+                             capture_output=True, text=True, timeout=int(os.getenv('FFMPEG_TIMEOUT', '600')))
+    except (subprocess.SubprocessError, OSError):
+        return None
+    found = re.findall(r'Peak level dB:\s*(-?inf|[-+\d.]+)', out.stderr)
+    if not found: return None
+    return 0.0 if found[-1] == '-inf' else 10 ** (float(found[-1]) / 20)
+
+
+@contextmanager
+def service_upload(audio):
+    """(filename, file, content type) for posting audio to the service: a fast lossless FLAC encode
+    (a fraction of the float WAV through the tunnel; the service decodes any FFmpeg format).
+    Falls back to the original file when FFmpeg cannot encode it, or when the source peaks above
+    full scale (FLAC would clip it)."""
+    import tempfile
+    handle, name = tempfile.mkstemp(suffix='.flac'); os.close(handle)
+    flac = Path(name)
+    try:
+        try:
+            peak = source_peak(audio)
+            if peak is not None and peak > FLAC_SAFE_PEAK: raise ValueError('source exceeds full scale')
+            run('ffmpeg', '-v', 'error', '-y', '-i', str(audio), '-vn', '-c:a', 'flac', '-compression_level', '1', str(flac))
+            encoded = flac.stat().st_size > 0
+        except Exception:
+            encoded = False
+        source, filename, ctype = (flac, 'audio.flac', 'audio/flac') if encoded else (Path(audio), 'audio' + (Path(audio).suffix or '.wav'), 'audio/wav')
+        with open(source, 'rb') as f:
+            yield (filename, f, ctype)
+    finally:
+        flac.unlink(missing_ok=True)
+
+
 def route(audio, source_kind):
     """The audio service's routing decision for this audio, without separating anything."""
     if os.getenv('INFERENCE_ADAPTER', 'http') == 'fake':
@@ -59,8 +110,8 @@ def route(audio, source_kind):
     if not url.netloc: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
     metadata = {'prompts':[], 'hints':{'source_kind':source_kind}}
     try:
-        with open(audio, 'rb') as f:
-            response = httpx.post(urlunsplit((url.scheme,url.netloc,'/v1/route','','')), files={'audio':('audio.wav',f,'audio/wav')},
+        with service_upload(audio) as upload:
+            response = httpx.post(urlunsplit((url.scheme,url.netloc,'/v1/route','','')), files={'audio':upload},
                                   data={'metadata':json.dumps(metadata)}, timeout=float(os.getenv('ROUTE_TIMEOUT_SECONDS','120')))
     except httpx.HTTPError as exc: raise InferenceError('Audio service routing is unavailable') from exc
     if response.is_error: raise InferenceError(f'Audio service routing failed (HTTP {response.status_code})')
@@ -97,6 +148,9 @@ def separate(audio, directory, payload, report=None):
     if mode != 'http': raise RuntimeError('Unknown inference adapter')
     url = os.getenv('SAM_AUDIO_SERVICE_URL', 'http://127.0.0.1:8001/separate')
     if not url: raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
+    # 16-bit stems unless the caller chose a format (same length and rate as float, so duration checks still hold).
+    options = payload.get('options') if isinstance(payload.get('options'), dict) else {}
+    if not options.get('output_format'): payload = {**payload, 'options': {**options, 'output_format': STEM_OUTPUT_FORMAT}}
     split_music = False
     if payload.get('explode'):
         # Explode recipe: same request and response shape, its own endpoint.
@@ -105,8 +159,8 @@ def separate(audio, directory, payload, report=None):
         split_music = bool(payload.get('split_music'))
         payload = {k: v for k, v in payload.items() if k not in ('explode','split_music')}
     try:
-        with open(audio, 'rb') as f:
-            response = httpx.post(url, files={'audio': ('audio.wav', f, 'audio/wav')}, data={'metadata': json.dumps(payload), **({'split_music': 'true'} if url.endswith('/explode') and split_music else {})}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
+        with service_upload(audio) as upload:
+            response = httpx.post(url, files={'audio': upload}, data={'metadata': json.dumps(payload), **({'split_music': 'true'} if url.endswith('/explode') and split_music else {})}, timeout=float(os.getenv('INFERENCE_TIMEOUT_SECONDS','3600')))
     except httpx.TimeoutException as exc:
         raise RuntimeError('Inference timed out; retry the job or increase INFERENCE_TIMEOUT_SECONDS') from exc
     if response.is_error:
@@ -231,6 +285,9 @@ def export(stems, original, destination, fmt, include_video, rotation=0, trim=No
     active = [s for s in stems if not s['muted'] and (not any(x['solo'] for x in stems) or s['solo'])]
     # A silent source maintains duration for an all-muted mix.
     duration = probe(original)['duration']
+    if not include_video:
+        from .fx import export_duration  # A whole-song speed chip changes the mix length.
+        duration = export_duration(stems, duration)
     args = ['ffmpeg','-v','error','-y']
     # Clip exports read video through one seeked input per clip (added below), not the whole file.
     whole_video = include_video and not clips

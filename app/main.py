@@ -351,28 +351,55 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
     body.has_project_stems=bool(rows)
     # A music split's canonical label and instrument tags let "remove the piano" find the "other" track.
-    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration'],'canonical_label':r['label'],'tags':[t['label'] for t in json.loads(r['tags'])] if r['tags'] else None} for r in rows]
+    from .fx import public as fx_chips
+    body.stems=[{'id':r['id'],'label':r['name'],'duration':r['duration'],'canonical_label':r['label'],'tags':[t['label'] for t in json.loads(r['tags'])] if r['tags'] else None,
+                 'fx':[c['label'] for c in (fx_chips(dict(r)) or {}).get('items',[]) if not c.get('baked')] or None} for r in rows]
     body.tracks=[{'stemId':r['id'],'gain':r['volume'],'muted':bool(r['muted']),'solo':bool(r['solo']),'automation':[{'t':k['time'],'value':k['value']} for k in json.loads(r['automation'])]} for r in rows]
-    if p['metadata']: body.duration=json.loads(p['metadata'])['duration']
+    if p['metadata']:
+        from .fx import export_duration  # After a whole-song speed chip the timeline is no longer the upload's length.
+        body.duration=export_duration(rows,json.loads(p['metadata'])['duration'])
     # Never let a replacement instruction fall through to a separation-only planner.
     import re
-    if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I):
+    # "Make the drums sound like a phone" names an effect preset; that is a layer effect, not a replacement.
+    from .fx_schema import mentions_effect
+    if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or (re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I) and not mentions_effect(body.prompt)):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
-    # A browser tab left open across an editor update may still send sound
-    # generation requests to this older planning route. Never let its generic
-    # planner incorrectly say that the configured generator cannot add sounds.
-    if re.search(r'\b(?:add|play|insert|place|generate|put|trigger|cue|overlay)\b',body.prompt,re.I) and re.search(r'\b(?:sound|sounds|effect|sfx|when|whenever|time|word)\b',body.prompt,re.I):
-        from .replacement import parse_replacement
-        try: addition=parse_replacement(body.prompt,body.duration)
-        except ValueError:
-            from .sound_intent import resolve
-            try: addition=resolve(body.prompt,body.duration)
-            except ValueError: addition=None
-        if addition and addition.get('mode') in ('add','replace'):
-            return {'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan
+    # SFX inserts ("vine boom when he says 'what'") parse offline first; see app/sfx_plan.py.
+    from .sfx_plan import finalize as finalize_insert, rule_plan
+    from .sfx_insert import service_features
+    from .sfx_plan import requests_censorship
+    if requests_censorship(body.prompt):  # Profanity beeps are the censorship preview's job, never a library insert.
+        return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'Profanity beeps use the censorship preview: ask "bleep the swearing" in the editor.'}
+    # A browser tab left open across an editor update may still send sound
+    # generation requests to this older planning route. Never let its generic
+    # planner incorrectly say that the configured generator cannot add sounds.
+    # Censorship (above), library inserts and layer effects ("add reverb to the vocals") keep their own flows;
+    # object-appearance additions ("add a gong every time we see person 5") are always the generator's.
+    from .sfx_plan import _FX_WORDS
+    from .fx_schema import PRESET_WORDS
+    stale={'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
+    sound_ask=(re.search(r'\b(?:add|play|insert|place|generate|put|trigger|cue|overlay)\b',body.prompt,re.I) and re.search(r'\b(?:sound|sounds|effect|sfx|when|whenever|time|word|see|appears?)\b',body.prompt,re.I)
+               and not _FX_WORDS.search(body.prompt) and not PRESET_WORDS.search(body.prompt))
+    from .replacement import parse_replacement
+    def addition():
+        try: return parse_replacement(body.prompt,body.duration)
+        except ValueError:
+            from .sound_intent import resolve  # May ask the model; only reached once the offline planners pass.
+            try: return resolve(body.prompt,body.duration)
+            except ValueError: return None
+    if sound_ask:
+        try: early=parse_replacement(body.prompt,body.duration)
+        except ValueError: early=None
+        if early and early.get('mode')=='add' and early.get('object_track_id') is not None: return stale
+    quick=rule_plan(body.prompt)
+    if quick is not None:
+        return finalize_insert(quick,body.duration,service_features()) if quick['kind']=='insert' else quick
+    if sound_ask:
+        found=addition()
+        if found and found.get('mode') in ('add','replace'): return stale
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -384,8 +411,9 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
             if matches:
                 return {'kind':'edit','description':None,'remove':False,'actions':[{'type':'mute_range','stemId':matches[0]['id'],'start':parsed['start'],'end':parsed['end']}],'message':'Timed mute ready.'}
             return {'kind':'separate','description':description(name),'remove':True,'actions':[], 'guidance':{'anchors':[]},'edit_scope':{'action':'mute','interval':{'start':parsed['start'],'end':parsed['end']}},'message':'Preview the timed mute before applying it.'}
-    try: return agent_plan(body)
+    try: result=agent_plan(body)
     except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+    return finalize_insert(result,body.duration,service_features()) if result.get('kind')=='insert' else result
 
 @app.post('/api/projects/{pid}/suggest-sounds')
 def suggest_project_sounds(pid: str, authorization: str | None=Header(None)):
@@ -401,7 +429,12 @@ def service_capabilities(pid: str, authorization: str | None=Header(None)):
     auth(pid,authorization)
     from .media import capabilities
     from .detector import status
-    return {**capabilities(),'vision':status()}
+    from .sfx_insert import service_features
+    from .sfx_library import sounds
+    result={**capabilities(),'vision':status()}
+    for key,value in service_features().items(): result.setdefault(key,value)
+    result['sfx_library']={'available':True,'sounds':len(sounds())}
+    return result
 
 def separation_options(profile, candidates):
     """Select request options from the separator actually serving this app."""
@@ -653,6 +686,49 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
     return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None,'_resolved_plan':plan}),'status':'queued'}
 
+class SfxInsertRequest(BaseModel):
+    inserts: list[dict] = Field(min_length=1,max_length=10)
+    request: str | None = Field(default=None,max_length=2000)
+    duck_db: float = Field(default=6.0,ge=1,le=18,allow_inf_nan=False)
+
+@app.post('/api/projects/{pid}/sfx-preview',status_code=202)
+def sfx_preview(pid: str, body: SfxInsertRequest, authorization: str | None=Header(None)):
+    """Preview library sound effects as new layers (see app/sfx_insert.py); apply/undo as any candidate."""
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first.')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    from .sfx_insert import service_features, validate_request
+    features=service_features()
+    try:
+        source=safe_path(pid,p['audio']);duration=probe(source)['duration']
+        inserts=validate_request(body.inserts,duration,features)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    try:
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_sfx_insert':True,'_candidate':snapshot,'_features':features,'inserts':inserts,'request':body.request,'duck_db':body.duck_db}),'status':'queued'}
+
+@app.get('/api/sfx')
+def sfx_catalog():
+    """The CC0 sound library (metadata only). Static and project-independent."""
+    from .sfx_library import manifest, public, sounds
+    return {'pack':manifest()['pack'],'version':manifest()['version'],'sounds':[public(s) for s in sounds()]}
+
+@app.get('/api/sfx/search')
+def sfx_search(q: str, limit: int = 5):
+    from .sfx_library import search
+    if not q.strip() or len(q)>200: raise HTTPException(422,'Enter a sound to search for.')
+    return {'results':search(q,max(1,min(limit,20)))}
+
+@app.get('/api/sfx/{sid}/audio')
+def sfx_audio(sid: str):
+    from .sfx_library import asset_file
+    try: return FileResponse(asset_file(sid),media_type='audio/flac')
+    except ValueError as exc: raise HTTPException(404,str(exc)) from exc
+
 class LayerEffectsRequest(BaseModel):
     stem_id: str | None = Field(default=None,max_length=100)
     effect_group_id: str | None = Field(default=None,max_length=100)
@@ -707,6 +783,103 @@ def effects_preview(pid: str, body: LayerEffectsRequest, authorization: str | No
     except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
     effects=body.model_dump(exclude={'stem_id','effect_group_id'})
     return {'candidate_id':start(pid,'candidate',{'_effects':True,'_candidate':snapshot,'stem_id':body.stem_id,'effect_group_id':body.effect_group_id,'effects':effects}),'status':'queued'}
+
+class FxEffectSpec(BaseModel):
+    type: str = Field(min_length=1, max_length=40)
+    params: dict[str, float | None] = Field(default_factory=dict, max_length=40)
+
+class FxInterval(BaseModel):
+    start: float = Field(ge=0, le=86400, allow_inf_nan=False)
+    end: float = Field(gt=0, le=86400, allow_inf_nan=False)
+
+class FxDuck(BaseModel):
+    source: str = Field(min_length=1, max_length=100)
+    depth_db: float | None = Field(default=None, allow_inf_nan=False)
+    threshold_db: float | None = Field(default=None, allow_inf_nan=False)
+    attack_ms: float | None = Field(default=None, allow_inf_nan=False)
+    release_ms: float | None = Field(default=None, allow_inf_nan=False)
+
+class FxRequest(BaseModel):
+    op: Literal['chain','adjust','remove','duck','loudness'] = 'chain'
+    targets: list[str] = Field(default_factory=lambda: ['mix'], min_length=1, max_length=20)
+    preset: str | None = Field(default=None, max_length=40)
+    chain: list[FxEffectSpec] | None = Field(default=None, max_length=12)
+    interval: FxInterval | None = None
+    speed: float | None = Field(default=None, allow_inf_nan=False)
+    direction: Literal['more','less'] | None = None
+    item_id: str | None = Field(default=None, max_length=40)
+    base_candidate_id: str | None = Field(default=None, max_length=40)
+    duck: FxDuck | None = None
+    loudness_lufs: float | None = Field(default=None, allow_inf_nan=False)
+
+def fx_spec(pid, p, body, rows):
+    """The validated, clamped render spec for an fx preview; FxError becomes a 422."""
+    from . import fx_schema as S
+    meta=json.loads(p['metadata']) if p['metadata'] else {}
+    from .fx import export_duration
+    duration=float(export_duration(rows,meta.get('duration') or 0)) if rows else float(meta.get('duration') or 0)
+    ids={r['id'] for r in rows}
+    targets=list(dict.fromkeys(body.targets))
+    if 'mix' in targets: targets=['mix']
+    if any(t!='mix' and t not in ids for t in targets): raise S.FxError('Select a layer in this project.')
+    if not rows and targets!=['mix']: raise S.FxError('This project has no layers yet; apply the effect to the whole mix.')
+    if body.op=='duck':
+        if not body.duck or body.duck.source not in ids: raise S.FxError('Ducking needs a voice or dialogue layer. Split the voice from the music first.')
+        music=[t for t in (targets if targets!=['mix'] else ids) if t!=body.duck.source]
+        if not music: raise S.FxError('Ducking needs at least one music layer besides the voice.')
+        return {'op':'duck','targets':sorted(music,key=[r['id'] for r in rows].index),'duck':{'source':body.duck.source,'params':S.duck_params(body.duck.model_dump(exclude={'source'}))}}
+    if body.op=='loudness':
+        return {'op':'loudness','targets':targets,'lufs':S.loudness_target(body.loudness_lufs)}
+    if body.preset and body.preset not in S.PRESETS: raise S.FxError('Unknown preset.')
+    if body.op=='remove':
+        chip=S.find_chip(rows,targets,body.item_id,body.preset,removing=True)
+        if not chip: raise S.FxError('That layer has no matching effect to remove.')
+        return {'op':'remove','targets':targets,'item_id':chip['id'],'preset':None}
+    if body.op=='adjust':
+        if not body.direction: raise S.FxError('Say whether you want more or less of the effect.')
+        if body.base_candidate_id:
+            with connect() as db: base=db.execute("SELECT * FROM jobs WHERE id=? AND project_id=? AND kind='candidate' AND status='completed'",(body.base_candidate_id,pid)).fetchone()
+            data=json.loads(base['output']) if base and base['output'] else {}
+            provenance=data.get('provenance') or {}
+            if provenance.get('kind')=='fx' and provenance.get('op') in ('chain','adjust') and provenance.get('item'):
+                with connect() as db: applied=db.execute('SELECT 1 FROM candidate_history WHERE candidate_id=? AND undone=0',(base['id'],)).fetchone()
+                if not applied:
+                    # "More" on an unapplied preview: preview the stronger version of the same chip instead.
+                    previous=provenance['item']; base_spec=json.loads(base['payload']).get('fx') or {}
+                    if provenance.get('op')=='adjust': raise S.FxError('Apply or discard the current adjustment first.')
+                    stronger=S.adjust_item({k:v for k,v in previous.items() if k!='scope'},body.direction)
+                    stronger['id']=S.uuid.uuid4().hex[:12]
+                    return {'op':'chain','targets':base_spec.get('targets') or targets,'item':stronger}
+                return {'op':'adjust','targets':targets,'item_id':provenance['item']['id'],'direction':body.direction,'preset':None}
+        chip=S.find_chip(rows,targets,body.item_id,body.preset)
+        if not chip:
+            # "More reverb" with no reverb yet simply adds it; "less" of nothing is a question.
+            if body.preset and body.direction=='more' and not body.item_id: body=body.model_copy(update={'op':'chain'})
+            else: raise S.FxError('There is no effect on that layer to adjust yet. Ask for an effect first.')
+        else: return {'op':'adjust','targets':targets,'item_id':chip['id'],'direction':body.direction,'preset':None}
+    notes=[]
+    item=S.item(body.preset,[e.model_dump() for e in body.chain] if body.chain else None,body.interval.model_dump() if body.interval else None,body.speed,duration,notes)
+    if item['speed']:
+        if targets!=['mix']: raise S.FxError('Speed changes apply to the whole song. Ask for it on the whole mix.')
+        if meta.get('has_video'): raise S.FxError('Changing the speed would put the audio out of sync with the video; it is available for audio projects.')
+    return {'op':'chain','targets':targets,'item':item,'notes':notes}
+
+@app.post('/api/projects/{pid}/fx-preview',status_code=202)
+def fx_preview(pid: str, body: FxRequest, authorization: str | None=Header(None)):
+    p=auth(pid,authorization)
+    if not p['audio']: raise HTTPException(409,'Upload media first')
+    refuse_during_refine(pid)
+    from .candidates import safe_path
+    from .fx_schema import FxError
+    with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    try: spec=fx_spec(pid,p,body,rows)
+    except FxError as exc: raise HTTPException(422,str(exc)) from exc
+    try:
+        source=safe_path(pid,p['audio'])
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
+                  'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+    except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
+    return {'candidate_id':start(pid,'candidate',{'_fx':True,'_candidate':snapshot,'fx':spec}),'status':'queued','plan':{k:v for k,v in spec.items() if k!='notes'}}
 
 class CinematicRequest(BaseModel):
     style: Literal['subtle', 'cinematic', 'dramatic'] = 'cinematic'

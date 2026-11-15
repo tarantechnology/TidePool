@@ -108,6 +108,8 @@ def options(profile, candidates=1, backend=None):
     QUALITY_RERANKING=true (needs the service's text ranker); otherwise it relies on
     :func:`profile_extras`, which works without any ranker."""
     backend = backend or os.getenv('AUDIO_BACKEND', 'audiosep')
+    # Always float32, music_stems splits too: 16-bit stems are hard-clipped at full scale by the service and would
+    # stop summing to the mix (see media.STEM_OUTPUT_FORMAT).
     if backend == 'audiosep':
         return {'reranking_candidates':1, 'candidates':1, 'predict_spans':False,
                 'chunk_seconds':10, 'chunk_batch':1, 'residual':'mixture_minus_targets',

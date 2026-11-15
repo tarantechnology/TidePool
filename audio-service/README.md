@@ -321,3 +321,74 @@ yet). The chain splitter disables audio-separator's peak normalisation
 (`normalization_threshold=1.0`), feeds it at most 0.5 peak and undoes that gain on the vocals.
 Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
 the splitter, duplicates mono to stereo and folds the stems back to mono.
+
+## Speech and rhythm tools (`/v1/words`, `/v1/enhance`, `/v1/beats`)
+
+These are the machine-learning operations behind the chat edits in `docs/plans/chat-fx.md`
+(Phase B): "bleep the swear words", "cut the ums", "clean up the voice", "add X when he
+says 'what'" and "on the beat drop". The endpoints are multipart, like `/separate`. The
+contract is Contract F in `docs/contracts/audio_contracts.md`. Each tool is **off** until
+its backend variable is set. Each loads on first use (or at startup with
+`AUDIO_LOAD_ON_STARTUP`) and has its **own lock**, so these tools never queue behind a
+separation, and a separation never queues behind them.
+
+| Tool | Model | Licence |
+| --- | --- | --- |
+| `/v1/words` | faster-whisper `large-v3-turbo` (CTranslate2 fp16, Silero VAD, `word_timestamps`), then WhisperX-style CTC forced alignment with torchaudio `WAV2VEC2_ASR_BASE_960H` (English) | faster-whisper MIT; Whisper weights MIT; wav2vec2 weights MIT (fairseq) |
+| `/v1/enhance` | DeepFilterNet3 (48 kHz) | code and weights MIT OR Apache-2.0 |
+| `/v1/beats` | beat_this `final0` (CPJKU, ISMIR 2024), with librosa as the fallback | code and weights MIT; librosa ISC |
+
+```bash
+# CI / local, no weights: deterministic mocks (NOT real models).
+AUDIO_WORDS_BACKEND=mock AUDIO_ENHANCE_BACKEND=mock AUDIO_BEATS_BACKEND=mock .venv/bin/python -m sam_audio_service
+curl -F audio=@clip.wav -F 'metadata={"language":"en"}' localhost:8001/v1/words
+curl -F audio=@dialogue.wav -F 'metadata={"atten_lim_db":12}' localhost:8001/v1/enhance
+curl -F audio=@song.wav localhost:8001/v1/beats
+```
+
+**Install (GPU host, Python 3.12, torch 2.8.0+cu128).** Two of the packages cannot be
+resolved normally, so they are installed with `--no-deps`. `deepfilternet` 0.5.6 pins
+`numpy<2`, and its Rust feature library (DeepFilterLib) only has wheels up to CPython 3.11.
+The service replaces that library with `speech/libdf_shim.py`, a NumPy port that matches
+the real wheel within 1.5e-6 (`benchmarks/speech.py check-libdf`).
+
+```bash
+uv pip install -e ".[speech-words,speech-enhance,speech-beats]"
+uv pip install --no-deps deepfilternet==0.5.6   # the model code only; no DeepFilterLib needed
+```
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AUDIO_WORDS_BACKEND` | `off` | `off`, `mock` (one fixed word per voiced region; tests), or `faster_whisper`. |
+| `AUDIO_WORDS_MODEL` | `large-v3-turbo` | Any faster-whisper name (`large-v3`, `distil-large-v3`…), a CTranslate2 directory or an HF repo. |
+| `AUDIO_WORDS_COMPUTE_TYPE` | `auto` | `auto` means `float16` on CUDA and `int8` on CPU. |
+| `AUDIO_WORDS_BEAM_SIZE` / `AUDIO_WORDS_BATCH_SIZE` | `5` / `8` | A batch size above 1 uses faster-whisper's batched VAD pipeline. 1 uses sequential decoding. |
+| `AUDIO_WORDS_VAD` | `true` | Silero VAD filter (it cuts hallucinations in silence and music). |
+| `AUDIO_WORDS_ALIGN` | `wav2vec2` | `off` keeps Whisper's own word times. `wav2vec2` re-times English words (see benchmarks). Per request, use `metadata.align`. |
+| `AUDIO_WORDS_PROFANITY_FILE` | bundled `speech/profanity_en.txt` | One `word` or `prefix:stem` per line, matched per word. Per request, use `metadata.extra_profanity`. |
+| `AUDIO_WORDS_MIN_PAUSE_SECONDS` | `0.7` | Gap reported in `pauses`. |
+| `AUDIO_ENHANCE_BACKEND` | `off` | `off`, `mock` (a spectral gate; tests), or `deepfilternet`. |
+| `AUDIO_ENHANCE_MODEL` | `DeepFilterNet3` | `DeepFilterNet3`, `DeepFilterNet2` or `DeepFilterNet` (downloaded to `~/.cache/DeepFilterNet`). |
+| `AUDIO_ENHANCE_ATTEN_LIMIT_DB` | unlimited | Default strength. Per request, use `metadata.atten_lim_db` (6 is gentle, 12-20 moderate). |
+| `AUDIO_ENHANCE_CHUNK_SECONDS` | `60` | Window length for long inputs, with 2 s of context on each side (0 = whole file). |
+| `AUDIO_BEATS_BACKEND` | `off` | `off`, `mock` (a 120 BPM grid; tests), `beat_this`, or `librosa`. |
+| `AUDIO_BEATS_MODEL` | `final0` | A beat_this checkpoint name, path or URL. If the official host (cloud.cp.jku.at) fails, `final0` falls back to the byte-identical HF mirror `Audante/beat-this-final0`, pinned by SHA-256. |
+| `AUDIO_BEATS_DBN` | `false` | madmom DBN post-processing (needs madmom; not installed). |
+| `AUDIO_BEATS_FALLBACK` | `librosa` | Tracker used when beat_this cannot load or run. It gives beats and tempo but no downbeats. Set `off` to fail instead. |
+| `AUDIO_SPEECH_DEVICE` | `auto` (= `AUDIO_DEVICE`) | Device for these models. |
+
+Benchmarks (A40, 2026-11-14): `benchmarks/speech.py`, with raw JSON in
+`benchmarks/results/2026-11-14-speech/raw/`.
+
+| Tool | Measure | Result |
+| --- | --- | --- |
+| words (turbo fp16, beam 5, batch 8, VAD) | LibriSpeech test-clean, 100 utterances: WER | 3.65% |
+| | word boundary error against MFA references (3914 words): Whisper only → with alignment (wav2vec2 plus a 50 ms start shift) | median 50 → 23 ms, p90 180 → 82 ms, within 80 ms 66% → 90% (starts alone: 95% within 80 ms). Without the shift, aligned starts ran +62 ms late: `words_turbo_noshift.json` |
+| | spliced TTS target words (sample-exact references), word starts | median 16 ms, 84% within 80 ms. Ends are not scored: the reference keeps about 150 ms of TTS decay |
+| | 4-min speech, warm: Whisper only / with alignment | 3.4 s / 4.3 s; process VRAM 5.7 / 6.9 GB peak (CTranslate2 cache and CUDA context included), of which torch 0.86 GB |
+| | Scripted Piper TTS, 6 voices × 25 lines: profanity / filler recall, false positives on 204 trap words | 63/78 (81%; 12 of the 15 misses are TTS "shit" heard as "it"/"hit") / 29/42 (69%; "uh" is often dropped) / 0 |
+| enhance (DeepFilterNet3) | SI-SDR, 20 LibriSpeech utterances + ESC-50 noise at 0/5/10 dB SNR | −0.0/5.0/10.0 → 14.5/16.7/19.1 dB (12 dB limit: 9.5/13.6/17.3) |
+| | same with pink noise; clean pass-through | 0.2/5.2/10.2 → 8.1/11.4/14.6 dB; clean speech kept at 31.3 dB |
+| | 4-min stereo, 48 kHz, warm | 3.7 s, process VRAM 2.9 GB (torch 1.4 GB) |
+| beats (beat_this final0) | synthetic drum loops, 8 tempos and meters: beat F (70 ms) / downbeat F | 0.988 (librosa: 0.948) / 0.74 (3/4 is weak) |
+| | 230 s song, warm | 0.49 s, process VRAM 0.7 GB; 125 BPM, 4/4 |

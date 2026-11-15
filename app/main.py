@@ -416,7 +416,9 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     # "add violins / a piano part / a funky bassline": a generated part (kind=generate -> generate-preview),
     # ahead of the stale-editor refresh guard below.
     from .generate_part import rule_plan as generate_rule_plan
-    generate=generate_rule_plan(body.prompt)
+    generate=generate_rule_plan(body.prompt,body.duration)
+    if generate and generate.get('clarify'):
+        return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':generate['clarify']}
     if generate:
         return {'kind':'generate','description':None,'remove':False,'actions':[],'generate':generate,
                 'message':f"Writing a {generate['instrument']} part that follows the song's chords and beat…"}
@@ -953,7 +955,7 @@ def multi_preview(pid: str, body: MultiRequest, authorization: str | None=Header
                 if not spec: raise ValueError('Which sound should I add, and where?')
                 fallback='Add '+', '.join(item['sfx_query'] for item in spec)
             elif kind=='generate':
-                spec=validate_generate({**(step.get('generate') or {}),'engine':'symbolic'},meta['duration'])
+                spec=validate_generate({**(step.get('generate') or {}),'engine':'symbolic'},duration)
                 fallback=f"Add a {spec.get('instrument') or 'new'} part"
             elif kind=='edit':
                 spec=[{k:v for k,v in a.items() if v is not None} for a in step.get('actions') or [] if isinstance(a,dict)]
@@ -1007,16 +1009,21 @@ def generate_preview(pid: str, body: GenerateRequest, authorization: str | None=
     if not p['audio'] or not p['metadata']: raise HTTPException(409,'Upload media first')
     refuse_during_refine(pid)
     from .candidates import safe_path
+    from .fx import export_duration
     from .generate_part import validate_generate
-    try: plan=validate_generate({**body.model_dump(exclude={'seed'}),'engine':'symbolic'},json.loads(p['metadata'])['duration'])
-    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     with connect() as db: rows=[dict(r) for r in db.execute('SELECT * FROM stems WHERE project_id=?',(pid,))]
+    # Validate against what the export actually spans (layers can be longer/shorter than the upload after a speed change).
+    meta_duration=float(json.loads(p['metadata'])['duration'])
+    duration=float(export_duration(rows,meta_duration)) if rows else meta_duration
+    try: plan=validate_generate({**body.model_dump(exclude={'seed'}),'engine':'symbolic'},duration)
+    except (ValueError,TypeError,KeyError) as exc: raise HTTPException(422,str(exc)) from exc
+    warnings=["A layer is soloed, so the new part will be silent until you unsolo it or solo the new part too."] if any(r.get('solo') for r in rows) else []
     try:
         source=safe_path(pid,p['audio'])
         snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],
                   'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
     except (ValueError,OSError) as exc: raise HTTPException(409,'Project audio is unavailable; reload and try again.') from exc
-    return {'candidate_id':start(pid,'candidate',{'_generate':True,'_candidate':snapshot,'plan':plan,'seed':body.seed}),'status':'queued'}
+    return {'candidate_id':start(pid,'candidate',{'_generate':True,'_candidate':snapshot,'plan':plan,'seed':body.seed}),'status':'queued','warnings':warnings}
 
 class DirectorRequest(BaseModel):
     request: str = Field(min_length=1,max_length=1000)

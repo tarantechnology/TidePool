@@ -125,6 +125,124 @@ def test_rule_plan_trims_time_tail():
     assert rule_plan("add a piano at 0:12")["instrument"] == "piano"
 
 
+def test_rule_plan_keeps_timing():
+    assert rule_plan("add horns at 0:05", 60)["interval"] == {"start": 5.0, "end": 60.0}
+    assert rule_plan("add violins from 0:05 to 0:20", 60)["interval"] == {"start": 5.0, "end": 20.0}
+    assert rule_plan("add a piano at 12 seconds", 60)["interval"] == {"start": 12.0, "end": 60.0}
+    assert "past the end" in rule_plan("add violins at 1:30", 60)["clarify"]
+    assert "word" in rule_plan("add a piano when he says hello", 60)["clarify"]
+    assert rule_plan("add a piano at 0:05")["clarify"]  # no duration known: ask rather than guess
+
+
+@pytest.mark.parametrize("prompt", ["put the keys on the table", "put the keys in the drawer", "bring in the horns of the car"])
+def test_rule_plan_needs_musical_context_for_weak_verbs(prompt):
+    assert rule_plan(prompt, 60) is None
+
+
+@pytest.mark.parametrize("prompt", ["put a string pad under the chorus", "give me a funky bassline", "layer some strings", "play a piano part in the chorus"])
+def test_rule_plan_musical_weak_verbs(prompt):
+    assert rule_plan(prompt, 60) is not None
+
+
+@pytest.mark.parametrize("interval", [{"start": 1}, {"start": "x", "end": 2}, {"start": 1, "end": float("nan")}, "0:05"])
+def test_validate_malformed_interval_is_value_error(interval):
+    with pytest.raises(ValueError, match="interval"):
+        validate_generate({"instrument": "piano", "interval": interval}, 10)
+
+
+def test_generate_preview_malformed_interval_422(client, tmp_path):
+    pid, h = _uploaded(client, tmp_path)
+    for interval in ({'start': 1}, {'start': 'x', 'end': 2}, {'end': 1}):
+        r = client.post(f'/api/projects/{pid}/generate-preview', headers=h, json={'prompt': 'add a piano', 'interval': interval})
+        assert r.status_code == 422 and 'interval' in r.json()['detail'], r.text
+
+
+def test_multi_preview_malformed_interval_message(client, tmp_path):
+    pid, h = _uploaded(client, tmp_path)
+    r = client.post(f'/api/projects/{pid}/multi-preview', headers=h,
+                    json={'request': 'x', 'steps': [{'kind': 'generate', 'generate': {'instrument': 'piano', 'prompt': 'p', 'interval': {'start': 0}}}]})
+    assert r.status_code == 422 and r.json()['detail'].endswith('interval needs start and end (seconds)'), r.text
+    assert "'start'" not in r.json()['detail']
+
+
+def _fake_service(calls):
+    from app.media import encode_wav, probe
+
+    def fake(mix_path, stems, plan, seed=0, **kw):
+        n = round(probe(mix_path)['duration'] * 48000)
+        tone = (0.1 * np.sin(2 * np.pi * 440 * np.arange(n) / 48000)).astype(np.float32)
+        calls.append({'analysis': kw.get('analysis'), 'stems': dict(stems)})
+        return {'part': {'name': 'Violins', 'display_name': 'Violins', 'kind': 'music', 'family': 'strings', 'role': 'pad'},
+                'audio': {'audio_base64': base64.b64encode(encode_wav(np.stack([tone, tone], axis=1), 48000)).decode()},
+                'midi_base64': None, 'engine': {'name': 'symbolic'}, 'renderer': {}, 'windows': [], 'checks': {}, 'mix': {}, 'warnings': [],
+                'analysis': {'tempo': 120.0, 'n': len(calls)}}
+    return fake
+
+
+def test_analysis_cache_invalidated_by_new_layers_and_speed_change(client, tmp_path, monkeypatch):
+    from app import generate_part
+    calls = []
+    monkeypatch.setattr(generate_part, 'request_generate_part', _fake_service(calls))
+    pid, h = _uploaded(client, tmp_path)
+    def generate():
+        r = client.post(f'/api/projects/{pid}/generate-preview', headers=h, json={'instrument': 'violins', 'prompt': 'add violins'})
+        assert r.status_code == 202, r.text
+        job = _wait(client, r.json()['candidate_id'], h); assert job['status'] == 'completed', job
+        return r.json()['candidate_id'], job
+    cid, job = generate(); assert job['provenance']['analysis_cached'] is False
+    _, job = generate(); assert job['provenance']['analysis_cached'] is True  # same audio + layers: reused
+    assert client.post(f'/api/candidates/{cid}/apply', headers=h).status_code == 200
+    _, job = generate(); assert job['provenance']['analysis_cached'] is False  # a new layer: re-analysed
+    _, job = generate(); assert job['provenance']['analysis_cached'] is True
+    r = client.post(f'/api/projects/{pid}/fx-preview', headers=h, json={'targets': ['mix'], 'preset': 'slowed_reverb'})
+    assert r.status_code == 202, r.text
+    speed = _wait(client, r.json()['candidate_id'], h); assert speed['status'] == 'completed', speed
+    assert client.post(f"/api/candidates/{r.json()['candidate_id']}/apply", headers=h).status_code == 200
+    _, job = generate(); assert job['provenance']['analysis_cached'] is False  # speed change: re-analysed
+    assert calls[-1]['analysis'] is None
+
+
+def test_cached_call_still_uploads_vocal_and_bass_references(tmp_path, monkeypatch):
+    from app import generate_part
+    from app.media import encode_wav
+    paths = {}
+    for name in ('mix', 'vocals', 'bass', 'drums'):
+        paths[name] = tmp_path / f'{name}.wav'
+        paths[name].write_bytes(encode_wav(np.zeros((4800, 2), np.float32), 48000))
+    sent = {}
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {'ok': True}
+
+    def post(url, files, data, timeout):
+        sent['files'] = [(k, v[0]) for k, v in files]; sent['meta'] = json.loads(data['metadata']); return R()
+    monkeypatch.setenv('SAM_AUDIO_SERVICE_URL', 'http://svc:1')
+    monkeypatch.setattr(generate_part.httpx, 'post', post)
+    stems = {k: paths[k] for k in ('vocals', 'bass', 'drums')}
+    generate_part.request_generate_part(paths['mix'], stems, {'instrument': 'piano'}, analysis={'tempo': 120.0}, output_sample_rate=48000)
+    keys = [k for k, _ in sent['files']]
+    assert keys == ['audio', 'stem_vocals', 'stem_bass'] and sent['meta']['analysis'] == {'tempo': 120.0}
+    generate_part.request_generate_part(paths['mix'], stems, {'instrument': 'piano'})
+    assert sorted(k for k, _ in sent['files']) == ['audio', 'stem_bass', 'stem_drums', 'stem_vocals']
+
+
+def test_generate_preview_warns_when_a_layer_is_soloed(client, tmp_path, monkeypatch):
+    from app import generate_part
+    calls = []
+    monkeypatch.setattr(generate_part, 'request_generate_part', _fake_service(calls))
+    pid, h = _uploaded(client, tmp_path)
+    r = client.post(f'/api/projects/{pid}/generate-preview', headers=h, json={'instrument': 'violins', 'prompt': 'add violins'})
+    cid = r.json()['candidate_id']; _wait(client, cid, h)
+    assert client.post(f'/api/candidates/{cid}/apply', headers=h).status_code == 200
+    from app.core import connect
+    with connect() as db: db.execute("UPDATE stems SET solo=1 WHERE project_id=? AND name='Original audio'", (pid,))
+    r = client.post(f'/api/projects/{pid}/generate-preview', headers=h, json={'instrument': 'piano', 'prompt': 'add a piano part'})
+    assert r.status_code == 202 and r.json()['warnings']
+    job = _wait(client, r.json()['candidate_id'], h)
+    assert job['status'] == 'completed' and 'soloed' in json.dumps(job), job
+
+
 def test_agent_route_precedence_insert_then_generate(client, tmp_path, monkeypatch):
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     pid, h = _uploaded(client, tmp_path)
@@ -132,9 +250,14 @@ def test_agent_route_precedence_insert_then_generate(client, tmp_path, monkeypat
     for prompt in ("add a vine boom at 0:01", "add a sad trombone at the end"):  # the test clip is 2 s
         plan = ask(prompt); assert plan['kind'] == 'insert', (prompt, plan.get('message'))
     for prompt, instrument in (("add a piano part", "piano"), ("add violins", "violins"), ("add a funky bassline", "funky bassline"),
-                               ("add an 80s synth arpeggio", "80s synth arpeggio"), ("add a piano at 0:12", "piano")):
+                               ("add an 80s synth arpeggio", "80s synth arpeggio"), ("add a piano at 0:01", "piano")):
         plan = ask(prompt)
         assert plan['kind'] == 'generate' and plan['generate']['instrument'] == instrument, prompt
+    # A single timestamp is kept as an interval from there to the song end (the clip is 2 s), never dropped.
+    assert ask("add horns at 0:01")['generate']['interval'] == {'start': 1.0, 'end': pytest.approx(2.0, abs=.01)}
+    assert ask("add a piano at 0:12")['kind'] == 'clarify'  # past the end
+    assert ask("add a piano when he says hello")['kind'] == 'clarify'
+    assert ask("put the keys on the table").get('kind') != 'generate'  # falls through to the planner
     assert ask("replace the piano with violins")['kind'] == 'clarify'
     # Censorship comes first: a generate ask never pre-empts the profanity beep flow.
     for prompt in ("add violins and bleep the swearing", "censor the cuss words then add a piano part"):

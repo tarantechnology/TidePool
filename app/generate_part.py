@@ -13,6 +13,7 @@ Self-contained so it can be wired into ``app/agent.py`` without touching the exi
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -44,7 +45,17 @@ PLANNER_NOTE = ("Use kind=generate when the user asks to ADD a new musical part 
                 "their full wording, role only if they name one, sections only if they name song sections, interval only for explicit times. "
                 "Never invent notes, keys or tempos: the audio service analyses the song.")
 
-_VERB = re.compile(r'^\s*(?:please\s+)?(?:can you\s+)?(add|put|layer|throw in|bring in)\s+', re.I)
+_VERB = re.compile(r'^\s*(?:please\s+)?(?:can you\s+|could you\s+)?(add|give (?:me|us)|put|layer|throw in|bring in|play)\s+', re.I)
+# "add" / "give me" / "layer" name a new part outright; "put", "play", "bring in"... only with musical context
+# ("put a string pad under the chorus", not "put the keys on the table").
+_STRONG_VERB = re.compile(r'^(?:add|give (?:me|us)|layer)$', re.I)
+_MUSIC_CONTEXT = re.compile(r'\b(?:part|track|layer|line|pad|song|mix|tune|beat|groove|music|intro|verses?|chorus(?:es)?|bridge|outro|drop|section|'
+                            r'bassline|arpeggio|arp|melody|countermelody|counter-melody|chords|riff)\b', re.I)
+_TIME = r'(\d+:\d{1,2}(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:s|secs?|seconds?)\b)'
+_RANGE = re.compile(r'\b(?:from|between)\s+' + _TIME + r'\s*(?:to|-|–|and|until|till)\s*' + _TIME, re.I)
+_AT = re.compile(r'\b(?:at|from|starting(?:\s+at)?|after|beginning at)\s+' + _TIME, re.I)
+# Timing tied to a lyric/word ("when he says ...") needs a transcript lookup the generate flow does not do.
+_WORD_CUE = re.compile(r'\bwhen\s+(?:he|she|they|i|we|you|someone|the\s+\w+)\s+(?:says?|sings?|said|sang|hits?|starts?)\b', re.I)
 _TAIL = re.compile(r'\s+(?:to|in|into|under|over|on|during|for|behind|throughout|at|from|after|before|starting|when)\b.*$', re.I)
 # The planner only routes asks that name a playable part; everything else keeps its existing flow.
 _INSTRUMENTS = re.compile(r'\b(violins?|viola|cellos?|strings?|string pad|orchestra(?:l)?|fiddle|double bass|upright bass|contrabass|pizzicato|piano|keys|rhodes|'
@@ -60,11 +71,28 @@ _EFFECTS = re.compile(r'\b(reverb\w*|echo\w*|delay|effects?|eq|filter\w*|fade\w*
 _EQ_ASK = re.compile(r'^(?:some\s+)?(?:more|less|extra)\s+(?:bass|treble|low[- ]end|lows|highs|top end)\b', re.I)
 
 
-def rule_plan(prompt: str) -> dict | None:
-    """Offline fallback for the common "add <instrument> ..." asks; None when it is not one."""
+def _seconds(value: str) -> float:
+    value = value.strip().lower()
+    if ':' in value:
+        minutes, sec = value.split(':', 1)
+        return int(minutes) * 60 + float(sec)
+    return float(re.sub(r'[a-z\s]+$', '', value))
+
+
+def _fmt(t: float) -> str:
+    return f"{int(t // 60)}:{t % 60:04.1f}".replace('.0', '')
+
+
+def rule_plan(prompt: str, duration: float | None = None) -> dict | None:
+    """Offline fallback for the common "add <instrument> ..." asks; None when it is not one.
+
+    A timestamp is kept, never dropped: "at 0:05" -> interval 0:05 .. song end (``duration``), "from 0:05 to 0:20" ->
+    that range. When the timing cannot be honoured (a lyric cue, or past the end) the plan carries ``clarify``."""
     text = prompt.strip()
     m = _VERB.match(text)
     if not m or _EFFECTS.search(text) or _EQ_ASK.match(text[m.end():]):
+        return None
+    if not _STRONG_VERB.match(m.group(1).strip()) and not _MUSIC_CONTEXT.search(text[m.end():]):
         return None
     rest = _TAIL.sub('', text[m.end():])
     # The instrument must be the thing being added, not a target: "add chorus to the guitar" is an effect.
@@ -75,7 +103,26 @@ def rule_plan(prompt: str) -> dict | None:
     if not rest:
         return None
     sections = [s for s in SECTIONS if re.search(r'\b' + s + r'(e?s)?\b', text, re.I)] or None
-    return {'instrument': rest, 'prompt': text, 'role': None, 'sections': sections, 'interval': None, 'density': None, 'engine': 'auto'}
+    plan = {'instrument': rest, 'prompt': text, 'role': None, 'sections': sections, 'interval': None, 'density': None, 'engine': 'auto'}
+    if _WORD_CUE.search(text):
+        plan['clarify'] = (f"I can't line a new part up with a spoken or sung word yet. Give me a time (\"add {rest} at 0:05\") "
+                           "or a section (\"in the chorus\").")
+        return plan
+    span = _RANGE.search(text)
+    at = None if span else _AT.search(text)
+    if span or at:
+        start = _seconds((span or at).group(1))
+        end = _seconds(span.group(2)) if span else (float(duration) if duration else None)
+        if duration is not None and start >= float(duration) - 0.05:
+            plan['clarify'] = f"{_fmt(start)} is past the end of the song ({_fmt(float(duration))}). Pick an earlier time."
+        elif end is not None and end <= start:
+            plan['clarify'] = 'The end time has to come after the start time.'
+        elif end is not None:
+            plan['interval'] = {'start': start, 'end': min(end, float(duration)) if duration else end}
+            plan['sections'] = None  # explicit times win over section words
+        else:
+            plan['clarify'] = 'Until when should the new part play?'
+    return plan
 
 
 def validate_generate(plan: dict, duration: float) -> dict:
@@ -92,9 +139,13 @@ def validate_generate(plan: dict, duration: float) -> dict:
             raise ValueError('invalid section')
         out['sections'] = list(plan['sections'])
     if plan.get('interval'):
-        a, b = float(plan['interval']['start']), float(plan['interval']['end'])
-        if not 0 <= a < b <= duration + 1e-6:
-            raise ValueError('interval outside the timeline')
+        interval = plan['interval']
+        try:
+            a, b = float(interval['start']), float(interval['end'])
+        except (TypeError, KeyError, ValueError):
+            raise ValueError('interval needs start and end (seconds)') from None
+        if not (math.isfinite(a) and math.isfinite(b)) or not 0 <= a < b <= duration + 1e-6:
+            raise ValueError(f'interval must fit inside the song (0-{duration:.1f} s)')
         out['interval'] = {'start': a, 'end': b}
     if plan.get('density') is not None:
         out['density'] = min(1.0, max(0.0, float(plan['density'])))
@@ -124,8 +175,9 @@ def request_generate_part(mix_path: str | Path, stems: dict[str, str | Path], pl
                           seed: int = 0, timeout: float = 600.0, output_sample_rate: int | None = None) -> dict:
     """Call the audio service. ``stems`` maps names (vocals/drums/bass/other/...) to the project's stem files.
 
-    With a cached ``analysis`` only a mono 16 kHz FLAC reference of the mix is uploaded (no stems) and the
-    service renders at ``output_sample_rate``; the part comes back as 16-bit FLAC either way."""
+    With a cached ``analysis`` only mono 16 kHz FLAC references are uploaded - the mix plus the vocal and bass stems
+    (the renderer's vocal-keyed EQ carve and bass-clash check need them; other stems only feed the analysis) - and
+    the service renders at ``output_sample_rate``; the part comes back as 16-bit FLAC either way."""
     url = urlsplit(os.getenv('SAM_AUDIO_SERVICE_URL', ''))
     if not url.netloc:
         raise RuntimeError('SAM_AUDIO_SERVICE_URL is required')
@@ -141,6 +193,10 @@ def request_generate_part(mix_path: str | Path, stems: dict[str, str | Path], pl
         if analysis is not None and output_sample_rate:
             name, f, ctype = stack.enter_context(_reference_upload(mix_path))
             files = [('audio', (name, f, ctype))]
+            for stem in REFERENCE_STEMS:
+                if stem in stems:
+                    name, f, ctype = stack.enter_context(_reference_upload(stems[stem]))
+                    files.append(('stem_' + stem, (stem + '.flac', f, ctype)))
         else:
             name, f, ctype = stack.enter_context(service_upload(mix_path))
             files = [('audio', ('mix' + Path(name).suffix, f, ctype))]
@@ -153,10 +209,19 @@ def request_generate_part(mix_path: str | Path, stems: dict[str, str | Path], pl
     return response.json()
 
 
-def analysis_key(snapshot: dict, rows: list[dict], stem_ids: list[str]) -> str:
-    """Cache key for a project's music analysis: the source audio + the exact stem files it used."""
+# Stems the renderer still reads when the analysis is cached (vocal-keyed carve, bass-clash check).
+REFERENCE_STEMS = ('vocals', 'bass')
+_MIX_FIELDS = ('revision', 'start_offset', 'volume', 'muted', 'solo', 'mute_ranges', 'automation', 'fx')
+
+
+def analysis_key(snapshot: dict, rows: list[dict], duration: float) -> str:
+    """Cache key for a project's music analysis: the project audio, EVERY current layer (file hash + revision and
+    the mix fields that change what the export sounds like) and the export duration. A speed change, a new or
+    removed layer, or an edited layer therefore re-analyses."""
     import hashlib
-    parts = [snapshot['source_sha256']] + sorted(f"{sid}:{snapshot['stem_hashes'][sid]}" for sid in stem_ids)
+    hashes = snapshot.get('stem_hashes') or {}
+    parts = [snapshot['source_sha256'], f'{float(duration):.3f}']
+    parts += sorted(f"{r['id']}:{hashes.get(r['id'], '?')}:" + ':'.join(str(r.get(k)) for k in _MIX_FIELDS) for r in rows)
     return hashlib.sha256('|'.join(parts).encode()).hexdigest()[:32]
 
 
@@ -182,19 +247,20 @@ def generate_layer(pid: str, original, rows: list[dict], plan: dict, seed: int, 
 
     from .candidates import safe_path
     from .core import probe, project_dir, run, uid
-    stems, stem_ids = {}, []
+    stems = {}
     for row in rows:
         name = _stem_name(row)
         if name and name not in stems and not row.get('muted'):
-            stems[name] = safe_path(pid, row['path']); stem_ids.append(row['id'])
+            stems[name] = safe_path(pid, row['path'])
+    before = probe(original)
     cache = analysis = None
     if snapshot and snapshot.get('source_sha256') and snapshot.get('stem_hashes') is not None:
         cache_dir = project_dir(pid) / 'analysis'; cache_dir.mkdir(parents=True, exist_ok=True)
-        cache = cache_dir / (analysis_key(snapshot, rows, stem_ids) + '.json')
+        cache = cache_dir / (analysis_key(snapshot, rows, before['duration']) + '.json')
         if cache.exists():
             try: analysis = json.loads(cache.read_text())
             except (OSError, ValueError): analysis = None
-    before = probe(original)
+            if not isinstance(analysis, dict): analysis = None
     result = request_generate_part(original, stems, plan, seed=seed, analysis=analysis, output_sample_rate=before['sample_rate'])
     if cache is not None and analysis is None and isinstance(result.get('analysis'), dict):
         tmp = cache.with_suffix(f'.{uid()}.tmp'); tmp.write_text(json.dumps(result['analysis'])); tmp.replace(cache)
@@ -250,6 +316,8 @@ def build(project: dict, payload: dict, candidate_id: str) -> dict:
         mix = new_file(); export(proposed, source, mix, 'wav', False)
         warnings = list(result.get('warnings') or [])
         warnings.append('The new part is generated from the song\'s detected chords and beats; detection can be wrong, so listen before applying.')
+        if any(r.get('solo') for r in base_rows):
+            warnings.append('A layer is soloed, so the new part is silent in the mix until you unsolo it or solo the new part too.')
         return {'target': {'path': layer['path']}, 'mix': {'path': str(mix)}, 'original': {'path': str(original)}, 'snapshot': snapshot, 'proposed': proposed,
                 'inference': {'model': {'is_mock': False, 'backend': 'generate-' + str((result.get('engine') or {}).get('name', 'symbolic'))}, 'warnings': warnings},
                 'provenance': {'kind': 'generate', 'plan': payload['plan'], 'part': info, 'engine': result.get('engine'), 'renderer': result.get('renderer'),

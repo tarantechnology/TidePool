@@ -70,6 +70,8 @@ describe('chatRoute: replacement precedence', () => {
       expect(r.generate, ask).toBe(false); expect(r.sfx, ask).toBe(false); expect(r.fx, ask).not.toBeNull()
     }
     for (const ask of ['add a fade', 'add more bass', 'add compression to the bass']) expect(chatRoute(ask, stems).generate, ask).toBe(false)
+    for (const ask of ['put the keys on the table', 'bring in the horns of the car']) expect(chatRoute(ask, stems).generate, ask).toBe(false)
+    for (const ask of ['put a string pad under the chorus', 'give me a funky bassline', 'layer some strings']) expect(chatRoute(ask, stems).generate, ask).toBe(true)
     expect(chatRoute('replace the piano with violins', stems).generate).toBe(false)
     expect(chatRoute('replace the piano with violins', stems).replacement).toBe('replace the piano with violins')
   })

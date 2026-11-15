@@ -384,6 +384,10 @@ def build(project, payload, cid):
                 raise fail([i], exc) from exc
             done += 1; _progress(cid, done, total)
 
+        before_ids = {r['id'] for r in snapshot['rows']}
+        added = [r for r in rows if r['id'] not in before_ids and r['path'] != str(source)]  # generated parts / inserted sounds
+        if added and any(r.get('solo') for r in rows) and not all(r.get('solo') for r in added):
+            notes.append('A layer is soloed, so the new layers from this prompt are silent in the mix until you unsolo it or solo them too.')
         mix = new_file(); export(rows, source, mix, 'wav', False)
         mix_x, _ = F.decode(mix)
         peak = F.true_peak_db(mix_x)

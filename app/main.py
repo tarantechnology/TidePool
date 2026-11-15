@@ -345,6 +345,23 @@ def discover_sounds(pid: str, authorization: str | None=Header(None)):
 def discovery_job(jid: str, authorization: str | None=Header(None)):
     return get_job(jid,'discovery',authorization)
 
+def word_effect_plan(body):
+    """"Bass boost the bad words", "add echo whenever he says McLovin": plan the effect without the word clause,
+    then attach on_words so the preview applies it only while those words are said (app/word_fx.py)."""
+    from .word_fx import parse, describe
+    found=parse(body.prompt)
+    if not found:return None
+    rest,on_words=found
+    clarify=lambda message:{'kind':'clarify','description':None,'remove':False,'actions':[],'message':message}
+    if not rest:return clarify(f'Which effect should go on the {describe(on_words)}? For example "bass boost the bad words".')
+    try: result=agent_plan(body.model_copy(update={'prompt':rest}))
+    except AgentError as exc: raise HTTPException(502,str(exc)) from exc
+    fx=result.get('fx') if result.get('kind')=='fx' else None
+    if not fx or fx.get('adjust') or fx.get('speed') or fx.get('preset') in ('slowed_reverb','slowed','nightcore','sped_up'):
+        return clarify(f'I can put an effect such as bass boost, echo, reverb, deepen or muffle on the {describe(on_words)}. Which effect do you want?')
+    return {**result,'fx':{**fx,'interval':None,'on_words':on_words},
+            'message':f'Finding the {describe(on_words)} in the speech, then previewing the effect on each one.'}
+
 @app.post('/api/projects/{pid}/agent')
 def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header(None)):
     p=auth(pid,authorization)
@@ -369,6 +386,8 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     from .sfx_plan import requests_censorship
     if requests_censorship(body.prompt):  # Profanity beeps are the censorship preview's job, never a library insert or a generated part.
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'Profanity beeps use the censorship preview: ask "bleep the swearing" in the editor.'}
+    word_plan=word_effect_plan(body)
+    if word_plan is not None:return word_plan
     # Never let a replacement instruction fall through to a separation-only planner.
     import re
     # "Make the drums sound like a phone" names an effect preset; that is a layer effect, not a replacement.
@@ -826,6 +845,10 @@ class FxDuck(BaseModel):
     attack_ms: float | None = Field(default=None, allow_inf_nan=False)
     release_ms: float | None = Field(default=None, allow_inf_nan=False)
 
+class FxWords(BaseModel):
+    profanity: bool = False
+    words: list[str] = Field(default_factory=list, max_length=10)
+
 class FxRequest(BaseModel):
     op: Literal['chain','adjust','remove','duck','loudness'] = 'chain'
     targets: list[str] = Field(default_factory=lambda: ['mix'], min_length=1, max_length=20)
@@ -838,6 +861,7 @@ class FxRequest(BaseModel):
     base_candidate_id: str | None = Field(default=None, max_length=40)
     duck: FxDuck | None = None
     loudness_lufs: float | None = Field(default=None, allow_inf_nan=False)
+    on_words: FxWords | None = None
 
 def fx_spec(pid, p, body, rows):
     """The validated, clamped render spec for an fx preview; FxError becomes a 422."""
@@ -889,6 +913,16 @@ def fx_spec(pid, p, body, rows):
     if item['speed']:
         if targets!=['mix']: raise S.FxError('Speed changes apply to the whole song. Ask for it on the whole mix.')
         if meta.get('has_video'): raise S.FxError('Changing the speed would put the audio out of sync with the video; it is available for audio projects.')
+    if body.on_words is not None:
+        # "Bass boost the bad words": the preview job finds the words in a local transcript (app/word_fx.py).
+        from .word_fx import clean
+        if item['speed']: raise S.FxError('A speed change applies to the whole song, not to single words.')
+        if item['interval']: raise S.FxError('Give either a time range or the words, not both.')
+        try: on_words=clean(body.on_words.model_dump())
+        except ValueError as exc: raise S.FxError(str(exc)) from exc
+        from .censorship import available
+        if not available(): raise S.FxError('Word timing needs local transcription (faster-whisper), which is not set up on this server. Give a time range instead.')
+        return {'op':'chain','targets':targets,'item':item,'notes':notes,'on_words':on_words}
     return {'op':'chain','targets':targets,'item':item,'notes':notes}
 
 @app.post('/api/projects/{pid}/fx-preview',status_code=202)

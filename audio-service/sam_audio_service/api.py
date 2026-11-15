@@ -7,6 +7,8 @@ POST /separate       multipart ``audio`` + ``metadata`` JSON string. This is the
                      superset of ``{"stems": [{"name", "audio_base64"}]}``.
 POST /v1/separate    JSON body with ``audio_ref`` instead of uploaded bytes (proposed).
 POST /v1/route       multipart, same as /separate: the routing decision only (dry run).
+POST /v1/analyze-music   tempo/beats/key/chords/sections/melody from a mix and/or its stems.
+POST /v1/generate-part   a new part (instrument, role, sections) that fits the song (generation/api.py).
 GET  /health         liveness + model status.
 GET  /capabilities   prompting modes, limits, error codes, contract version.
 
@@ -37,6 +39,9 @@ from .config import Settings, load_settings
 from .contracts import ModelInfo, RouteInfo, RouteResponse, SeparationMetadata, SeparationRequest, SeparationResponse, SourceInfo, StemResult
 from .engine import Engine, write_stem_file
 from .errors import ERROR_CODES, AudioServiceError, InvalidMedia, InvalidRequest, StorageFailure
+from .generation import Generator
+from .generation.api import register as register_generate_routes
+from .generation.settings import GenSettings
 from .media import resolve_ref, to_file_ref
 from .stems import STEM_ALIASES
 from .stems.vocabulary import requestable
@@ -44,9 +49,10 @@ from .stems.vocabulary import requestable
 log = logging.getLogger("sam_audio_service")
 
 
-def create_app(settings: Settings | None = None, engine: Engine | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, engine: Engine | None = None, generator: Generator | None = None) -> FastAPI:
     settings = settings or load_settings()
     engine = engine or Engine(settings)
+    generator = generator or Generator(GenSettings())
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -59,7 +65,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         engine.unload()
 
     app = FastAPI(title="SoundCanvas Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
-    app.state.settings, app.state.engine = settings, engine
+    app.state.settings, app.state.engine, app.state.generator = settings, engine, generator
 
     @app.exception_handler(AudioServiceError)
     async def _service_error(_: Request, exc: AudioServiceError):
@@ -111,6 +117,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             "limits": {"max_passes": settings.max_passes, "max_prompts": settings.max_prompts, "max_duration_seconds": settings.max_duration_seconds},
             "music_stems": _music_stems_capabilities(),
             "routing": {"default_mode": settings.routing_default, "modes": ["auto", "prompted", "music_stems"], "classifier": engine.classifier.name, "music_threshold": settings.router_music_threshold},
+            "generate": generator.capabilities(),
             "error_codes": ERROR_CODES,
         }
 
@@ -219,6 +226,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             decoded = decode(path=Path(path), ffmpeg=settings.ffmpeg, ffprobe=settings.ffprobe, timeout=settings.ffmpeg_timeout)
             return _respond(decoded, SeparationMetadata.model_validate(body.model_dump(exclude={"audio_ref"})), workdir)
 
+    register_generate_routes(app, settings, generator)
     return app
 
 

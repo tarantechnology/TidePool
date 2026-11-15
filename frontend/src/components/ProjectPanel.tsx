@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
+import type { Anchor, EditScope, Capabilities, AgentPlan, BackendConfig, ProjectInfo, Routing, SavedStem, VisualMetadata, CinematicStyle, DirectorIntent, GeneratePlan, DiscoveredSound, DirectorChange, LayerEffects, ReplacementEvent, ReplacementAdjustment, ReplacementRecovery } from '../api/backend'
 
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
@@ -15,7 +15,7 @@ import { requestsSoundReplacement } from '../agent/replacementIntent'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, undoCandidate, createCandidate, createCinematicPreview, createDirectorPreview, createGeneratePreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -320,6 +320,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound:'Cinematic audio'})) } catch { /* Preview remains available in this tab. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
+  const previewGenerate = async (cfg:BackendConfig, info:ProjectInfo, plan:GeneratePlan) => {
+    await flush()
+    const label=plan.instrument || 'New part'
+    setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('');setPrompt(label)
+    const id=await createGeneratePreview(cfg,info.project_id,plan)
+    try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound:label})) } catch { /* Preview remains available in this tab. */ }
+    await waitCandidate(cfg,info.project_id,id)
+  }
   const previewDirector = async (cfg:BackendConfig, info:ProjectInfo, requestText:string, intent:DirectorIntent, style:CinematicStyle) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('');setPrompt('Creative audio')
@@ -465,6 +473,12 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const scope:EditScope|undefined = result.edit_scope && result.edit_scope.action !== 'keep' ? result.edit_scope : result.remove ? {action:'mute'} : undefined
         await splitInto(cfg, current, result.stems ?? null, scope)
         result = {...result, message: result.remove ? 'Split done; the vocals are muted.' : 'Split into tracks.'}
+        return result
+      }
+      if (result.kind === 'generate' && result.generate) {
+        setMessage(result.message || 'Writing a part that fits the song…')
+        await previewGenerate(cfg,current,result.generate)
+        result.message='New part ready. Compare the mix with and without it, then apply.'
         return result
       }
       if (result.kind === 'cinematic' || result.kind === 'director') {

@@ -430,7 +430,7 @@ export async function updateStemSettings(config: BackendConfig, projectId: strin
   })
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'generate'|'clarify'; generate?:GeneratePlan|null; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>
@@ -489,6 +489,12 @@ export async function createEffectsPreview(config:BackendConfig,projectId:string
 export type DirectorIntent = 'cinematic'|'dramatic'|'cool'|'funny'
 export async function createDirectorPreview(config:BackendConfig,projectId:string,requestText:string,intent:DirectorIntent,style:CinematicStyle):Promise<string> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/director-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:requestText,intent,style})})
+  return ((await response.json()) as {candidate_id:string}).candidate_id
+}
+export interface GeneratePlan {instrument:string|null;prompt:string;role?:string|null;sections?:string[]|null;interval?:{start:number;end:number}|null;density?:number|null}
+/** "add violins to the song": a candidate whose preview adds one generated music layer. */
+export async function createGeneratePreview(config:BackendConfig,projectId:string,plan:GeneratePlan):Promise<string> {
+  const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/generate-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(plan)})
   return ((await response.json()) as {candidate_id:string}).candidate_id
 }
 export async function createCinematicPreview(config:BackendConfig, projectId:string, style:CinematicStyle):Promise<string> {

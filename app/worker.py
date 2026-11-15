@@ -181,13 +181,15 @@ def work_once():
                 from .director import build
             elif payload.get('_cinematic'):
                 from .cinematic import build
+            elif payload.get('_generate'):
+                from .generate_part import build
             else:
                 from .candidates import build
             snapshot=payload.get('_candidate') or {}
             duration=probe(snapshot.get('source') or p['audio'])['duration']
             # A timestamp or range preview only sends a short segment (at most ~12 s) to the service.
             if payload.get('_processing_interval') or payload.get('_processing_time') is not None: duration=min(duration,12)
-            creative=any(payload.get(k) for k in ('_effects','_director_adjust','_director','_cinematic'))
+            creative=any(payload.get(k) for k in ('_effects','_director_adjust','_director','_cinematic','_generate'))
             with ticking(job['id'],'rendering' if creative else 'separating',expected_seconds(duration,payload)):
                 output=build(p,payload,job['id'])
             with connect() as db:

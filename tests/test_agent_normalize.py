@@ -41,3 +41,11 @@ def test_range_at_the_start_of_the_clip():
     ts = [p['t'] for p in data['actions'][0]['keyframes']]
     assert ts == sorted(set(ts)) and ts[0] == 0.0
     validate_operations(data['actions'], body())
+
+
+def test_model_curve_is_clamped_to_the_clip_and_ordered():
+    data = {'kind': 'edit', 'actions': [{'type': 'set_automation', 'stemId': 'd', 'keyframes': [
+        {'t': 0, 'value': 1}, {'t': 10, 'value': 6}, {'t': 5, 'value': 0.5}, {'t': 49.5, 'value': 1}]}]}
+    normalize_edit(data, body())
+    assert data['actions'][0]['keyframes'] == [{'t': 0.0, 'value': 1.0}, {'t': 5.0, 'value': 0.5}, {'t': 10.0, 'value': 5.0}, {'t': 49.4, 'value': 1.0}]
+    validate_operations(data['actions'], body())

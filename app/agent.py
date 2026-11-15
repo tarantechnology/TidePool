@@ -176,6 +176,13 @@ def normalize_edit(data, body):
                     a={'type':'set_automation','stemId':a.get('stemId'),'keyframes':keys}
             else:
                 a={k:v for k,v in a.items() if k not in ('start','end')}
+        elif isinstance(a,dict) and a.get('type')=='set_automation' and isinstance(a.get('keyframes'),list):
+            # Model curves sometimes overshoot the clip end or the 500% ceiling by a hair: clamp, order, dedupe.
+            keys={}
+            for p in a['keyframes']:
+                if isinstance(p,dict) and real(p.get('t')) and real(p.get('value')):
+                    keys[round(min(max(float(p['t']),0.0),float(body.duration)),3)]=max(0.0,min(5.0,float(p['value'])))
+            a={**{k:v for k,v in a.items() if k not in ('start','end')},'keyframes':[{'t':t,'value':v} for t,v in sorted(keys.items())][:64]}
         out.append(a)
     data['actions']=out
 

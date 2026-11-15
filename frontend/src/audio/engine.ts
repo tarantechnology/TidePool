@@ -198,7 +198,7 @@ export class AudioEngine {
     const id = ++this.playRequest
     await this.ctx.resume()
     if (id !== this.playRequest) return
-    if(this.getTimelineTime() >= this.timelineDuration)this.seekTimeline(0)
+    if(this.getTimelineTime() >= this.timelineDuration-1e-6)this.seekTimeline(0)
     const from = this.pausedAt
     this.startSources(from)
     this.playing = true

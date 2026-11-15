@@ -131,8 +131,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     } catch { /* Ignore invalid or unavailable saved data. */ }
     setClipHistory(createHistory(saved));setTrimStart(start);setTrimEnd(end)
   }
-  const effectiveClips = (duration:number):SourceClip[] => {
-    if (clips.length) return clips
+  const effectiveClips = (duration:number):SourceClip[] => clips.length ? clips : effectiveTrim(trimStart,trimEnd,duration)
+  const effectiveTrim = (trimStart:string,trimEnd:string,duration:number):SourceClip[] => {
     const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : duration
     if (!trimStart.trim() || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end || end > duration + 1e-6) throw new Error('Choose a valid trim range before editing clips.')
     return start === 0 && !trimEnd.trim() ? [] : [{start,end}]
@@ -336,10 +336,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { if (readyToRestore) restoreTab() }, [baseUrl, readyToRestore])
   const uploadMedia = (media: File) => run(async () => {
     await flush()
-    setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     const created = await createProject(baseUrl)
     if (!created.access_token) throw new Error('Project token was not returned.')
     const cfg = {baseUrl, token:created.access_token}
+    // Same render as setProject, so the save effect never writes this reset under the previous project.
+    setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
     setProject(created); setToken(created.access_token); rememberProject(created.project_id, created.access_token);
     setMockStems(null);setJobId(''); setUndoId('');setRouting(null);setSuggestion(null);setAnchors([]);setProcessingRange(null);setProcessingTime(null);setSuggestions([]);setReplacementOpen(false);setReplacementRecovery(null);setReplacementSource('');setReplacementEffect('');setEffectsOpen(false);setEffectsStems([]);setEffectsStem('');setEffects({bass:0,treble:0,highpass:0,compression:1}); setSettingsStems([]); setMessages([]); setRetryStems([]); setCandidateId(''); setCandidateUrl(''); setCurrentUrl(''); onOriginalAudio(null); await onLoadStems({load: async () => []}, 'No stems yet'); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
 
@@ -470,13 +471,13 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const applied=await applyCandidate(config,id);await onLoadStems(new HttpStemSource(config,applied.job_id),'Project stems')
     setJobId(applied.job_id);setUndoId(id);setProject(await getProject(config,project.project_id));setMessage(operation==='move'?'Sound moved.':'Sound removed.')
   }
-  const finishExport = async (id: string, extension: string) => {
+  const finishExport = async (id: string, extension: string, cfg: BackendConfig = config) => {
     for (;;) {
-      const info=await getExport(config,id)
+      const info=await getExport(cfg,id)
       if (info.status === 'failed') throw new Error(info.error || 'Export failed')
       if (info.status === 'completed') {
         if (!info.download_url) throw new Error('Export has no download URL')
-        await downloadExport(config,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
+        await downloadExport(cfg,info.download_url,`tidepool.${extension}`); setMessage('Export downloaded.'); return
       }
       setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
@@ -548,12 +549,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     try {
       await flush()
       let current=project, currentToken=token, currentJob=jobId
+      // Clip and trim state in this closure belongs to the project that was open when the command started.
+      let currentClips=clips, currentTrimStart=trimStart, currentTrimEnd=trimEnd
       if (video && attachedVideo.current !== video) {
         const created=await createProject(baseUrl)
         if (!created.access_token) throw new Error('Project token was not returned.')
         currentToken=created.access_token
         const cfg={baseUrl,token:currentToken}
-        setProject(created); setClipHistory(createHistory([]));setTrimStart('0');setTrimEnd(''); setToken(currentToken); rememberProject(created.project_id, currentToken);
+        setProject(created); setClipHistory(createHistory([]));setTrimStart('0');setTrimEnd(''); currentClips=[]; currentTrimStart='0'; currentTrimEnd=''; setToken(currentToken); rememberProject(created.project_id, currentToken);
         setJobId(''); currentJob=''; setSettingsStems([]); setMessages([])
         onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
         setMessage('Uploading video…')
@@ -569,7 +572,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if (selectedFormat === 'mp4' && !current.metadata?.has_video) throw new Error('This project has no video. Export as WAV or MP3 instead.')
         if (media.kind === 'trim') {
           if (!current.metadata) throw new Error('Upload media first.')
-          const base=effectiveClips(current.metadata.duration), sequence=base.length?base:[{start:0,end:current.metadata.duration}]
+          const base=currentClips.length ? currentClips : effectiveTrim(currentTrimStart,currentTrimEnd,current.metadata.duration), sequence=base.length?base:[{start:0,end:current.metadata.duration}]
           if (media.end > lengthOf(sequence)+1e-6) throw new Error('That range extends beyond the edited timeline.')
           const trimmed=sliceTimeline(sequence,media.start,media.end)
           changeClips(trimmed);setSelectedClip(null)
@@ -578,16 +581,16 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           if (!media.download) { setMessage(description); return {kind:'media',message:description} }
           setMessage('Rendering your export…')
           const id=await startExport(cfg,current.project_id,selectedFormat,undefined,trimmed)
-          await finishExport(id,selectedFormat)
+          await finishExport(id,selectedFormat,cfg)
           return {kind:'media',message:`Exported ${media.start}–${media.end} seconds as ${selectedFormat.toUpperCase()}.`}
         }
-        const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : current.metadata?.duration
-        if (!clips.length && (!trimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (current.metadata?.duration || 0) + 1e-6)) throw new Error('Choose a valid trim range within the media duration.')
+        const start=Number(currentTrimStart), end=currentTrimEnd.trim() ? Number(currentTrimEnd) : current.metadata?.duration
+        if (!currentClips.length && (!currentTrimStart.trim() || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > (current.metadata?.duration || 0) + 1e-6)) throw new Error('Choose a valid trim range within the media duration.')
         if (media.format) setFormat(media.format)
         setMessage('Rendering your export…')
-        const trim=clips.length || end === undefined || (start === 0 && !trimEnd.trim()) ? undefined : {start,end}
-        const id=await startExport(cfg,current.project_id,selectedFormat,trim,clips.length ? clips : undefined)
-        await finishExport(id,selectedFormat)
+        const trim=currentClips.length || end === undefined || (start === 0 && !currentTrimEnd.trim()) ? undefined : {start,end}
+        const id=await startExport(cfg,current.project_id,selectedFormat,trim,currentClips.length ? currentClips : undefined)
+        await finishExport(id,selectedFormat,cfg)
         return {kind:'media',message:`Exported ${selectedFormat.toUpperCase()}.`}
       }
       const hasStems=Boolean(currentJob)

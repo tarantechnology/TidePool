@@ -25,6 +25,6 @@ export function mediaCommand(input:string):MediaCommand|null {
   }
   const exp=/^(?:export|download|save)(?: (?:it|this|the|my))?(?: (?:video|clip|audio|file|project))?(?: (?:as|to) (?:an? )?(mp4|wav|mp3))?$/.exec(t)
   if (exp) return {kind:'export',format:(exp[1] as 'mp4'|'wav'|'mp3'|undefined) ?? null}
-  if (/^(?:trim|crop|cut)(?:\s|$)/.test(t)) return {kind:'invalid',message:'Try “trim from 3 seconds to 4 seconds”. This keeps that range.'}
+  if (/^(?:trim|crop|cut)(?:\s|$)/.test(t) && new RegExp(`\\b${time}\\b`).test(t)) return {kind:'invalid',message:'Try “trim from 3 seconds to 4 seconds”. This keeps that range.'}
   return null
 }

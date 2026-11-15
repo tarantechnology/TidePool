@@ -16,5 +16,9 @@ describe('media commands', () => {
     expect(mediaCommand('trim the first 3 seconds')?.kind).toBe('invalid')
     expect(mediaCommand('cut 3 to 4')?.kind).toBe('invalid')
     expect(mediaCommand('mute the dog from 3 to 4 seconds')).toBeNull()
+    // Sound edits without a time range still go to the AI planner.
+    expect(mediaCommand('cut the background music')).toBeNull()
+    expect(mediaCommand('trim the silence at the start')).toBeNull()
+    expect(mediaCommand('crop out the dog barking')).toBeNull()
   })
 })

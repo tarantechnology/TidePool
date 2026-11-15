@@ -80,6 +80,7 @@ export default function Editor() {
   const [step, setStep] = useState({ n: 1, title: 'Upload' })
   // When work starts (separating, uploading), the sheet gets out of the way so the loader shows.
   const onBusy = useCallback((label: string | null) => { setWorking(label); if (label) setSheetOpen(false) }, [])
+  const onPanelError = useCallback(() => { if (window.matchMedia(PHONE_QUERY).matches) setSheetOpen(true) }, [])
   const [layout, setLayout] = useState(readLayout)
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* layout just won't persist */ } }, [layout])
@@ -408,6 +409,7 @@ export default function Editor() {
         </div>
       </header>
 
+      {chipErrors.length > 0 && <div role="alert" className="relative z-20 bg-red-50 px-3 py-1 text-xs text-red-700 md:hidden">{chipErrors[0]}</div>}
       {status === 'error' ? (
         <div className="relative z-10 flex flex-1 items-center justify-center p-8 text-sm text-red-600">{error}</div>
       ) : (
@@ -489,7 +491,7 @@ export default function Editor() {
               </button>
             )}
             <div id="steps-sheet" className={isPhone ? `flex min-h-0 flex-1 flex-col px-2 pb-2 ${sheetOpen ? '' : 'invisible'}` : 'contents'}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={onBusy} onStep={setStep} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={onBusy} onStep={setStep} onError={onPanelError} />
             </div>
 
           </div>

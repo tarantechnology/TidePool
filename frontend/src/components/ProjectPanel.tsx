@@ -57,6 +57,8 @@ interface Props {
   onBusy?: (label: string | null) => void
   /** The step the flow is on, for a collapsed panel to show (phone layout). */
   onStep?: (step: { n: number; title: string }) => void
+  /** Keep failures visible when the phone sheet closes during work. */
+  onError?: (message: string) => void
 }
 
 export interface ProjectPanelHandle {
@@ -70,7 +72,7 @@ export interface ProjectPanelHandle {
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, onBusy, onStep}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, visual, onBusy, onStep, onError}, ref) {
 
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
@@ -164,6 +166,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const suggested = canSplit && suggestion && suggestion.projectId === projectId ? suggestion.text : null
   useEffect(()=>{onProjectState({projectId:projectId ?? null,mockStems,warnings:candidateWarnings,audioOnly,split:canSplit ? {suggested} : null})},[projectId,mockStems,candidateWarnings,audioOnly,canSplit,suggested,onProjectState])
   useEffect(()=>{onBusy?.(busy ? (message || 'Working…') : null)},[busy,message,onBusy])
+  useEffect(()=>{if(error)onError?.(error)},[error,onError])
   const config: BackendConfig = {baseUrl, token}
   const choices = passChoices(capabilities?.max_passes)
   const run = async (fn: () => Promise<void>) => {

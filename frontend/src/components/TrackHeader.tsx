@@ -40,7 +40,7 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
   } as CSSProperties
 
   return (
-    <div className={`relative z-30 flex min-h-0 flex-col justify-center border-r border-line px-4 max-md:px-2.5 ${compact ? 'gap-0' : 'gap-2.5'}`}>
+    <div className={`relative z-30 flex min-h-0 flex-col justify-center border-r border-line px-4 max-md:px-2.5 max-md:gap-0 ${compact ? 'gap-0' : 'gap-2.5'}`}>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium tracking-tight" title={stem.tags?.length ? `Heard: ${stem.tags.join(', ')}` : undefined}>
@@ -101,11 +101,12 @@ export function TrackHeader({ stem, track, audible, onAction, onKindChange, unsy
           </button>
         </Tip>
       </div>
-      <div className={`flex items-center gap-2.5 max-md:hidden ${compact ? 'hidden' : ''}`}>
+      <div className={`flex items-center gap-2.5 max-md:gap-1 ${compact ? 'hidden max-md:flex' : ''}`}>
         <div className="relative flex-1">
           <div className="pointer-events-none absolute top-1/2 left-1/2 h-2 w-px -translate-y-1/2 bg-tint/25" />
           <input
             type="range"
+            aria-label={`Volume ${stem.label}`}
             min={0}
             max={MAX_GAIN}
             step={0.01}

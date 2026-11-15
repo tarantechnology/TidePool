@@ -292,6 +292,79 @@ def duck_layer(row, output, windows, rate, depth_db):
     write_wav(output, samples * (1 - depth * amount)[:, None], rate)
 
 
+def place(inserts, anchors):
+    """Resolve every insert's anchor to placements (project time). Returns (placements, warnings)."""
+    from .sfx_library import get
+    warnings, placements = [], []
+    for index, insert in enumerate(inserts):
+        entry = get(insert['sfx_id'])
+        points = anchors.resolve(insert['anchor'])
+        for point in points:
+            placements.append({'id': uid(), 'insert': index, 'sfx_id': entry['id'], 'title': entry['title'], 'anchor_time': round(point, 4),
+                               'start': placement_start(point, insert['anchor'], entry, insert['offset']),
+                               'gain_db': insert['gain_db'], 'duck': insert['duck']})
+    if len(placements) > MAX_PLACEMENTS:
+        warnings.append(f'Found {len(placements)} places; only the first {MAX_PLACEMENTS} were used.')
+        placements = sorted(placements, key=lambda p: p['start'])[:MAX_PLACEMENTS]
+    return placements, warnings
+
+
+def render_layers(pid, placements, inserts, base, rate, channels, count, created, warnings, duck_db):
+    """One new sfx layer per placement, plus ducked copies of the base layers where asked.
+    Returns (new_rows, proposed) where proposed is the base layers (ducked if needed) followed by the new ones."""
+    from .media import read_wav, write_wav
+    from .sfx_library import asset_file
+    directory = project_dir(pid) / 'stems'
+    directory.mkdir(parents=True, exist_ok=True)
+    rendered = {}
+    new_rows = []
+    solo = int(any(r['solo'] for r in base))
+    titles = {}
+    for placement in sorted(placements, key=lambda p: p['start']):
+        key = (placement['sfx_id'], placement['gain_db'])
+        if key not in rendered:
+            path = directory / (uid() + '-sfx-src.wav')
+            created.append(path)
+            run('ffmpeg', '-v', 'error', '-y', '-i', str(asset_file(placement['sfx_id'])), '-ar', str(rate), '-ac', str(channels),
+                '-af', f"volume={placement['gain_db']}dB", '-c:a', 'pcm_f32le', str(path))
+            rendered[key] = read_wav(path)[0]
+        clip = rendered[key]
+        start = round(placement['start'] * rate)
+        trim = max(0, -start)
+        position = max(0, start)
+        end = min(len(clip), trim + count - position)
+        if position >= count or end <= trim:
+            raise ValueError(f"{placement['title']} would start outside the clip ({placement['start']:.2f}s).")
+        if trim:
+            warnings.append(f"{placement['title']} started before the clip; its beginning was trimmed.")
+        if end < len(clip):
+            warnings.append(f"{placement['title']} runs past the end of the clip; its tail was trimmed.")
+        path = directory / (uid() + '-sfx.wav')
+        created.append(path)
+        write_wav(path, clip[trim:end], rate)
+        titles[placement['title']] = titles.get(placement['title'], 0) + 1
+        n = titles[placement['title']]
+        name = placement['title'][:100] if n == 1 else f"{placement['title'][:90]} {n}"
+        placement.update(start=round(position / rate, 6), end=round((position + end - trim) / rate, 6), layer_id=placement['id'])
+        new_rows.append({'id': placement['id'], 'project_id': pid, 'name': name, 'label': placement['title'][:100], 'path': str(path),
+                         'duration': (end - trim) / rate, 'start_offset': position / rate, 'volume': 1, 'muted': 0, 'solo': solo,
+                         'automation': '[]', 'mute_ranges': '[]', 'revision': 0, 'role': 'sfx',
+                         'prompt': inserts[placement['insert']]['sfx_query'][:200],
+                         'tags': json.dumps([{'label': 'SFX'}])})
+    windows = [(p['start'], p['end']) for p in placements if p['duck']]
+    proposed = []
+    for row in base:
+        row = dict(row)
+        if windows and not row['muted']:
+            path = directory / (uid() + '-ducked.wav')
+            created.append(path)
+            duck_layer({**row, 'path': str(candidates.safe_path(pid, row['path']))}, path, windows, rate, duck_db)
+            row['path'] = str(path)
+        proposed.append(row)
+    proposed.extend(new_rows)
+    return new_rows, proposed
+
+
 def build(project, payload, cid):
     import numpy as np
     from .media import read_wav, write_wav
@@ -311,66 +384,13 @@ def build(project, payload, cid):
     base = rows or [{'id': uid(), 'project_id': pid, 'name': 'Original audio', 'path': str(source), 'duration': duration,
                      'start_offset': 0, 'volume': 1, 'muted': 0, 'solo': 0, 'automation': '[]', 'mute_ranges': '[]', 'revision': 0}]
     anchors = Anchors(pid, source, rows, duration, payload.get('_features'))
-    warnings, placements = [], []
-    for index, insert in enumerate(payload['inserts']):
-        entry = get(insert['sfx_id'])
-        points = anchors.resolve(insert['anchor'])
-        for point in points:
-            placements.append({'id': uid(), 'insert': index, 'sfx_id': entry['id'], 'title': entry['title'], 'anchor_time': round(point, 4),
-                               'start': placement_start(point, insert['anchor'], entry, insert['offset']),
-                               'gain_db': insert['gain_db'], 'duck': insert['duck']})
-    if len(placements) > MAX_PLACEMENTS:
-        warnings.append(f'Found {len(placements)} places; only the first {MAX_PLACEMENTS} were used.')
-        placements = sorted(placements, key=lambda p: p['start'])[:MAX_PLACEMENTS]
+    placements, warnings = place(payload['inserts'], anchors)
     directory = project_dir(pid) / 'stems'
     directory.mkdir(parents=True, exist_ok=True)
-    created, rendered = [], {}
+    created = []
     try:
-        new_rows = []
-        solo = int(any(r['solo'] for r in base))
-        titles = {}
-        for placement in sorted(placements, key=lambda p: p['start']):
-            key = (placement['sfx_id'], placement['gain_db'])
-            if key not in rendered:
-                path = directory / (uid() + '-sfx-src.wav')
-                created.append(path)
-                run('ffmpeg', '-v', 'error', '-y', '-i', str(asset_file(placement['sfx_id'])), '-ar', str(rate), '-ac', str(channels),
-                    '-af', f"volume={placement['gain_db']}dB", '-c:a', 'pcm_f32le', str(path))
-                rendered[key] = read_wav(path)[0]
-            clip = rendered[key]
-            start = round(placement['start'] * rate)
-            trim = max(0, -start)
-            position = max(0, start)
-            end = min(len(clip), trim + count - position)
-            if position >= count or end <= trim:
-                raise ValueError(f"{placement['title']} would start outside the clip ({placement['start']:.2f}s).")
-            if trim:
-                warnings.append(f"{placement['title']} started before the clip; its beginning was trimmed.")
-            if end < len(clip):
-                warnings.append(f"{placement['title']} runs past the end of the clip; its tail was trimmed.")
-            path = directory / (uid() + '-sfx.wav')
-            created.append(path)
-            write_wav(path, clip[trim:end], rate)
-            titles[placement['title']] = titles.get(placement['title'], 0) + 1
-            n = titles[placement['title']]
-            name = placement['title'][:100] if n == 1 else f"{placement['title'][:90]} {n}"
-            placement.update(start=round(position / rate, 6), end=round((position + end - trim) / rate, 6), layer_id=placement['id'])
-            new_rows.append({'id': placement['id'], 'project_id': pid, 'name': name, 'label': placement['title'][:100], 'path': str(path),
-                             'duration': (end - trim) / rate, 'start_offset': position / rate, 'volume': 1, 'muted': 0, 'solo': solo,
-                             'automation': '[]', 'mute_ranges': '[]', 'revision': 0, 'role': 'sfx',
-                             'prompt': payload['inserts'][placement['insert']]['sfx_query'][:200],
-                             'tags': json.dumps([{'label': 'SFX'}])})
-        windows = [(p['start'], p['end']) for p in placements if p['duck']]
-        proposed = []
-        for row in base:
-            row = dict(row)
-            if windows and not row['muted']:
-                path = directory / (uid() + '-ducked.wav')
-                created.append(path)
-                duck_layer({**row, 'path': str(candidates.safe_path(pid, row['path']))}, path, windows, rate, float(payload.get('duck_db', 6.0)))
-                row['path'] = str(path)
-            proposed.append(row)
-        proposed.extend(new_rows)
+        new_rows, proposed = render_layers(pid, placements, payload['inserts'], base, rate, channels, count, created, warnings,
+                                           float(payload.get('duck_db', 6.0)))
         target, mix, original = (directory / (uid() + '.wav') for _ in range(3))
         created.extend([target, mix, original])
         export(new_rows, source, target, 'wav', False)

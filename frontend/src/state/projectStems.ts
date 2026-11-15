@@ -52,3 +52,13 @@ export function splitSuggestion(routing: Routing | null): string | null {
   if (routing?.mode !== 'music_stems') return null
   return routing.reason ? `This sounds like a song (${routing.reason}).` : 'This sounds like a song.'
 }
+
+/**
+ * Whether "Split into tracks" can run. A split replaces every layer, but it is
+ * bracketed by an undo checkpoint, so existing layers do not block it; a
+ * preview waiting to be applied or discarded does, and so does an audio
+ * service that says the song splitter is unavailable.
+ */
+export function canSplitProject(p: { hasMetadata: boolean; candidateId?: string | null; musicStemsAvailable?: boolean | null }): boolean {
+  return p.hasMetadata && !p.candidateId && p.musicStemsAvailable !== false
+}

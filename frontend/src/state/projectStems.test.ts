@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PROJECT_STEMS_LABEL } from '../api/stemSources'
-import { NO_PROJECT_STEMS, showsMockBadge, splitSuggestion, stemsReadySummary, stemsStateFromJob } from './projectStems'
+import { NO_PROJECT_STEMS, canSplitProject, showsMockBadge, splitSuggestion, stemsReadySummary, stemsStateFromJob } from './projectStems'
 
 describe('stemsStateFromJob', () => {
   it('keeps the mock flag and the warnings the job reported', () => {
@@ -57,5 +57,20 @@ describe('splitSuggestion', () => {
     expect(splitSuggestion({ ...route, mode: 'music_stems', reason: null })).toBe('This sounds like a song.')
     expect(splitSuggestion({ ...route, mode: 'prompted', reason: 'speech' })).toBeNull()
     expect(splitSuggestion(null)).toBeNull()
+  })
+})
+
+describe('canSplitProject', () => {
+  it('splits a project with metadata, with or without existing layers', () => {
+    expect(canSplitProject({ hasMetadata: true })).toBe(true)
+    expect(canSplitProject({ hasMetadata: true, candidateId: '', musicStemsAvailable: true })).toBe(true)
+  })
+  it('waits for metadata and for a pending preview', () => {
+    expect(canSplitProject({ hasMetadata: false })).toBe(false)
+    expect(canSplitProject({ hasMetadata: true, candidateId: 'cand-1' })).toBe(false)
+  })
+  it('is off only when the service says the splitter is unavailable', () => {
+    expect(canSplitProject({ hasMetadata: true, musicStemsAvailable: false })).toBe(false)
+    expect(canSplitProject({ hasMetadata: true, musicStemsAvailable: null })).toBe(true)
   })
 })

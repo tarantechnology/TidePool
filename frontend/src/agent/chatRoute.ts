@@ -3,6 +3,7 @@ import type { FxCommand, FxStem } from '../fxCommand'
 import { replacementFollowup } from './replacementFollowup'
 import { requestsSoundReplacement } from './replacementIntent'
 import { namesSfxSound, requestsSfxInsert } from './sfxIntent'
+import { requestsGeneratePart } from './generateIntent'
 import { requestsCensorship } from './censorshipIntent'
 import { extractLayerScope } from './layerScope'
 import { separationCommand } from '../separationCommand'
@@ -26,6 +27,8 @@ export interface ChatRoute {
   sfx: boolean
   /** The sound-replacement request to run (completed with a follow-up time), when the ask is, or falls back to, a replacement. */
   replacement: string | null
+  /** A new instrument part ("add violins", "add a piano part"): the planner answers kind 'generate'. */
+  generate: boolean
 }
 
 /**
@@ -37,34 +40,41 @@ export interface ChatRoute {
  *      a named library sound with insert wording ("add a vine boom at 0:12") wins over a pending question;
  *   3. insert: a named library sound or "add a <thing> at/when/before…" (falls back to replacement
  *      when the library has no match and the ask reads as one, e.g. "add a monster roar at 12");
- *   4. fx: effect-shaped asks ("add reverb to the vocals", "make the drums sound like a phone");
- *   5. anything else ("isolate the radio chatter", "turn the chorus into a verse") goes to the planner,
+ *   4. generate: an instrument part ("add violins", "add a piano part", "add a funky bassline"); the
+ *      server's agent route catches the same phrasings (app/generate_part.py rule_plan) after inserts;
+ *   5. fx: effect-shaped asks ("add reverb to the vocals", "make the drums sound like a phone");
+ *   6. anything else ("isolate the radio chatter", "turn the chorus into a verse") goes to the planner,
  *      the separation fallback, or replacement for "make/turn X into Y" with no effect word.
  * Throws main's layer-scope error when a separation ask names more than one layer.
  */
 export function chatRoute(text: string, stems: FxStem[] = [], pendingReplacement = ''): ChatRoute {
-  if (requestsCensorship(text)) return { fx: null, sfx: false, replacement: null, censorship: true }
+  const none = { fx: null, sfx: false, replacement: null, generate: false }
+  if (requestsCensorship(text)) return { ...none, censorship: true }
   const t = text.trim()
   const namedInsert = requestsSfxInsert(t) && namesSfxSound(t) && INSERT_PHRASING.test(t)
   const replacementShaped = REPLACE_VERB.test(text) || requestsSoundReplacement(text)
   const layer = replacementShaped || namedInsert ? null : layerScope(text)
   if (layer) {
     // Effects and inserts on a named layer keep their own flows; anything else is main's layer separation.
-    if (separationCommand(layer.text)) return { fx: null, sfx: false, replacement: null, layer }
+    if (separationCommand(layer.text)) return { ...none, layer }
   }
   const followup = namedInsert ? null : replacementFollowup(pendingReplacement, text)
-  if (followup) return { fx: null, sfx: false, replacement: followup }
-  if (REPLACE_VERB.test(text)) return { fx: null, sfx: false, replacement: text }
-  // Sounds on tracked object appearances ("add a gong every time we see person 5") are main's generation flow.
-  if (requestsSoundReplacement(text) && OBJECT_APPEARANCE.some(re => re.test(text))) return { fx: null, sfx: false, replacement: text }
-  const fx = fxCommand(text, stems)
+  if (followup) return { ...none, replacement: followup }
+  if (REPLACE_VERB.test(text)) return { ...none, replacement: text }
+  // Sounds on tracked object appearances ("add a gong every time we see person 5") are main's generation flow,
+  // never an instrument part.
+  if (requestsSoundReplacement(text) && OBJECT_APPEARANCE.some(re => re.test(text))) return { ...none, replacement: text }
   const asReplacement = requestsSoundReplacement(text) ? text : null
   const sfx = requestsSfxInsert(text)
-  if (sfx && (!fx || fx.kind === 'clarify')) return { fx: null, sfx: true, replacement: asReplacement }
-  if (sfx && (namesSfxSound(t) || (INSERT_PHRASING.test(t) && !ON_A_LAYER.test(t)))) return { fx: null, sfx: true, replacement: asReplacement }
-  if (fx) return { fx, sfx: false, replacement: null }
-  if (layer) return { fx: null, sfx: false, replacement: null, layer }
-  return { fx: null, sfx: false, replacement: asReplacement }
+  // A named library sound ("add a sad trombone at the end") is an insert before any instrument reading.
+  if (sfx && namesSfxSound(t)) return { ...none, sfx: true, replacement: asReplacement }
+  if (requestsGeneratePart(t)) return { ...none, generate: true }
+  const fx = fxCommand(text, stems)
+  if (sfx && (!fx || fx.kind === 'clarify')) return { ...none, sfx: true, replacement: asReplacement }
+  if (sfx && INSERT_PHRASING.test(t) && !ON_A_LAYER.test(t)) return { ...none, sfx: true, replacement: asReplacement }
+  if (fx) return { ...none, fx }
+  if (layer) return { ...none, layer }
+  return { ...none, replacement: asReplacement }
 }
 
 function layerScope(text: string): { text: string; name: string } | null {

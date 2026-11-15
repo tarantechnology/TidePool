@@ -98,6 +98,27 @@ speech-beats = [
     "librosa>=0.10",
     "beat_this @ https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip",  # main, 2026-05-28 (1.1.0)
 ]
+# Phase E (generate a part that fits the song). The pipeline itself is numpy-only (numpy beat
+# tracker, chroma chords, rule-based composer, built-in synth); these add the model backends.
+# Tested 2026-11-14 on the A40 with torch 2.8.0+cu128 / transformers 5.23 (see README "Generate parts").
+# basic-pitch is installed with --no-deps (its Linux extras pin TF/tflite); it runs the bundled ONNX
+# model through onnxruntime. System: `apt install fluidsynth fluid-soundfont-gm` for the GM renderer.
+generate = [
+    "torch>=2.4",
+    "transformers>=4.40",
+    "safetensors>=0.4",
+    "huggingface_hub>=0.25",
+    "onnxruntime>=1.17",
+    "librosa>=0.10",       # Basic Pitch's audio loading
+    "pretty_midi>=0.2.10", # Basic Pitch note output
+    "mir_eval>=0.7",
+    "soxr>=0.3",           # beat_this resampling
+    "einops>=0.7",
+    "rotary-embedding-torch>=0.5",
+    "beat_this @ https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip",  # same pin as speech-beats
+    "anticipation @ git+https://github.com/jthickstun/anticipation@af37397922665a0fb8d474d7988b0f3755a38d45",
+    "midiutil>=1.2",
+]
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

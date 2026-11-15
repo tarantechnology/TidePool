@@ -423,7 +423,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
       }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
       if (plan.kind === 'media') return {message:plan.message,ok:true}
-      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'censorship' || plan.kind === 'fx' || plan.kind === 'duck' || plan.kind === 'loudness' || plan.kind === 'insert' || plan.kind === 'clip_edit') return {message:plan.message,ok:true}
+      if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'censorship' || plan.kind === 'fx' || plan.kind === 'duck' || plan.kind === 'loudness' || plan.kind === 'insert' || plan.kind === 'clip_edit' || plan.kind === 'generate' || plan.kind === 'multi') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
       if (!checked.ok) return {message:`AI returned an invalid edit: ${checked.errors[0]}`,ok:false}

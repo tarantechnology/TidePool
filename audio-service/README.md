@@ -322,6 +322,48 @@ yet). The chain splitter disables audio-separator's peak normalisation
 Demucs works at 44.1 kHz stereo: the service resamples 48 kHz ↔ 44.1 kHz inside
 the splitter, duplicates mono to stereo and folds the stems back to mono.
 
+## Generate parts that fit the song (chat-fx Phase E)
+
+"add violins", "add a piano part", "add a funky bassline", "add an 80s synth arpeggio", "a trumpet line in the
+chorus", "add a choir" ... -> a new `music` layer the same length as the song, plus the MIDI it rendered.
+Code: `sam_audio_service/music_analysis.py` and `sam_audio_service/generation/`.
+
+Pipeline: **analyse** (stem-aware: drums -> beats/swing/kick times/density, bass -> chord roots via Basic
+Pitch, vocals -> melody MIDI + where the voice is active + room estimate, other stems -> harmony chroma and
+register occupancy; per-section local key) -> **resolve the ask** (`vocabulary.py`: instrument table + all
+128 GM programs + synth presets -> family, role, register, articulation, density, style) -> **compose**
+(rule-based voice-leading arranger, or the Anticipatory Music Transformer restricted to the requested GM
+program and snapped to the beat grid) -> **render** (VSCO-2 CE samples through a numpy sampler, FluidSynth +
+FluidR3_GM for everything else, a built-in synth for pads/arps/leads/bass) -> **mix in** (role HPF, vocal-keyed
+presence-band carve, reverb from the estimated RT60, loudness relative to the song, light ducking, peak guard)
+-> objective **checks** in every response. The rule-based arranger is the default and only enabled path; `engine=amt` and `engine=musicgen` are experimental, off by default and return 400 unless enabled. `engine=musicgen` replaces compose+render with MusicGen-melody
+(text + song chroma); its weights are CC-BY-NC-4.0 and it is refused unless `AUDIO_GEN_ALLOW_NONCOMMERCIAL=true`.
+
+| Endpoint | Body | Returns |
+| --- | --- | --- |
+| `POST /v1/analyze-music` | multipart `audio` (mix, optional) + `stem_<name>` files + `metadata` `{"melody": true}`; or JSON `{audio_ref, stems: {name: ref}}` | `{analysis: {duration, tempo, meter, beats, downbeats, key, chords[{start,end,chord,root_pc,quality,confidence}], sections[{start,end,label,name,energy,key}], melody_midi, vocal_activity, groove, register, space, context, warnings}}` |
+| `POST /v1/generate-part` | same inputs; `metadata` `{instrument?, prompt?, role?, style?, sections?\|interval?, density?, engine: auto\|symbolic\|amt\|musicgen, seed, level_db, duck_db, analysis?, return_mode, output_format}` | `{part{name,kind:"music",instrument,family,role,...}, audio{wav, sample_rate, sample_count, audio_base64\|audio_ref}, midi_base64, notes, engine{name, license, commercial_use}, renderer{used, license}, windows, mix{loudness, reverb, eq_carve, ducking, peak}, checks{notes, audio}, analysis, warnings}` |
+
+`GET /capabilities` has a `generate` block: `{available, instruments, roles, engines{symbolic, amt, musicgen,
+stable_audio_open}, renderers{vsco, gm, synth}, analysis}`. Pass the `analysis` from `/v1/analyze-music` back
+into `/v1/generate-part` to skip re-analysis (about 10-20 s per minute of audio on the A40 with Basic Pitch).
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AUDIO_GEN_ENABLED` | `true` | Turn the feature off. |
+| `AUDIO_GEN_SAMPLES_DIR` | unset | VSCO-2 CE root with `manifest.json` (build it with `scripts/build_vsco_manifest.py <root>`). Unset: GM/synth fallbacks. |
+| `AUDIO_GEN_SOUNDFONT` | system `FluidR3_GM.sf2` | GM soundfont for the FluidSynth renderer. |
+| `AUDIO_GEN_BEATS` / `AUDIO_GEN_TRANSCRIBER` | `auto` | `beat_this` / `basic_pitch` when importable, else numpy tracker / no melody. |
+| `AUDIO_GEN_AMT_MODEL` | `off` | Experimental AMT engine, e.g. `stanford-crfm/music-medium-800k`. Off by default: listening tests preferred the rule-based arranger. |
+| `AUDIO_GEN_AUDIOGEN` | `off` | `musicgen` loads MusicGen-melody (`AUDIO_GEN_MUSICGEN_MODEL`). |
+| `AUDIO_GEN_ALLOW_NONCOMMERCIAL` | `false` | Required to run MusicGen (CC-BY-NC-4.0 weights). |
+
+Licences: beat_this MIT (the JKU checkpoint host returned HTTP 500 on 2026-11-14, so the default loads the
+MIT safetensors export `safe-models/beat-this-final0`); Basic Pitch Apache-2.0; AMT code + weights Apache-2.0;
+VSCO-2 CE CC0; FluidR3_GM MIT; FluidSynth LGPL-2.1 (run as a separate process); MusicGen weights
+CC-BY-NC-4.0; Stable Audio Open is gated behind a licence agreement and not installed. Evaluation:
+`benchmarks/generate_parts.py --stems <musdb track dir> --start 0 --seconds 75 --out <dir> --engines symbolic,amt,musicgen`.
+
 ## Speech and rhythm tools (`/v1/words`, `/v1/enhance`, `/v1/beats`)
 
 These are the machine-learning operations behind the chat edits in `docs/plans/chat-fx.md`

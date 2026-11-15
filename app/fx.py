@@ -649,31 +649,7 @@ def _render_rows(rows, by_id, spec, provenance, original, new_file, notes):
     if not plans: raise ValueError('Nothing to change on the chosen layers.')
 
     def work(row):
-        rec = records[row['id']]; items = plans[row['id']]; local: list[str] = []
-        old_rate = net_speed(rec['items']); new_rate = net_speed(items)
-        try: safe_path(row['project_id'], rec['dry_path'])
-        except ValueError as exc: raise ValueError(f"The unprocessed audio of {row['name']} is no longer available; effects cannot be re-rendered.") from exc
-        if not items:
-            path = rec['dry_path']; fx = None
-            dry_info = probe(path); duration = dry_info['duration']
-            return row, path, fx, duration, old_rate, new_rate, local, None
-        dry = rec['dry_path']
-        dst = new_file()
-        x, sr = decode(dry)
-        expected = rendered_length(len(x), items)
-        y = render(x, sr, items, local)
-        if len(y) != expected or y.shape[1] != x.shape[1]: raise ValueError('Effects changed the audio timeline.')
-        write_wav(dst, y, sr)
-        rise = None
-        try:
-            current, csr = decode(row['path'])
-            before = loudness(current, csr); after = loudness(y, sr)
-            rise = after - before
-            if before > -70 and rise > LOUDNESS_RISE_WARN_DB:
-                local.append(f"{row['name']} gets {rise:.1f} dB louder; check your volume before playing it back.")
-        except RuntimeError:
-            pass
-        return row, str(dst), {'version': 1, 'dry_path': dry, 'items': items, 'path': str(dst)}, len(y) / sr, old_rate, new_rate, local, rise
+        return render_layer(row, records[row['id']], plans[row['id']], new_file)
 
     with ThreadPoolExecutor(max_workers=min(4, len(plans))) as pool:
         results = list(pool.map(work, [r for r in rows if r['id'] in plans]))
@@ -689,6 +665,35 @@ def _render_rows(rows, by_id, spec, provenance, original, new_file, notes):
         provenance['speed'] = rate
         notes.append(f'This changes the song speed to {rate:g}x (tempo and pitch together), so the timeline is now {"longer" if rate < 1 else "shorter"}.')
     return {'target': results[0][1] if len(results) == 1 else None}
+
+
+def render_layer(row, rec, items, new_file):
+    """Render one layer's whole chip list from its dry audio (one layer per call, so layers can render in parallel)."""
+    local: list[str] = []
+    old_rate = net_speed(rec['items']); new_rate = net_speed(items)
+    try: safe_path(row['project_id'], rec['dry_path'])
+    except ValueError as exc: raise ValueError(f"The unprocessed audio of {row['name']} is no longer available; effects cannot be re-rendered.") from exc
+    if not items:
+        path = rec['dry_path']; fx = None
+        dry_info = probe(path); duration = dry_info['duration']
+        return row, path, fx, duration, old_rate, new_rate, local, None
+    dry = rec['dry_path']
+    dst = new_file()
+    x, sr = decode(dry)
+    expected = rendered_length(len(x), items)
+    y = render(x, sr, items, local)
+    if len(y) != expected or y.shape[1] != x.shape[1]: raise ValueError('Effects changed the audio timeline.')
+    write_wav(dst, y, sr)
+    rise = None
+    try:
+        current, csr = decode(row['path'])
+        before = loudness(current, csr); after = loudness(y, sr)
+        rise = after - before
+        if before > -70 and rise > LOUDNESS_RISE_WARN_DB:
+            local.append(f"{row['name']} gets {rise:.1f} dB louder; check your volume before playing it back.")
+    except RuntimeError:
+        pass
+    return row, str(dst), {'version': 1, 'dry_path': dry, 'items': items, 'path': str(dst)}, len(y) / sr, old_rate, new_rate, local, rise
 
 
 def uuid_short():

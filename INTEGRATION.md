@@ -265,6 +265,19 @@ the separator again; disabling one restores the separated target around that eve
 removing an impact may affect overlapping speech or music. Input audio and effect
 assets remain project-scoped and require the project token.
 
+Separation candidates and replacement requests may specify `source_stem_id` to
+process an existing project layer instead of the current residual. The source layer's
+audio is split into a new target and its own remainder, preserving its gain, mute,
+solo, automation and timeline offset on both parts; unrelated layers stay intact.
+Selections, example times and guidance are expressed in project time and translated
+to the selected file's local time for inference. Existing `stem_id` retry semantics
+are unchanged. Natural-language replacement accepts an explicit “in the … layer”
+or “from the … track” scope; ambiguous layer names require a choice. The editor's
+**Search within** selector also selects a source for separation and replacement.
+Manual discovery still searches the original recording, so it is disabled for a
+selected source in the replacement panel; users can specify a time or use an
+automatic text request. Isolation and removal remain approximate.
+
 On the November 2026 A40 Pod, Stable Audio 3 Small SFX generated a three-second
 quack with its gated checkpoint after account access was configured. A browser smoke
 check then generated an effect through the app and completed preview, apply and undo
@@ -384,3 +397,13 @@ and compare onset versus peak alignment. Audio onset estimation is heuristic; pe
 still the default pending listening tests. Apply creates short individual effect layers
 so their volumes and offsets remain editable; the original reduction is rendered into
 the separated source and is restored through candidate undo, not by muting an effect.
+
+### Local transcription and profanity beeps
+
+An explicit prompt such as “beep out any cuss words” starts a preview using local word-timed speech recognition. The authenticated `POST /api/projects/{pid}/censorship-preview` creates a standard asynchronous candidate; use the existing candidate status, audio, apply, and undo endpoints. Review the highlighted matches and listen to the comparison before applying. The detector matches a limited list of English profanity by whole word; ASR can miss, mishear, or hallucinate words and timestamps, and this feature cannot guarantee complete censorship. It currently supports English profanity, not custom word lists or a general-purpose transcript editor.
+
+When exactly one audible speech-labelled target exists, it is used for recognition and only that layer is muted around the word. Other layers can retain speech leakage. Otherwise the current mix is transcribed and all currently audible layers are muted for the matched intervals, which also affects background and simultaneous speakers. Beeps are a single separate editable layer. Existing gain, automation, mute and solo settings are preserved; snapshot checks and standard undo protect against stale edits. A preview is limited to ten minutes and 200 matches. The generated tone fades at its edges, while word intervals have 80 ms padding. Listen carefully for leaked syllables or clipped context.
+
+Install `requirements-transcription.txt` into a dedicated Python environment (PyAV is constrained below 16 because PyAV 19 failed with faster-whisper 1.2.1 during testing) and download a compatible CTranslate2 faster-whisper model locally using your existing model-access credentials, if needed. Configure the app with `SOUNDCANVAS_TRANSCRIPTION_PYTHON=/absolute/path/to/venv/bin/python` and `SOUNDCANVAS_TRANSCRIPTION_MODEL=/absolute/path/to/model`. Optional `SOUNDCANVAS_TRANSCRIPTION_DEVICE` defaults to `cpu` and `SOUNDCANVAS_TRANSCRIPTION_COMPUTE` to `int8`. This isolated mode loads the model afresh for each preview; CPU latency and memory depend on model and input length and have not been benchmarked here. The model must already be present; the runner uses `local_files_only=True` and does not upload media. For a compatible shared interpreter the executable setting may be omitted; `SOUNDCANVAS_TRANSCRIPTION_PYTHONPATH` can append optional dependency paths at lazy load time, but isolated mode avoids binary package conflicts. If the runtime or model is absent, the API returns 503 and does not start a preview.
+
+Transcription is performed only for an explicit request. Temporary mix audio is stored under the project and removed after the operation; matched words and timestamps are retained in the authorized candidate job and can be visible to anyone holding that project's token. No complete transcript is stored by this workflow. Project storage and its backups must be protected accordingly.

@@ -133,6 +133,12 @@ For a local edit, say **“Remove the chopping at 4.8 seconds”** or mark a pro
 
 The optional YAMNet ONNX detector runs on CPU (`onnxruntime`, model and class map configured separately). Optional local Qwen3-VL scene captions use GPU memory and can inform creative planning; images stay local, while the resulting caption and detected labels may be sent to the configured language model. Captions and detections can be wrong. See [integration details](INTEGRATION.md#creative-director-and-local-sound-discovery).
 
+To work inside an existing layer, choose it under **Search within**, or say something
+like “separate barking from the music layer at 4 seconds” or “replace barking in the
+music layer with a quack at 4 seconds.” Times refer to the project timeline. The
+chosen layer is split into the requested sound and its remainder; other layers and
+their edits are preserved. Preview and undo work as usual.
+
 
 For repeated effects, try **“Replace every punch with a quack”**. If the detector
 cannot find the sound, provide an example time; SoundCanvas can look for similar
@@ -159,3 +165,5 @@ separate even when they have the same name.
 Repeated separated sounds such as chopping also appear together when they came from
 the same operation or use the same explicit sound description. Grouping uses project
 history and prompts; it does not prove that the separator identified a source correctly.
+
+SoundCanvas can preview English profanity beeps from an explicit natural-language request using optional local word-timed transcription. This needs a separately installed faster-whisper runtime and local model; setup, privacy, and accuracy limitations are documented in [INTEGRATION.md](INTEGRATION.md#local-transcription-and-profanity-beeps).

@@ -10,11 +10,13 @@ import { muteExistingStem } from '../agent/planOutcome'
 import { splitSuggestion } from '../state/projectStems'
 import { cinematicCommand } from '../agent/cinematic'
 import { replacementFollowup } from '../agent/replacementFollowup'
+import { requestsCensorship } from '../agent/censorshipIntent'
 import { requestsSoundReplacement } from '../agent/replacementIntent'
+import { extractLayerScope, resolveSourceLayer } from '../agent/layerScope'
 import { creativeCommand, directorIntent } from '../agent/director'
 import type { Stem, TrackState } from '../types'
 import type { ProjectStemsState } from '../state/projectStems'
-import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject, processProject, renameStem, deleteStem, suggestSounds } from '../api/backend'
+import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCapabilities, startVisualAnalysis, createCandidate, createCinematicPreview, createDirectorPreview, createAutomaticReplacement, createCensorshipPreview, createReplacementPreview, adjustReplacementPreview, createEffectsPreview, editEffectClip, adjustDirectorPreview, getCandidate, startSoundDiscovery, getSoundDiscovery, applyCandidate, planProjectCommand, createProject, downloadExport, fetchStemBlobUrl, getExport, getJob, getMessages, getProject, getSavedStems, localCommand, startExport, storeVisualMetadata, updateStemSettings, uploadProject, processProject, renameStem, deleteStem, suggestSounds } from '../api/backend'
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
@@ -139,7 +141,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [candidateWarnings,setCandidateWarnings]=useState<string[]>([])
   const [mixUrl,setMixUrl]=useState('')
   const [candidateId,setCandidateId]=useState('')
-  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'>('separation')
+  const [censorMatches,setCensorMatches]=useState<Array<{word:string;start:number;end:number}>>([])
+  const [candidateKind,setCandidateKind]=useState<'separation'|'cinematic'|'director'|'effects'|'replacement'|'known-effect-replacement'|'censorship'>('separation')
   const [cinematicStyle,setCinematicStyle]=useState<CinematicStyle>('cinematic')
   const [directorRequest,setDirectorRequest]=useState('Make the whole video more cinematic')
   const [directorGoal,setDirectorGoal]=useState<DirectorIntent>('cinematic')
@@ -155,6 +158,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [replacementOpen,setReplacementOpen]=useState(false)
   const [replacementSource,setReplacementSource]=useState('')
   const [replacementEffect,setReplacementEffect]=useState('')
+  const [sourceLayers,setSourceLayers]=useState<SavedStem[]>([])
+  const [sourceLayerId,setSourceLayerId]=useState('')
   const [effectsOpen,setEffectsOpen]=useState(false)
   const [effectsStems,setEffectsStems]=useState<SavedStem[]>([])
   const [effectsStem,setEffectsStem]=useState('')
@@ -191,6 +196,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   useEffect(() => { if (selectedVisual && capabilities?.visual !== false) { setSelection(selectedVisual); setSelectionName(selectedVisual.label); setRangeStart(String(selectedVisual.interval.start_seconds)); setRangeEnd(String(selectedVisual.interval.end_seconds)) } }, [selectedVisual, capabilities?.visual])
   useEffect(() => () => { if(mixUrl) URL.revokeObjectURL(mixUrl) },[mixUrl])
   const projectId=project?.project_id
+  useEffect(()=>{let active=true;if(projectId && token)void getSavedStems({baseUrl,token},projectId).then(rows=>{if(active){setSourceLayers(rows);setSourceLayerId(id=>rows.some(r=>r.id===id)?id:'')}}).catch(()=>{if(active)setSourceLayers([])});return()=>{active=false}},[baseUrl,token,projectId,jobId])
   useEffect(()=>{let active=true;if(projectId && token)void getCapabilities({baseUrl,token},projectId).then(value=>{if(active)setCapabilities(value)}).catch(()=>{if(active)setCapabilities(null)});return()=>{active=false}},[baseUrl,token,projectId])
   const audioOnly = project?.metadata?.has_video === false
   // A split replaces every layer, so it is offered only before the first separation.
@@ -246,10 +252,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if(job.status==='failed') { if(job.recovery) setReplacementRecovery(job.recovery); try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${projectId}`) } catch { /* Ignore unavailable storage. */ }; throw new Error(job.error || 'Preview failed. Try a sound description with a time anchor.') }
       if(job.status==='completed') {
         setReplacementRecovery(null)
+        setCensorMatches(job.provenance?.kind==='censorship' ? job.provenance.matches || [] : [])
         if(!job.audio_url || !job.mix_url || !job.original_url)throw new Error('Preview audio is incomplete')
         const urls=await Promise.all([fetchStemBlobUrl(cfg,job.audio_url),fetchStemBlobUrl(cfg,job.mix_url),fetchStemBlobUrl(cfg,job.original_url)])
         setCandidateMock(job.inference?.model?.is_mock ?? null);setCandidateWarnings(job.inference?.warnings || [])
-        setCandidateKind(job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
+        setCandidateKind(job.provenance?.kind==='censorship' ? 'censorship' : job.provenance?.kind==='director' ? 'director' : job.provenance?.kind==='cinematic' ? 'cinematic' : job.provenance?.kind==='effects' ? 'effects' : job.provenance?.kind==='replacement' ? 'replacement' : job.provenance?.kind==='known-effect-replacement' ? 'known-effect-replacement' : 'separation')
         if (job.provenance?.kind!=='cinematic' && job.provenance?.kind!=='director' && job.provenance?.kind!=='effects' && job.provenance?.kind!=='replacement') { setProcessingRange(job.provenance?.processing_interval || null); setProcessingTime(null) }
         if (job.provenance?.kind==='cinematic' || job.provenance?.kind==='director') { setCinematicSteps(job.provenance.steps || []); setCinematicStyle(job.provenance.style || 'cinematic'); if(job.provenance.kind==='director') { setDirectorRequest(job.provenance.request || 'Make the whole video more cinematic');setDirectorGoal(job.provenance.intent || 'cinematic');setDirectorChanges(job.provenance.changes || []) } }
         if(job.provenance?.kind==='replacement') {setReplacementPeaks(job.provenance.peak_times || []);setReplacementCount(job.provenance.requested_count ?? null);setReplacementMode(job.provenance.mode || 'replace');setReplacementEvents(job.provenance.events || []);setReplacementAlignment(job.provenance.alignment || 'peak')}
@@ -360,11 +367,11 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       }
     }
   })
-  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection) => {
+  const previewSound = async (cfg:BackendConfig, info:ProjectInfo, sound:string, scope:EditScope, visual:unknown={}, stemId:string|null=null, quality=false, suppliedAnchors=anchors, passCount=1, range:ProcessingRangeValue|null=processingRange, point:number|null=processingTime, objectContext?:VisualSelection, sourceId?:string) => {
     await flush()
     setCandidateId('');setCandidateUrl('');setCurrentUrl('');setMixUrl('')
     try { sessionStorage.removeItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`) } catch { /* Ignore unavailable storage. */ }
-    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
+    const id=await createCandidate(cfg,info.project_id,stemId,sound,quality?2:1,{guidance:{anchors:suppliedAnchors},edit_scope:scope,visual_prompt:visual,profile:quality?'quality':'preview',passes:passCount,...(sourceId?{source_stem_id:sourceId}:{}),...(objectContext?{object_selection:{analysis_id:objectContext.analysis_id,detection_id:objectContext.detection_id,track_id:objectContext.track_id!,frame_index:objectContext.frame_index}}:{}),...(range?{processing_interval:range}:point!==null?{processing_time:point}:{})})
     try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${info.project_id}`, JSON.stringify({id,sound})) } catch { /* Preview still works without tab recovery. */ }
     await waitCandidate(cfg,info.project_id,id)
   }
@@ -447,7 +454,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     const scope:EditScope=instruction?.editScope || {action:instruction?.remove?'mute':editAction,...(timedEdit && editAction==='mute'?{interval:{start:editStart,end:editEnd}}:{})}
     let visual:unknown={}
     if(selection)visual={...selection as object,interval:{start_seconds:Number(rangeStart),end_seconds:Number(rangeEnd)}}
-    await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices))
+    await previewSound(config,project,sound,scope,visual,null,quality,anchors,clampPasses(passes,choices),processingRange,processingTime,undefined,sourceLayerId || undefined)
   })
   /**
    * Explode: pull each listed sound out in turn, each from what the previous ones left
@@ -663,13 +670,19 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       if (!current || !currentToken) throw new Error('Upload a video or song first to use AI commands.')
       const cfg={baseUrl,token:currentToken}
       const hasStems=Boolean(currentJob)
+      if (requestsCensorship(text)) {
+        setCandidateId(''); setPrompt('Censor profanity'); setMessage('Transcribing speech locally to find possible profanity…')
+        const id=await createCensorshipPreview(cfg,current.project_id)
+        await waitCandidate(cfg,current.project_id,id)
+        return {kind:'censorship',description:null,remove:false,actions:[],message:'Censorship preview ready. Listen and review before applying.'}
+      }
       // Without the AI planner, plain "isolate X" / "remove X" still works through the local parser.
       const replacementText=replacementFollowup(pendingReplacement.current,text) || text
       const replacement=requestsSoundReplacement(replacementText)
       if (replacement) {
         setCandidateId('');setReplacementRecovery(null);setPrompt('Sound replacement');setMessage('Finding and replacing the sound…')
         pendingReplacement.current=''
-        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText)
+        const id=await createAutomaticReplacement(cfg,current.project_id,replacementText,sourceLayerId || undefined)
         try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${current.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview can still run. */ }
         try { await waitCandidate(cfg,current.project_id,id) } catch (error) {
           if (error instanceof Error && /example timestamp/i.test(error.message)) pendingReplacement.current=replacementText
@@ -678,6 +691,16 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         return {kind:'replacement',description:null,remove:false,actions:[],message:'Replacement preview ready. Compare before applying.'}
       }
       pendingReplacement.current=''
+      const scoped=extractLayerScope(text)
+      if (scoped) {
+        const instruction=separationCommand(scoped.text)
+        if(!instruction)return {kind:'clarify',description:null,remove:false,actions:[],message:'Describe the sound to isolate or remove from that layer.'}
+        const selected=resolveSourceLayer(scoped.name,await getSavedStems(cfg,current.project_id))
+        const scope:EditScope=instruction.editScope || {action:instruction.remove?'mute':'keep'}
+        setPrompt(instruction.description);setMessage(`Separating from ${selected.name}…`)
+        await previewSound(cfg,current,instruction.description,scope,{},null,false,[],clampPasses(passes,choices),null,instruction.processingTime ?? null,undefined,selected.id)
+        return {kind:'separate',description:instruction.description,remove:instruction.remove,actions:[],message:'Layer separation preview ready. Compare before applying.'}
+      }
       const local=separationCommand(text), music=musicCommand(text)
 
       const directCinematic = cinematicCommand(text, candidateKind==='cinematic'||candidateKind==='director')
@@ -734,7 +757,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const point=result.processing_time ?? null
         const range=point!==null ? null : scope.interval || processingRange
         setProcessingTime(point);setProcessingRange(range)
-        await previewSound(cfg,current,result.description,scope,result.use_visual?selectedVisual:{},null,false,guidance,clampPasses(passes,choices),range,point)
+        await previewSound(cfg,current,result.description,scope,result.use_visual?selectedVisual:{},null,false,guidance,clampPasses(passes,choices),range,point,undefined,sourceLayerId || undefined)
         result.message='Preview ready. Compare it above the timeline, then apply.'
       } else if (result.kind !== 'cinematic' && result.kind !== 'director') setMessage(result.message)
       return result
@@ -898,6 +921,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
           <p>After applying, each effect is its own timeline layer, so you can adjust its volume or timing separately.</p></>}
         {candidateWarnings.map(w=><p key={w}>{w}</p>)}{error && <p role="alert" className="text-red-600">{error}</p>}<p>Compare the mix and listen for missing background sounds before applying.</p>
       </div>}
+      {candidateKind==='censorship' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}<p className="mt-1">Detected {censorMatches.length} possible {censorMatches.length===1?'match':'matches'}:</p><div className="max-h-24 overflow-auto">{censorMatches.map((m,i)=><button key={i} type="button" className="mr-2 underline" onClick={()=>onSeek(m.start)}>{m.word} ({m.start.toFixed(2)}s)</button>)}</div></div>}
       {candidateKind==='effects' && <p className="mt-2 text-xs text-muted">Effects are rendered into the selected layer on apply. Undo restores the previous audio. Listen for clipping.</p>}
       {candidateKind==='known-effect-replacement' && <div className="mt-2 text-xs text-muted">{candidateWarnings.map(w=><p key={w}>{w}</p>)}</div>}
       <div className="mt-3 flex items-center gap-2">
@@ -952,7 +976,8 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
               {jobId && !confirmExplode && <p className="mt-1 text-[11px] text-subtle">This project already has layers. Exploding again starts over from the original audio.</p>}
             </div>}
             {project && <p className="flex items-center gap-2 pt-1 text-[11px] font-medium text-subtle"><span className="h-px flex-1 bg-line"/>or pull out one sound<span className="h-px flex-1 bg-line"/></p>}
-            {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
+            {sourceLayers.length>0 && <label className="block text-xs">Search within<select aria-label="Source layer" className={`${field} mt-1`} value={sourceLayerId} disabled={busy} onChange={e=>setSourceLayerId(e.target.value)}><option value="">Current remaining audio</option>{sourceLayers.map(layer=><option key={layer.id} value={layer.id}>{layer.name}{layer.start_offset ? ` (${layer.start_offset.toFixed(2)}s)` : ''}</option>)}</select></label>}
+            {project && <div><button type="button" className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={()=>setReplacementOpen(!replacementOpen)}>{replacementOpen?'Close sound replacement':'Add or replace sounds'}</button>{replacementOpen && <ReplacementPanel key={`${project.project_id}:${replacementSource}:${replacementEffect}`} config={config} projectId={project.project_id} duration={project.metadata?.duration || 0} source={replacementSource} sourceLayerId={sourceLayerId || undefined} initialEffect={replacementEffect} onSeek={onSeek} onFlush={flush} onPreview={async id=>{setPrompt('Sound replacement');try { sessionStorage.setItem(`soundcanvas-candidate:${baseUrl}:${project.project_id}`,JSON.stringify({id,sound:'Sound replacement'})) } catch { /* Preview still works. */ };await waitCandidate(config,project.project_id,id)}}/>}</div>}
             {project && <button className={`${secondary} w-full`} disabled={busy || !project.metadata} onClick={discoverSounds}>Discover sounds</button>}
             {suggestions.length>0 && <div className="space-y-1 text-xs"><p className="text-muted">Possible sounds in the original recording; times are approximate.</p>{suggestions.map(sound=><button key={sound.label} className={`${secondary} block w-full text-left`} disabled={busy} onClick={()=>{setPrompt(sound.prompt);setProcessingRange(sound.intervals[0] || null);setProcessingTime(null);setMessage('Review or adjust this approximate range, then preview.')}}>{sound.label}: {sound.intervals.slice(0,3).map(i=>`${i.start.toFixed(1)}–${i.end.toFixed(1)}s`).join(', ')}</button>)}</div>}
             {project?.metadata?.has_video && capabilities?.visual === false && <p className="text-muted">Select an object to choose its sound. AudioSep separates the sound description.</p>}

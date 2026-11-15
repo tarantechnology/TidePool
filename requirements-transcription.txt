@@ -1,0 +1,4 @@
+# Optional, for local word-timed speech transcription.
+faster-whisper>=1.1,<2
+# PyAV 19 is incompatible with faster-whisper 1.2's decoder.
+av>=14,<16

@@ -219,8 +219,17 @@ class MusicAnalyzer:
                 raise ValueError("analysis needs a mix or at least one stem")
             n = max(v.shape[-1] for v in stems.values())
             mix = sum(np.pad(dsp.as_mono(v), (0, n - v.shape[-1])) for v in stems.values())
+        # Transcriptions (ONNX, releases the GIL) run in the background while the numpy analysis runs.
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(max_workers=3)
         mono = dsp.resample(dsp.as_mono(mix), sr, ANALYSIS_SR)
         mono_stems = {k: dsp.resample(dsp.as_mono(v), sr, ANALYSIS_SR) for k, v in stems.items()}
+        futures = {}
+        if self.transcriber is not None:
+            if "bass" in mono_stems:
+                futures["bass"] = pool.submit(self.transcriber.transcribe, mono_stems["bass"], ANALYSIS_SR)
+            if melody and "vocals" in mono_stems:
+                futures["vocals"] = pool.submit(self.transcriber.transcribe, mono_stems["vocals"], ANALYSIS_SR)
         duration = len(mono) / ANALYSIS_SR
         warnings: list[str] = []
         used = sorted(mono_stems)
@@ -236,7 +245,7 @@ class MusicAnalyzer:
         beats = downbeats = None
         if self.beat_backend is not None:
             try:
-                beats, downbeats = self.beat_backend.track(dsp.resample(dsp.as_mono(mix), sr, 22050), 22050)
+                beats, downbeats = self.beat_backend.track(mono, ANALYSIS_SR)
                 beat_name = self.beat_backend.name
             except Exception as exc:  # noqa: BLE001 - fall back to the numpy tracker
                 warnings.append(f"beat backend failed ({type(exc).__name__}); used numpy tracker")
@@ -268,7 +277,7 @@ class MusicAnalyzer:
         bass_notes: list[Note] = []
         if bass_src is not None and self.transcriber is not None:
             try:
-                bass_notes = [n_ for n_ in self.transcriber.transcribe(bass_src, ANALYSIS_SR) if n_.pitch < 64]
+                bass_notes = [n_ for n_ in futures["bass"].result() if n_.pitch < 64]
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"bass transcription failed ({type(exc).__name__}); used bass chroma")
         if bass_notes:
@@ -331,7 +340,7 @@ class MusicAnalyzer:
             vocal_activity = activity_intervals(vocals, ANALYSIS_SR)
             if melody and self.transcriber is not None:
                 try:
-                    melody_notes = monophonic(self.transcriber.transcribe(vocals, ANALYSIS_SR), lo=40, hi=90)
+                    melody_notes = monophonic(futures["vocals"].result() if "vocals" in futures else self.transcriber.transcribe(vocals, ANALYSIS_SR), lo=40, hi=90)
                     melody_notes = [n_ for n_ in melody_notes if _active(n_.start, n_.end, vocal_activity)]
                 except Exception as exc:  # noqa: BLE001
                     warnings.append(f"melody transcription failed ({type(exc).__name__})")
@@ -340,6 +349,7 @@ class MusicAnalyzer:
         elif melody:
             warnings.append("no vocal stem: melody_midi and vocal activity omitted")
 
+        pool.shutdown(wait=False)
         register = register_occupancy(mono_stems, melody_notes, bass_notes)
         space = estimate_space(vocals if vocals is not None else mono, ANALYSIS_SR)
 
@@ -357,6 +367,8 @@ class MusicAnalyzer:
             "groove": groove,
             "register": register,
             "space": space,
+            # Lets a later generate call (cached analysis, no stems uploaded) still sit behind the vocal.
+            "levels": {"vocals_lufs": round(dsp.loudness_lufs(vocals, ANALYSIS_SR), 2) if vocals is not None else None},
             "context": {"stems_used": used, "beat_backend": beat_name, "transcriber": getattr(self.transcriber, "name", None),
                         "chord_method": f"chroma-templates+hmm ({bass_method})", "key_method": "krumhansl-kessler"},
             "warnings": warnings,

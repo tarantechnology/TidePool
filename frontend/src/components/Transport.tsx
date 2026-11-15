@@ -1,5 +1,5 @@
 import type { AudioEngine } from '../audio/engine'
-import { useEngineTime } from '../hooks/useEngineTime'
+import { useTimelineTime } from '../hooks/useTimelineTime'
 
 function fmt(t: number): string {
   const m = Math.floor(t / 60)
@@ -14,7 +14,7 @@ interface Props {
 }
 
 export function Transport({ engine, playing, duration }: Props) {
-  const t = useEngineTime(engine)
+  const t = useTimelineTime(engine)
   const disabled = !engine
   return (
     <div className="flex items-center gap-1.5 rounded-full border border-line bg-tint/[0.03] p-1 pr-5 backdrop-blur max-md:pr-3">

@@ -153,9 +153,12 @@ class RefineRequest(BaseModel):
 class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
     include_video: bool=True
+    trim: Interval | None = None
+    clips: list[Interval] | None = Field(default=None, min_length=1, max_length=100)
     @model_validator(mode='after')
     def valid_format(self):
         if self.include_video != (self.format=='mp4'): raise ValueError('Use mp4 with video, or wav/mp3 without video')
+        if self.trim and self.clips: raise ValueError('Use trim or clips, not both')
         return self
 class Message(BaseModel):
     project_id: str
@@ -347,8 +350,9 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
         from .fx import export_duration  # After a whole-song speed chip the timeline is no longer the upload's length.
         body.duration=export_duration(rows,json.loads(p['metadata'])['duration'])
     # Precedence (matches frontend/src/agent/chatRoute.ts): censorship -> layer-scoped (the editor's
-    # layer separation flow; layer-scoped replacements stay replacements) -> replacement -> insert
-    # (a named library sound) -> generate (an instrument part) -> fx -> planner/separation.
+    # layer separation flow; layer-scoped replacements stay replacements) -> replacement -> object-appearance
+    # additions (main's generator) -> insert (a named library sound) -> generate (an instrument part)
+    # -> stale-editor refresh guard -> fx -> planner/separation.
     from .sfx_plan import requests_censorship
     if requests_censorship(body.prompt):  # Profanity beeps are the censorship preview's job, never a library insert or a generated part.
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'Profanity beeps use the censorship preview: ask "bleep the swearing" in the editor.'}
@@ -364,16 +368,41 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     # SFX inserts ("vine boom when he says 'what'") parse offline first; see app/sfx_plan.py.
     from .sfx_plan import finalize as finalize_insert, rule_plan as insert_rule_plan
     from .sfx_insert import service_features
+    # A browser tab left open across an editor update may still send sound
+    # generation requests to this older planning route. Never let its generic
+    # planner incorrectly say that the configured generator cannot add sounds.
+    # Censorship (above), library inserts, generated parts and layer effects ("add reverb to the vocals") keep their own flows;
+    # object-appearance additions ("add a gong every time we see person 5") are always the generator's.
+    from .sfx_plan import _FX_WORDS
+    from .fx_schema import PRESET_WORDS
+    stale={'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
+    sound_ask=(re.search(r'\b(?:add|play|insert|place|generate|put|trigger|cue|overlay)\b',body.prompt,re.I) and re.search(r'\b(?:sound|sounds|effect|sfx|when|whenever|time|word|see|appears?)\b',body.prompt,re.I)
+               and not _FX_WORDS.search(body.prompt) and not PRESET_WORDS.search(body.prompt))
+    from .replacement import parse_replacement
+    def addition():
+        try: return parse_replacement(body.prompt,body.duration)
+        except ValueError:
+            from .sound_intent import resolve  # May ask the model; only reached once the offline planners pass.
+            try: return resolve(body.prompt,body.duration)
+            except ValueError: return None
+    if sound_ask:
+        try: early=parse_replacement(body.prompt,body.duration)
+        except ValueError: early=None
+        if early and early.get('mode')=='add' and early.get('object_track_id') is not None: return stale  # never a generated part
     quick=insert_rule_plan(body.prompt)
     if quick is not None and quick['kind']=='insert':
         return finalize_insert(quick,body.duration,service_features())
-    # "add violins / a piano part / a funky bassline": a generated part (kind=generate -> generate-preview).
+    # "add violins / a piano part / a funky bassline": a generated part (kind=generate -> generate-preview),
+    # ahead of the stale-editor refresh guard below.
     from .generate_part import rule_plan as generate_rule_plan
     generate=generate_rule_plan(body.prompt)
     if generate:
         return {'kind':'generate','description':None,'remove':False,'actions':[],'generate':generate,
                 'message':f"Writing a {generate['instrument']} part that follows the song's chords and beat…"}
     if quick is not None:return quick
+    if sound_ask:
+        found=addition()
+        if found and found.get('mode') in ('add','replace'): return stale
     parsed=parse(body.prompt)
     if parsed and parsed.get('stem_name'):
         name=parsed['stem_name'].lower()
@@ -629,14 +658,22 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         selected=resolve_layer(layer_name,rows) if layer_name else next((r for r in rows if r['id']==body.source_stem_id),None)
         if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
         if body.source_stem_id and selected and selected['id']!=body.source_stem_id:raise HTTPException(422,'The named layer and selected layer do not match.')
-        plan=parse_replacement(request,probe(source)['duration'])
+        try: plan=parse_replacement(request,probe(source)['duration'])
+        except ValueError:
+            from .sound_intent import resolve
+            plan=resolve(request,probe(source)['duration'])
+        visual_snapshot={}
+        if plan.get('object_track_id') is not None:
+            from .object_selection import appearances
+            found=appearances(p,plan['object_track_id'],plan['object_label'])
+            visual_snapshot={'visual_analysis_id':found['analysis_id'],'visual_source_sha256':found['source_sha256']}
         if selected and plan.get('mode')=='add':raise HTTPException(422,'A source layer is only used when replacing a sound.')
         if selected and plan.get('time') is not None and not selected['start_offset']<=plan['time']<selected['start_offset']+selected['duration']:raise HTTPException(422,'The timestamp is outside the selected source layer.')
         known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
         if plan.get('mode')!='add' and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
-        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows},**visual_snapshot}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None}),'status':'queued'}
+    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None,'_resolved_plan':plan}),'status':'queued'}
 
 class SfxInsertRequest(BaseModel):
     inserts: list[dict] = Field(min_length=1,max_length=10)
@@ -1055,8 +1092,10 @@ def audio(pid: str,sid: str,authorization: str | None=Header(None)):
 @app.post('/api/projects/{pid}/export',status_code=202)
 def create_export(pid: str,body: Export,authorization: str | None=Header(None)):
     p=auth(pid,authorization)
-    if not p['original'] or not list_stems(pid,authorization): raise HTTPException(409,'Processed stems required')
+    if not p['original'] or not p['audio']: raise HTTPException(409,'Upload media first')
     if body.include_video and not json.loads(p['metadata'])['has_video']: raise HTTPException(422,'Original has no video')
+    if body.trim and body.trim.end > json.loads(p['metadata'])['duration'] + 1e-6: raise HTTPException(422,'Trim extends beyond the media duration')
+    if body.clips and any(c.end > json.loads(p['metadata'])['duration'] + 1e-6 for c in body.clips): raise HTTPException(422,'Clip extends beyond the media duration')
     return {'export_id':start(pid,'export',body.model_dump()),'status':'queued'}
 
 @app.get('/api/exports/{eid}')

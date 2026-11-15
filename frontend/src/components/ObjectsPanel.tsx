@@ -1,9 +1,9 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import type { BackendConfig, VisionCapability, VisualMetadata } from '../api/backend'
-import { getPrepareVisual, getVisualJob, getVisualMetadata, startPrepareVisual, startVisualAnalysis } from '../api/backend'
+import { getPrepareVisual, getVisualJob, getVisualMetadata, startPrepareVisual, startVisualAnalysis, storeVisualMetadata } from '../api/backend'
 import { pollJob, toJobStatus } from '../api/jobs'
-import { IDLE, detectorStatus, followVisualJob, guidedByText, objectTracks, runFromError, selectTrack, summarize, trackColor } from '../objects'
-import type { DetectionRun, StatusTone } from '../objects'
+import { IDLE, detectorStatus, followVisualJob, guidedByText, mergeTracks, objectTracks, removeTrack, renameTrack, runFromError, selectTrack, summarize, trackColor } from '../objects'
+import type { DetectionRun, ObjectTrack, StatusTone } from '../objects'
 import { asVisualMetadata } from '../visual'
 import type { VisualSelection } from '../visual'
 import { FEATURES } from '../features'
@@ -37,10 +37,12 @@ interface Props {
   onSeek: (seconds: number) => void
   /** The project's video changed on the server: reload it. */
   onPrepared: () => Promise<void>
+  /** The user fixed the detections (removed, merged or named a track); they are already saved. */
+  onEdited?: (metadata: VisualMetadata, keepSelection: boolean) => void
 }
 
 /** Detector status, Find objects, and the tracked objects it found. Keyed by project, so a new project starts clean. */
-export function ObjectsPanel({ config, projectId, vision, visual, selection, disabled, resumeJobId, canPrepare, onAnalyzed, onSelect, onSeek, onPrepared }: Props) {
+export function ObjectsPanel({ config, projectId, vision, visual, selection, disabled, resumeJobId, canPrepare, onAnalyzed, onSelect, onSeek, onPrepared, onEdited }: Props) {
   const [concept, setConcept] = useState('')
   const [run, setRun] = useState<DetectionRun>(IDLE)
   const abort = useRef<AbortController | null>(null)
@@ -117,6 +119,31 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
     onSelect(chosen)
   }
   const progress = run.phase === 'detecting' ? run.progress : undefined
+  const selectedTrack = tracks.find((t) => t.trackId === selection?.track_id) ?? null
+
+  // Fixing detections: each edit is saved to the project, and the last one can be undone.
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+  const [lastEdit, setLastEdit] = useState<{ text: string; before: VisualMetadata } | null>(null)
+  const save = async (next: VisualMetadata, text: string, keepSelection: boolean) => {
+    if (!visual || !onEdited) return
+    const before = visual
+    setSaving(true); setEditError('')
+    try {
+      await storeVisualMetadata(config, projectId, next)
+      onEdited(next, keepSelection)
+      setLastEdit(text ? { text, before } : null)
+    } catch (err) {
+      setEditError(`Could not save: ${err instanceof Error ? err.message : String(err)}`)
+    } finally { setSaving(false) }
+  }
+  const undoEdit = async () => {
+    if (!lastEdit || !onEdited) return
+    setSaving(true); setEditError('')
+    try { await storeVisualMetadata(config, projectId, lastEdit.before); onEdited(lastEdit.before, false); setLastEdit(null) }
+    catch (err) { setEditError(`Could not undo: ${err instanceof Error ? err.message : String(err)}`) }
+    finally { setSaving(false) }
+  }
 
   return (
     <section ref={section} aria-label="Objects" className="space-y-2 text-xs">
@@ -160,16 +187,59 @@ export function ObjectsPanel({ config, projectId, vision, visual, selection, dis
                   <button type="button" aria-pressed={selected} disabled={disabled} onClick={() => pick(t.trackId)}
                     className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-tint/[0.06] ${selected ? 'bg-tint/[0.08] ring-1 ring-accent/60' : ''}`}>
                     <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: trackColor(t.trackId).css }} />
-                    <span className="min-w-0 flex-1 truncate text-fg">{t.label} <span className="text-subtle">#{t.trackId}</span></span>
+                    <span className="min-w-0 flex-1 truncate text-fg">{t.name ? <>{t.name} <span className="text-subtle">{t.label} #{t.trackId}</span></> : <>{t.label} <span className="text-subtle">#{t.trackId}</span></>}</span>
                     <span className="shrink-0 font-mono text-[10px] text-muted">{t.firstSeconds.toFixed(1)}–{t.lastSeconds.toFixed(1)} s · {t.frames} fr</span>
                   </button>
                 </li>
               )
             })}
           </ul>
+          {selectedTrack && visual && onEdited && <FixDetection key={selectedTrack.trackId} track={selectedTrack} others={tracks.filter(t => t.trackId !== selectedTrack.trackId)} busy={disabled || saving}
+            onRemove={() => void save(removeTrack(visual, selectedTrack.trackId), `Removed ${titleOf(selectedTrack)}.`, false)}
+            onMerge={(other) => void save(mergeTracks(visual, selectedTrack.trackId, other.trackId), `${titleOf(other)} is now part of ${titleOf(selectedTrack)}.`, false)}
+            onRename={(name) => void save(renameTrack(visual, selectedTrack.trackId, name), '', true)} />}
         </>
       )}
+      {lastEdit && <p role="status" className="flex items-center gap-2 rounded-lg bg-surface-2 px-2 py-1.5 text-muted"><span className="min-w-0 flex-1">{lastEdit.text}</span><button type="button" className="shrink-0 text-accent hover:underline disabled:opacity-40" disabled={saving} onClick={() => void undoEdit()}>Undo</button></p>}
+      {editError && <p role="alert" className="text-red-600">{editError}</p>}
     </section>
+  )
+}
+
+const titleOf = (t: ObjectTrack) => t.name || `${t.label} #${t.trackId}`
+
+/**
+ * Fix what the tracker got wrong about the selected object: name it, say it is the
+ * same as another entry (a new number after a cut), or remove it because nothing is there.
+ */
+function FixDetection({ track, others, busy, onRemove, onMerge, onRename }: { track: ObjectTrack; others: ObjectTrack[]; busy: boolean; onRemove: () => void; onMerge: (other: ObjectTrack) => void; onRename: (name: string) => void }) {
+  const [name, setName] = useState(track.name ?? '')
+  const [same, setSame] = useState('')
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => { box.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }) }, [])
+  const commitName = () => { if (name.trim() !== (track.name ?? '')) onRename(name) }
+  // The same kind of object first: a person is usually merged with another person.
+  const choices = [...others].sort((a, b) => Number(b.label === track.label) - Number(a.label === track.label) || a.firstSeconds - b.firstSeconds)
+  const other = choices.find(t => String(t.trackId) === same)
+  const field = 'min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/15'
+  return (
+    <div ref={box} aria-label="Fix this detection" className="rise-in space-y-2 rounded-xl border border-line bg-surface p-2.5">
+      <p className="flex items-center gap-1.5 font-medium text-fg"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm" style={{ background: trackColor(track.trackId).css }} />{titleOf(track)}<span className="ml-auto font-mono text-[10px] font-normal text-subtle">{track.firstSeconds.toFixed(1)}–{track.lastSeconds.toFixed(1)} s</span></p>
+      <label className="flex items-center gap-2 text-muted">Name
+        <input className={field} aria-label="Object name" value={name} maxLength={40} placeholder={`e.g. ${track.label === 'person' ? 'Noah' : track.label}`} disabled={busy}
+          onChange={e => setName(e.target.value)} onBlur={commitName} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+      </label>
+      {choices.length > 0 && <div className="flex items-center gap-2 text-muted">
+        <label className="flex min-w-0 flex-1 items-center gap-2">Same as
+          <select className={field} aria-label="Same object as" value={same} disabled={busy} onChange={e => setSame(e.target.value)}>
+            <option value="">Choose…</option>
+            {choices.map(t => <option key={t.trackId} value={t.trackId}>{titleOf(t)} · {t.firstSeconds.toFixed(1)}–{t.lastSeconds.toFixed(1)} s</option>)}
+          </select>
+        </label>
+        <button type="button" className="shrink-0 rounded-lg border border-accent/40 bg-accent-soft px-2 py-1 font-medium text-accent disabled:opacity-40" disabled={busy || !other} onClick={() => other && onMerge(other)}>Merge</button>
+      </div>}
+      <button type="button" className="w-full rounded-lg border border-line px-2 py-1 text-muted hover:border-red-200 hover:text-red-600 disabled:opacity-40" disabled={busy} onClick={onRemove}>Not a real {track.label}: remove it</button>
+    </div>
   )
 }
 

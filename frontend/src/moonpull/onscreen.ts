@@ -1,6 +1,7 @@
 import type { VisualMetadata } from '../api/backend'
 import { cleanMoments, MAX_MOMENTS } from './rules'
 import type { Moment } from './rules'
+import { trackTitle } from '../objects'
 
 // "Whenever this person is on screen": the moments come from the object tracker. Each frame the
 // detector analysed lists the tracked objects in it, so an object's moments are the runs of frames
@@ -28,7 +29,7 @@ export function onScreenMoments(metadata: VisualMetadata, trackIds: number[], du
     const last = runs.at(-1)
     if (last && start - last.end <= bridge) last.end = Math.max(last.end, end)
     else runs.push({ start, end, labels: new Set() })
-    for (const o of seen) runs.at(-1)!.labels.add(`${o.label} #${o.track_id}`)
+    for (const o of seen) runs.at(-1)!.labels.add(trackTitle(o))
   }
   const round = (v: number) => Math.round(v * 100) / 100
   return cleanMoments(

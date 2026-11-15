@@ -402,6 +402,10 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
     if (!projectPanel.current) throw new Error('Project controls are not ready.')
     await projectPanel.current.deleteLayer(stemId, fold)
   }, [])
+  const mergeLayer = useCallback(async (stemId: string, into: string) => {
+    if (!projectPanel.current) throw new Error('Project controls are not ready.')
+    await projectPanel.current.deleteLayer(stemId, true, into)
+  }, [])
   const residual = baseStems.find((s) => s.kind === 'residual') ?? null
 
   const runPrompt = useCallback(
@@ -712,6 +716,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
                     syncing={syncTarget !== null}
                     onRename={canRename ? renameLayer : undefined}
                     onDelete={canRename && stems.length > 1 ? deleteLayer : undefined}
+                    onMerge={canRename && stems.length > 1 ? mergeLayer : undefined}
                     residualId={residual?.id ?? null}
                     residualLabel={residual?.label ?? null}
                     header={viewToggle}

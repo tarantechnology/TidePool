@@ -1203,10 +1203,11 @@ def update_stem(pid: str,sid: str,body: StemUpdate,authorization: str | None=Hea
     return stem(row)
 
 @app.delete('/api/projects/{pid}/stems/{sid}')
-def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=None,authorization: str | None=Header(None)):
+def delete_stem(pid: str,sid: str,fold: bool=True,into: str | None=None,expected_revision: int | None=None,authorization: str | None=Header(None)):
     """Remove a layer. fold=true (the default) adds its audio to the residual, so the mix keeps the
     sound and only the separate layer goes; fold=false takes the sound out of the mix too.
-    The residual itself can't be removed. Returns the job to load the layers from."""
+    into=<layer id> merges it into that layer instead of the residual (for example two voice layers
+    that are the same person). The residual itself can't be removed. Returns the job to load the layers from."""
     from .candidates import completed_job
     from .core import discard
     from .media import read_wav, write_wav
@@ -1223,14 +1224,26 @@ def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=
         if row['name'].lower()=='residual' or row['role']=='residual':
             raise HTTPException(422,'The residual layer holds everything the other layers don\'t, so it stays. Mute it instead.')
         replaced=[row['path']]
+        if into is not None:
+            if into==sid: raise HTTPException(422,'Pick a different layer to merge into.')
+            fold=True
         if fold:
-            residual=db.execute("SELECT * FROM stems WHERE project_id=? AND (lower(name)='residual' OR role='residual') ORDER BY lower(name)='residual' DESC",(pid,)).fetchone()
-            if not residual: raise HTTPException(422,'There is no residual layer to fold this one into. Remove its sound instead.')
+            if into is not None:
+                residual=db.execute('SELECT * FROM stems WHERE project_id=? AND id=?',(pid,into)).fetchone()
+                if not residual: raise HTTPException(404,'The layer to merge into is no longer in the project.')
+            else:
+                residual=db.execute("SELECT * FROM stems WHERE project_id=? AND (lower(name)='residual' OR role='residual') ORDER BY lower(name)='residual' DESC",(pid,)).fetchone()
+                if not residual: raise HTTPException(422,'There is no residual layer to fold this one into. Remove its sound instead.')
             # Raw samples can only be added without changing the audible mix
             # when both layers have neutral, identical playback settings.
             # In particular, folding a muted target would bring its audio back.
-            if any(float(layer['volume'])!=1 or layer['muted'] or json.loads(layer['automation']) or json.loads(layer['mute_ranges']) for layer in (row,residual)) or db.execute('SELECT 1 FROM stems WHERE project_id=? AND solo=1 LIMIT 1',(pid,)).fetchone():
+            # A merge allows different volumes: the moved audio is scaled so it keeps its loudness.
+            if any((into is None and float(layer['volume'])!=1) or layer['muted'] or json.loads(layer['automation']) or json.loads(layer['mute_ranges']) for layer in (row,residual)) or db.execute('SELECT 1 FROM stems WHERE project_id=? AND solo=1 LIMIT 1',(pid,)).fetchone():
+                if into is not None:
+                    raise HTTPException(409,'To merge, both layers need to be unmuted, with no volume drawing or muted ranges, and nothing soloed. Undo or clear those first.')
                 raise HTTPException(409,'Folding needs both layers at unity gain with no mutes or automation and no soloed layers. Reset those edits, or remove the layer without folding.')
+            if into is not None and float(residual['volume'])<=0:
+                raise HTTPException(409,'The layer to merge into is at zero volume. Turn it up first.')
             try:
                 (a,rate),(b,rate_b)=read_wav(residual['path']),read_wav(row['path'])
             except (OSError,ValueError) as exc: raise HTTPException(500,f'Could not read the layer audio: {exc}') from exc
@@ -1242,7 +1255,8 @@ def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=
             at=lambda offset: int(round((offset-start)*rate))
             ia,ib=at(residual['start_offset']),at(row['start_offset'])
             out=np.zeros((max(ia+len(a),ib+len(b)),a.shape[1]))
-            out[ia:ia+len(a)]+=a; out[ib:ib+len(b)]+=b
+            gain=float(row['volume'])/float(residual['volume']) if into is not None else 1.0
+            out[ia:ia+len(a)]+=a; out[ib:ib+len(b)]+=b*gain
             path=project_dir(pid)/'stems'/(uid()+'.wav'); path.parent.mkdir(parents=True,exist_ok=True)
             write_wav(path,out,rate)
             db.execute('UPDATE stems SET path=?,start_offset=?,duration=?,revision=revision+1 WHERE project_id=? AND id=?',
@@ -1252,7 +1266,7 @@ def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=
         jid=completed_job(db,pid)
     # Undo (app/checkpoints.py) keeps the files its snapshots need; only unreachable ones go.
     discard(pid,replaced)
-    return {'job_id':jid,'folded':fold}
+    return {'job_id':jid,'folded':fold,**({'merged_into':into} if into is not None else {})}
 
 class EffectRequest(BaseModel):
     effect: Literal['deepen','impact','disorient','muffle']

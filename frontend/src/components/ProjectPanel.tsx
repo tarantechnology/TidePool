@@ -92,8 +92,8 @@ export interface ProjectPanelHandle {
   /** Rename a layer on the backend, then reload the layers so later edits sync against its new revision. */
   /** Save a new layer name between fader saves (exclusive), as one undoable step. Shows nothing while it runs. */
   renameLayer: (stemId:string, label:string, exclusive:StemExclusive) => Promise<void>
-  /** Delete a layer; fold adds its sound to the residual. One undoable step. */
-  deleteLayer: (stemId:string, fold:boolean) => Promise<void>
+  /** Delete a layer; fold adds its sound to the residual, into merges it into another layer. One undoable step. */
+  deleteLayer: (stemId:string, fold:boolean, into?:string) => Promise<void>
   /**
    * Moon pull: run work against the saved layers under the project lock, after pending edits are
    * saved. With reload, the layers are loaded again afterwards so later edits sync against the
@@ -702,22 +702,26 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage(`Renamed to “${name}”. Current commands can use the new name.`)
     } catch (e) { setError(`Couldn't rename the layer: ${e instanceof Error ? e.message : String(e)}`); throw e }
     finally { busyRef.current = false }
-  }, deleteLayer: async (stemId, fold) => {
+  }, deleteLayer: async (stemId, fold, into) => {
     if (!project || !token || !jobId) throw new Error('Separate the audio before deleting layers.')
     if (busyRef.current) { const e = new Error('A project operation is already running. Please wait.'); setError(e.message); throw e }
     const pid = project.project_id
-    busyRef.current = true; setBusy(true); setError(''); setMessage(fold ? 'Folding the layer into the residual…' : 'Deleting the layer…')
+    busyRef.current = true; setBusy(true); setError(''); setMessage(into ? 'Merging the layers…' : fold ? 'Folding the layer into the residual…' : 'Deleting the layer…')
     try {
       await flush()
-      const stem = (await getSavedStems(config, pid)).find(s => s.id === stemId)
+      const saved = await getSavedStems(config, pid)
+      const stem = saved.find(s => s.id === stemId)
       if (!stem) throw new Error('That layer is no longer in the project.')
       const name = stem.label?.trim() || stem.name
-      await beginStep(config, pid, `Delete “${name}”`)
+      const target = into ? saved.find(s => s.id === into) : undefined
+      if (into && !target) throw new Error('The layer to merge into is no longer in the project.')
+      const targetName = target ? target.label?.trim() || target.name : ''
+      await beginStep(config, pid, target ? `Merge “${name}” into “${targetName}”` : `Delete “${name}”`)
       let result
-      try { result = await deleteStem(config, pid, stemId, fold, stem.revision) } catch (e) { pendingStep.current = null; throw e }
+      try { result = await deleteStem(config, pid, stemId, fold, stem.revision, into) } catch (e) { pendingStep.current = null; throw e }
       await onLoadStems(new HttpStemSource(config, result.job_id), 'Project stems'); setJobId(result.job_id); await endStep(config)
       setSettingsStems([]); setRetryStems([])
-      setMessage(result.folded ? `Deleted “${name}”. Its sound is now part of the residual, so the mix is unchanged. Undo with ⌘Z.` : `Deleted “${name}” and its sound. Undo with ⌘Z.`)
+      setMessage(target ? `Merged “${name}” into “${targetName}”. Both sounds now play as one layer. Undo with ⌘Z.` : result.folded ? `Deleted “${name}”. Its sound is now part of the residual, so the mix is unchanged. Undo with ⌘Z.` : `Deleted “${name}” and its sound. Undo with ⌘Z.`)
     } catch (e) { setMessage(''); setError(e instanceof Error ? e.message : String(e)); throw e }
     finally { busyRef.current = false; setBusy(false) }
 }, withLayers: async (label, work, reload) => {

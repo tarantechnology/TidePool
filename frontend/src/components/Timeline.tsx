@@ -9,6 +9,7 @@ import type { EditAction, Keyframe, Stem, StemKind, TrackState } from '../types'
 import { TrackHeader } from './TrackHeader'
 import { Waveform } from './Waveform'
 import { FEATURES } from '../features'
+import type { SourceClip } from '../state/clipSequence'
 
 const ACCENT = '#5b9be3'
 const COLS = 'grid grid-cols-[15rem_minmax(0,1fr)]'
@@ -29,6 +30,8 @@ interface Props {
   syncing: boolean
   canTrim: boolean
   onKeepRange: (start:number, end:number) => string
+  onSplitRange: (start:number, end:number) => string
+  exportClips: SourceClip[]
 }
 
 function tickStep(duration: number): number {
@@ -106,10 +109,11 @@ function KeyframeMarker({ keyframe, duration, onDrag, onDelete }: MarkerProps) {
   )
 }
 
-export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, canTrim, onKeepRange }: Props) {
+export function Timeline({ engine, stems, tracks, duration, onAction, onKindChange, syncing, canTrim, onKeepRange, onSplitRange, exportClips }: Props) {
   const [limitMessage, setLimitMessage] = useState('')
   const [selecting, setSelecting] = useState(false)
   const [selection, setSelection] = useState<{stemId:string;start:number;end:number}|null>(null)
+  const [menu, setMenu] = useState<{x:number;y:number}|null>(null)
   const draggingRange = useRef<{stemId:string;start:number}|null>(null)
   const previewFrame = useRef<number|null>(null)
   useEffect(() => () => { if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current) }, [])
@@ -168,6 +172,11 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
     onAction({type:'set_automation',stemId:selectedTrack.stemId,keyframes:next})
     setLimitMessage(`${scale === 0 ? 'Muted' : 'Lowered'} ${selectedStem.label} in the selected range. Use Undo to restore it.`)
   }
+  const splitSelected = () => {
+    setMenu(null)
+    if (!selection) return
+    try { setLimitMessage(onSplitRange(selection.start,selection.end)) } catch (e) { setLimitMessage(e instanceof Error ? e.message : String(e)) }
+  }
   const previewSelection = async () => {
     if (!selection || !validSelection) return
     if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current)
@@ -177,6 +186,26 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
     const tick=() => {
       if (!engine.isPlaying()) { previewFrame.current=null; return }
       if (engine.getTime() >= stopAt) { engine.pause(); engine.seek(stopAt); previewFrame.current=null; return }
+      previewFrame.current=requestAnimationFrame(tick)
+    }
+    previewFrame.current=requestAnimationFrame(tick)
+  }
+  const previewSequence = async () => {
+    if (!exportClips.length) return
+    if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current)
+    const sequence=exportClips.map(clip => ({...clip}))
+    let index=0
+    engine.pause(); engine.seek(sequence[0].start)
+    try { await engine.play() } catch (e) { setLimitMessage(`Playback failed: ${String(e)}`); return }
+    const tick=() => {
+      if (!engine.isPlaying()) { previewFrame.current=null; return }
+      const current=sequence[index], time=engine.getTime()
+      if (time < current.start - .2) { previewFrame.current=null; return }
+      if (time >= current.end) {
+        index++
+        if (index >= sequence.length) { engine.pause(); engine.seek(current.end); previewFrame.current=null; return }
+        engine.seek(sequence[index].start)
+      }
       previewFrame.current=requestAnimationFrame(tick)
     }
     previewFrame.current=requestAnimationFrame(tick)
@@ -212,7 +241,8 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-xs">
         <button type="button" aria-pressed={selecting} onClick={() => {setSelecting(!selecting);setLimitMessage('')}} className={`rounded border px-2 py-1 ${selecting ? 'border-accent bg-accent-soft text-accent' : 'border-line'}`}>Select range</button>
         <span className="text-muted">{validSelection && selection && selectedStem ? `${selectedStem.label}: ${selection.start.toFixed(2)}–${selection.end.toFixed(2)}s` : selecting ? 'Drag across a sound wave to select a range.' : 'Select a range to edit part of a sound.'}</span>
-        {validSelection && <><button type="button" className="rounded border border-line px-2 py-1" onClick={() => void previewSelection()}>Play selection</button><button type="button" disabled={!canTrim} title={canTrim ? 'Keep this range when exporting' : 'Upload media first'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => {if (!selection) return; try {setLimitMessage(onKeepRange(selection.start,selection.end))} catch(e) {setLimitMessage(e instanceof Error ? e.message : String(e))}}}>Keep selection</button><button type="button" disabled={!syncing} title={syncing ? 'Mute this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0)}>Mute selection</button><button type="button" disabled={!syncing} title={syncing ? 'Lower this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0.3)}>Lower selection</button><button type="button" className="rounded border border-line px-2 py-1" onClick={() => setSelection(null)}>Clear selection</button></>}
+        {exportClips.length > 0 && <button type="button" className="rounded border border-line px-2 py-1" onClick={() => void previewSequence()}>Play edited sequence</button>}
+        {validSelection && <><button type="button" className="rounded border border-line px-2 py-1" onClick={() => void previewSelection()}>Play selection</button><button type="button" disabled={!canTrim} title="Split the video and its audio at the selection boundaries" className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={splitSelected}>Split selection</button><button type="button" disabled={!canTrim} title={canTrim ? 'Keep this range when exporting' : 'Upload media first'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => {if (!selection) return; try {setLimitMessage(onKeepRange(selection.start,selection.end))} catch(e) {setLimitMessage(e instanceof Error ? e.message : String(e))}}}>Keep selection</button><button type="button" disabled={!syncing} title={syncing ? 'Mute this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0)}>Mute selection</button><button type="button" disabled={!syncing} title={syncing ? 'Lower this layer in the selection' : 'Separate a sound into project layers first so this edit can be exported'} className="rounded border border-line px-2 py-1 disabled:opacity-40" onClick={() => editSelection(0.3)}>Lower selection</button><button type="button" className="rounded border border-line px-2 py-1" onClick={() => {setSelection(null);setMenu(null)}}>Clear selection</button></>}
         {validSelection && !syncing && <span className="text-muted">Separate a sound first to mute or lower just that layer.</span>}
       </div>
       {limitMessage && <div role="status" className="px-4 py-1 text-xs text-amber-700">{limitMessage}</div>}
@@ -334,7 +364,9 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
         {/* Scrub layer + playhead, aligned to the lane column (15rem header) */}
         <div
           className={`absolute top-0 right-0 bottom-0 left-60 touch-none ${selecting ? 'cursor-crosshair' : 'cursor-col-resize'}`}
+          onContextMenu={e => { const lane=(e.target as HTMLElement).closest<HTMLElement>('[data-lane]'); if (!validSelection || !selection || lane?.dataset.lane !== selection.stemId) return; e.preventDefault(); setMenu({x:e.clientX,y:e.clientY}) }}
           onPointerDown={(e) => {
+            setMenu(null)
             if (e.button !== 0 || e.ctrlKey) return
             e.currentTarget.setPointerCapture(e.pointerId)
             const lane=(e.target as HTMLElement).closest<HTMLElement>('[data-lane]')
@@ -358,6 +390,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
               if (!track || !engine.getPeaks(stem.id)) return null
               return (
                 <div key={stem.id} data-lane={stem.id} className="relative border-b border-transparent" style={{ height: laneHeight(stem.id) }}>
+                  {exportClips.flatMap((clip,i) => [clip.start,clip.end].filter(t => t > 0 && t < duration).map((t,j) => <div key={`${i}:${j}`} aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-l border-dashed border-amber-600" style={{left:`${t/duration*100}%`}} />))}
                   {selection?.stemId === stem.id && <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-x-2 border-accent bg-accent/25" style={{left:`${selection.start/duration*100}%`,width:`${(selection.end-selection.start)/duration*100}%`}} />}
                   {track.automation.map((k, idx) => (
                     <KeyframeMarker
@@ -380,6 +413,7 @@ export function Timeline({ engine, stems, tracks, duration, onAction, onKindChan
           </div>
         </div>
       </div>
+      {menu && validSelection && <div role="menu" style={{position:'fixed',left:menu.x,top:menu.y,zIndex:100}} className="rounded-lg border border-line bg-surface p-1 shadow-lg text-xs"><button role="menuitem" type="button" disabled={!canTrim} className="block rounded px-3 py-2 hover:bg-accent-soft disabled:opacity-40" onClick={splitSelected}>Split selection</button><button role="menuitem" type="button" className="block rounded px-3 py-2 hover:bg-accent-soft" onClick={() => setMenu(null)}>Close</button></div>}
     </div>
   )
 }

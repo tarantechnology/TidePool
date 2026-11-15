@@ -19,6 +19,8 @@ import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCap
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
 import { mediaCommand } from '../mediaCommand'
+import { splitSelection } from '../state/clipSequence'
+import type { SourceClip } from '../state/clipSequence'
 
 import { CANCELLED_MESSAGE, isAbort } from '../api/errors'
 import { clampPasses, passChoices, refineBlockReason, refineConflictMessage, runRefine } from '../api/refine'
@@ -54,6 +56,7 @@ interface Props {
   onSelectVisual: (selection: VisualSelection) => void
   onSeek: (seconds: number) => void
   getPlayhead: () => number
+  onClipSequence: (clips:SourceClip[]) => void
   /** The detections the editor is showing, for the object list. */
   visual: VisualMetadata | null
   /** What the panel is busy with, for the timeline's working state; null when idle. */
@@ -68,10 +71,11 @@ export interface ProjectPanelHandle {
   /** Split the uploaded song into one track per instrument. */
   splitSong: () => Promise<void>
   keepRange: (start:number, end:number) => string
+  splitRange: (start:number, end:number) => string
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
-export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, getPlayhead, visual, onBusy}, ref) {
+export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function ProjectPanel({baseUrl, readyToRestore, onProjectState, onLoadStems, onVideo, onOriginalAudio, flush, onVisual, selectedVisual, onClearSelection, onSelectVisual, onSeek, getPlayhead, onClipSequence, visual, onBusy}, ref) {
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [token, setToken] = useState('')
   const [resumeId, setResumeId] = useState('')
@@ -92,6 +96,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [clipClipboard,setClipClipboard] = useState<{start:number;end:number}|null>(null)
   const [selectedClip,setSelectedClip] = useState<number|null>(null)
   const clips = clipHistory.present
+  useEffect(() => { onClipSequence(clips) }, [clips,onClipSequence])
   const changeClips = (next: {start:number;end:number}[]) => setClipHistory(h => commit(h,next))
   const [command, setCommand] = useState('')
   const [retryPrompt,setRetryPrompt]=useState('')
@@ -420,7 +425,14 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, keepRange: (start,end) => {
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, splitRange: (start,end) => {
+    if (!project?.metadata) throw new Error('Upload media before splitting.')
+    const duration=project.metadata.duration
+    const result=splitSelection(clips,duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
+    changeClips(result.clips);setSelectedClip(result.selected);setOpenStep('export')
+    const message='Selection split into a clip. Use the clip list to move, copy or delete it in the exported video.'
+    setMessage(message);return message
+  }, keepRange: (start,end) => {
     if (!project?.metadata) throw new Error('Upload media before trimming.')
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) throw new Error('Select a range within the uploaded media.')
     start=Number(start.toFixed(3)); end=Math.min(Number(end.toFixed(3)),project.metadata.duration)

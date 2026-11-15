@@ -3,6 +3,8 @@ disorient (autopan + flanger + echo) and muffle (low-pass, as if heard through a
 blended in only inside [start, end] with short fades, so the rest of the layer is untouched and
 the timeline stays sample aligned."""
 from pathlib import Path
+from functools import lru_cache
+import subprocess
 import numpy as np
 import soundfile as sf
 from .core import run, uid
@@ -10,11 +12,22 @@ from .core import run, uid
 EFFECTS = ('deepen', 'impact', 'disorient', 'muffle')
 FADE = 0.03
 
+@lru_cache(maxsize=1)
+def has_rubberband():
+    try:
+        result=subprocess.run(['ffmpeg','-hide_banner','-filters'],capture_output=True,text=True,timeout=10,check=True)
+        return any(' rubberband ' in line for line in result.stdout.splitlines())
+    except (OSError,subprocess.SubprocessError): return False
+
 def chain(effect, amount, sr):
     amount = min(max(amount, 0.0), 1.0)
     if effect == 'deepen':
         # amount 1 = one octave down; rubberband keeps duration and formants follow the pitch (darker, bigger voice)
-        return f'rubberband=pitch={2 ** (-amount):.4f}:formant=shifted,bass=g={4 * amount:.1f}:f=150'
+        ratio=2 ** (-amount)
+        if has_rubberband(): return f'rubberband=pitch={ratio:.4f}:formant=shifted,bass=g={4 * amount:.1f}:f=150'
+        # FFmpeg builds without librubberband can still shift pitch and restore
+        # duration using built-in filters; formants will be less natural.
+        return f'asetrate={round(sr*ratio)},aresample={sr},atempo={1/ratio:.5f},bass=g={4 * amount:.1f}:f=150'
     if effect == 'impact':
         return f'bass=g={6 + 10 * amount:.1f}:f=90:w=0.8,volume={1 + 2 * amount:.2f},alimiter=limit=0.97:attack=1:release=60'
     if effect == 'disorient':

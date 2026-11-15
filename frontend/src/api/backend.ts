@@ -379,10 +379,9 @@ export async function getRoute(config: BackendConfig, projectId: string, signal?
   const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/route`, {}, signal, 120_000)
   return toRouting(await res.json())
 }
-export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3'): Promise<string> {
-  // An MP4 is turned to match the editor's picture; audio-only exports have no picture to turn.
+export async function startExport(config: BackendConfig, projectId: string, format: 'mp4'|'wav'|'mp3', trim?: {start:number;end:number}, clips?: {start:number;end:number}[]): Promise<string> {
   const rotation = format==='mp4' ? readRotation(projectId) ?? 0 : 0
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(rotation ? {rotation} : {})})})
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/export`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({format,include_video:format==='mp4',...(rotation ? {rotation} : {}),...(trim ? {trim} : {}),...(clips ? {clips} : {})})})
   return ((await res.json()) as {export_id:string}).export_id
 }
 export async function getExport(config: BackendConfig, exportId: string, signal?: AbortSignal): Promise<ExportInfo> {
@@ -458,8 +457,8 @@ export async function renameStem(config: BackendConfig, projectId: string, stemI
  * Remove a layer. fold=true adds its sound to the residual, so the mix still has it; fold=false
  * takes the sound out too. Returns the job to load the remaining layers from.
  */
-export async function deleteStem(config: BackendConfig, projectId: string, stemId: string, fold: boolean): Promise<{ job_id: string; folded: boolean }> {
-  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}?fold=${fold}`, { method:'DELETE' })
+export async function deleteStem(config: BackendConfig, projectId: string, stemId: string, fold: boolean, expectedRevision?: number): Promise<{ job_id: string; folded: boolean }> {
+  const res = await request(config, `/api/projects/${encodeURIComponent(projectId)}/stems/${encodeURIComponent(stemId)}?fold=${fold}${expectedRevision === undefined ? '' : `&expected_revision=${expectedRevision}`}`, { method:'DELETE' })
   return (await res.json()) as { job_id: string; folded: boolean }
 }
 
@@ -477,7 +476,7 @@ export async function suggestSounds(config:BackendConfig, projectId:string):Prom
   return toSoundSuggestions(await res.json())
 }
 
-export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'censorship'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
+export interface AgentPlan { processing_time?:number|null; edit_scope?:EditScope;guidance?:{anchors:Anchor[]}; use_visual?:boolean; kind:'edit'|'separate'|'cinematic'|'director'|'replacement'|'sound_effect'|'censorship'|'clip_edit'|'clarify'; description:string|null; remove:boolean; actions:unknown; message:string; separation_mode?:SeparationMode|null; stems?:string[]|null;clip_edit?:{stem_id:string;operation:'move';start_offset:number} }
 export async function planProjectCommand(config:BackendConfig, projectId:string, input: {prompt:string;stems:unknown[];tracks:unknown[];duration:number;has_project_stems:boolean;selected_visual?:{label:string;start:number;end:number}|null}):Promise<AgentPlan> {
   const response=await request(config,`/api/projects/${encodeURIComponent(projectId)}/agent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},undefined,90_000)
   return response.json() as Promise<AgentPlan>

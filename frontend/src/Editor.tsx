@@ -28,6 +28,7 @@ import { PHONE_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { DropLoader } from './components/DropLoader'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
+import { SequenceTimeline } from './components/SequenceTimeline'
 import { Transport } from './components/Transport'
 import { VideoPanel } from './components/VideoPanel'
 import { applyAction, initialTracks } from './edits'
@@ -47,6 +48,8 @@ import type { History } from './state/history'
 import { createEditorState, mergeKinds, setKindOverride } from './state/kinds'
 import type { EditorState } from './state/kinds'
 import type { EditAction, Keyframe, Stem, StemKind, TrackState } from './types'
+import type { SourceClip } from './state/clipSequence'
+import { lengthOf } from './state/timeline'
 
 type Status = 'loading' | 'ready' | 'error'
 
@@ -107,9 +110,13 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
     else writeRotation(pid, rotation)
   }, [projectStems.projectId, rotation])
   const rotate = useCallback((r: Rotation) => { setRotation(r); writeRotation(rotationProject.current, r) }, [])
-  const [laneView, setLaneView] = useState<'chart' | 'mixer'>('chart')
+  const [laneView, setLaneView] = useState<'chart' | 'mixer' | 'sequence'>('chart')
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [working, setWorking] = useState<string | null>(null)
+  const [clipSequence, setClipSequence] = useState<{clips:SourceClip[];canUndo:boolean;canRedo:boolean}>({clips:[],canUndo:false,canRedo:false})
+  const [editDomain,setEditDomain]=useState<'clips'|'layers'>('layers')
+  const receiveClipSequence=useCallback((next:{clips:SourceClip[];canUndo:boolean;canRedo:boolean})=>{setClipSequence(next);if(next.canUndo||next.canRedo)setEditDomain('clips')},[])
+  useEffect(() => { engine?.setSequence(projectStems.projectId ? clipSequence.clips : []) }, [engine,projectStems.projectId,clipSequence.clips,baseStems])
   const videoUploadInProgress = useRef(false)
   const [clipAspect, setClipAspect] = useState<number | null>(null)
   // A turned clip is laid out by the shape it is shown at.
@@ -360,6 +367,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
   const dispatch = useCallback((action: EditAction, coalesceKey?: string) => {
     // Changing a layer while listening to the original would be silent, so play the edit again.
     setCompareOriginal(false)
+    setEditDomain('layers')
     const now = Date.now()
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
     setSteps(dropRedo)
@@ -367,10 +375,13 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
 
   const dispatchBatch = useCallback((actions: EditAction[], coalesceKey?: string) => {
     if (!actions.length) return
+    setEditDomain('layers'); setCompareOriginal(false)
     setHistory((h) => commit(h, { ...h.present, tracks: actions.reduce(applyAction, h.present.tracks) }, { coalesceKey, now:Date.now() }))
-  }, [])
+    setSteps(dropRedo)
+  }, [setSteps])
 
   const setKind = useCallback((stemId: string, kind: StemKind) => {
+    setEditDomain('layers')
     setHistory((h) => commit(h, { ...h.present, kinds: setKindOverride(h.present.kinds, stemId, kind) }))
     setSteps(dropRedo)
   }, [setSteps])
@@ -411,6 +422,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
         return { message: `Opened a Moon pull rule. ${next} Then upload the music (or generate a short sound) and press Apply rule.`, ok: true }
       }
       const plan = await projectPanel.current.planCommand(text, originalVideo.current, stems, req.tracks, engine.duration)
+      if (plan.kind === 'media') return {message:plan.message,ok:true}
       if (plan.kind === 'separate' || plan.kind === 'cinematic' || plan.kind === 'director' || plan.kind === 'replacement' || plan.kind === 'censorship' || plan.kind === 'clip_edit') return {message:plan.message,ok:true}
       if (plan.kind === 'clarify') return {message:plan.message,ok:false}
       const checked = validateActions(plan.actions, stems, engine.duration)
@@ -423,6 +435,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
       }
       const { actions, warnings } = resolveActions(res.actions, engine, engine.duration)
       if (actions.length > 0) {
+        setEditDomain('layers'); setCompareOriginal(false)
         setHistory((h) => commit(h, { ...h.present, tracks: actions.reduce(applyAction, h.present.tracks) }))
         setSteps(dropRedo)
         setLog((l) => [...l, ...actions])
@@ -469,7 +482,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
     if (canRedo(historyRef.current)) setHistory((h) => redo(h))
     else restoreStep('redo')
   }, [restoreStep])
-  const onStep = useCallback((step: ServerStep) => setSteps((s) => pushStep(s, step)), [setSteps])
+  const onStep = useCallback((step: ServerStep) => { setEditDomain('layers'); setSteps((s) => pushStep(s, step)) }, [setSteps])
   const undoStep: ServerStep | null = canUndo(history) ? null : nextUndo(steps.stack)
   const redoStep: ServerStep | null = canRedo(history) ? null : nextRedo(steps.stack)
   const canUndoAny = canUndo(history) || undoStep !== null
@@ -491,21 +504,28 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
       if (isTextEntry(e.target as HTMLElement)) return
       e.preventDefault()
+      if(editDomain==='clips' && (e.shiftKey ? clipSequence.canRedo : clipSequence.canUndo)) {
+        if(e.shiftKey)projectPanel.current?.redoClipEdit();else projectPanel.current?.undoClipEdit();return
+      }
       if (e.shiftKey) redoAny()
       else undoAny()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undoAny, redoAny])
+  }, [undoAny, redoAny, editDomain, clipSequence.canUndo, clipSequence.canRedo])
 
   const duration = engine?.duration ?? 0
+  const undoAvailable=editDomain==='clips'?(clipSequence.canUndo || canUndoAny):canUndoAny
+  const redoAvailable=editDomain==='clips'?(clipSequence.canRedo || canRedoAny):canRedoAny
+  const doUndo=()=>{if(editDomain==='clips' && clipSequence.canUndo)projectPanel.current?.undoClipEdit();else undoAny()}
+  const doRedo=()=>{if(editDomain==='clips' && clipSequence.canRedo)projectPanel.current?.redoClipEdit();else redoAny()}
   const hasLayers = stems.length > 0
   const viewToggle = (
     <div className="flex rounded-full border border-line bg-surface p-0.5 text-[10px] shadow-sm" role="group" aria-label="Layer view">
-      {(['chart', 'mixer'] as const).map((v) => (
-        <button key={v} aria-pressed={laneView === v} onClick={() => setLaneView(v)}
+      {(['chart', 'mixer', 'sequence'] as const).map((v) => (
+        <button key={v} aria-pressed={laneView === v} disabled={v==='sequence' && !projectStems.projectId} onClick={() => setLaneView(v)}
           className={`rounded-full px-2 py-px font-medium whitespace-nowrap transition-colors ${laneView === v ? 'bg-accent text-white' : 'text-muted hover:text-fg'}`}>
-          {v === 'chart' ? 'Tide chart' : 'Mixer'}
+          {v === 'chart' ? 'Tide chart' : v === 'mixer' ? 'Mixer' : 'Sequence'}
         </button>
       ))}
     </div>
@@ -553,7 +573,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
         </a>
         <ProjectSwitcher projectId={projectStems.projectId ?? openProjectId} fallback={openProjectId ? 'Opening project…' : 'New project'} disabled={Boolean(working)} beforeLeave={flush} />
         <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
-          <Transport engine={engine} playing={playing} duration={duration} />
+          <Transport engine={engine} playing={playing} duration={projectStems.projectId && clipSequence.clips.length ? lengthOf(clipSequence.clips) : duration} />
           {originalSrc && stemsLabel === 'Project stems' && (
             <div className="flex items-center rounded-full max-md:hidden border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to"
               title="Original plays the untouched clip, so layer changes are silent. Edited plays your mix.">
@@ -580,10 +600,10 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
             <MoonIcon />{FEATURES.symbolism}
             {rules.list.length > 0 && <span className={`rounded-full px-1.5 text-[10px] ${moonOpen ? 'bg-white/25' : 'bg-accent-soft text-accent'}`}>{rules.list.length}</span>}
           </button>
-          <IconButton label={undoStep ? `Undo ${undoStep.label} (⌘Z)` : 'Undo (⌘Z)'} disabled={!canUndoAny || (Boolean(working) && !canUndo(history))} onClick={undoAny}>
+          <IconButton label={undoStep ? `Undo ${undoStep.label} (⌘Z)` : 'Undo (⌘Z)'} disabled={!undoAvailable || (Boolean(working) && editDomain!=='clips' && !canUndo(history))} onClick={doUndo}>
             <path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" />
           </IconButton>
-          <IconButton label={redoStep ? `Redo ${redoStep.label} (⇧⌘Z)` : 'Redo (⇧⌘Z)'} disabled={!canRedoAny || (Boolean(working) && !canRedo(history))} onClick={redoAny}>
+          <IconButton label={redoStep ? `Redo ${redoStep.label} (⇧⌘Z)` : 'Redo (⇧⌘Z)'} disabled={!redoAvailable || (Boolean(working) && editDomain!=='clips' && !canRedo(history))} onClick={doRedo}>
             <path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />
           </IconButton>
           <span
@@ -666,6 +686,17 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
                   <Mixer stems={stems} tracks={tracks} onAction={dispatch} onRename={canRename ? renameLayer : undefined}
                     onDelete={canRename && stems.length > 1 ? deleteLayer : undefined} residualId={residual?.id ?? null} residualLabel={residual?.label ?? null} />
                   </div>
+                ) : laneView === 'sequence' && projectStems.projectId ? (
+                  <div className="relative flex min-h-0 flex-1 flex-col"><div className="absolute top-1.5 left-3 z-30">{viewToggle}</div><SequenceTimeline
+                key={projectStems.projectId}
+                engine={engine} stems={stems} tracks={tracks} clips={clipSequence.clips}
+                onExport={() => void projectPanel.current?.exportTimeline()}
+                onChange={clips => projectPanel.current?.setTimelineClips(clips)}
+                onUndo={doUndo} onRedo={doRedo}
+                canUndo={undoAvailable} canRedo={redoAvailable}
+                onAction={dispatch} onActions={dispatchBatch} onKindChange={setKind}
+                onClipEdit={(id,operation,position)=>void projectPanel.current?.editClip(id,operation,position)}
+              /></div>
                 ) : (
                   <>
                   <MotifStrip rules={rules.list} stems={stems} engine={engine} duration={duration} onOpen={openRule} />
@@ -684,6 +715,12 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
                     residualId={residual?.id ?? null}
                     residualLabel={residual?.label ?? null}
                     header={viewToggle}
+                    canTrim={Boolean(projectStems.projectId)} exportClips={clipSequence.clips}
+                    canUndoClip={clipSequence.canUndo} canRedoClip={clipSequence.canRedo}
+                    onUndoClip={() => projectPanel.current?.undoClipEdit()} onRedoClip={() => projectPanel.current?.redoClipEdit()}
+                    onCutRange={(start,end) => { if(!projectPanel.current) throw new Error('Project controls are not ready.'); return projectPanel.current.cutRange(start,end) }}
+                    onSplitRange={(start,end) => { if(!projectPanel.current) throw new Error('Project controls are not ready.'); return projectPanel.current.splitRange(start,end) }}
+                    onKeepRange={(start,end) => { if(!projectPanel.current) throw new Error('Project controls are not ready.'); return projectPanel.current.keepRange(start,end) }}
                   />
                   </>
                 )}
@@ -727,7 +764,7 @@ export default function Editor({ projectId: openProjectId = null }: { projectId?
               </button>
             )}
             <div id="steps-sheet" className={isPhone ? `flex min-h-0 flex-1 flex-col px-2 pb-2 ${sheetOpen ? '' : 'invisible'}` : 'contents'}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} onBusy={onBusy} projectId={openProjectId} onStep={onStep} onUndo={undoAny} onFlowStep={setStep} onError={onPanelError} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onClipSequence={receiveClipSequence} onBusy={onBusy} projectId={openProjectId} onStep={onStep} onUndo={undoAny} onFlowStep={setStep} onError={onPanelError} />
             {moonOpen && engine && hasLayers && (
               <div className="absolute inset-0 z-20 flex flex-col bg-canvas pb-3">
                 <MoonPullPanel rules={rules.list} setRules={setRules} selectedId={moonRule} onSelect={setMoonRule} stems={stems} getTracks={getTracks}

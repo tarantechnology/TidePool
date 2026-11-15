@@ -39,5 +39,6 @@ describe('parseOnScreenCommand', () => {
     expect(parseOnScreenCommand('mute the rain from 3 to 5')).toBeNull()
     expect(parseOnScreenCommand('when he speaks, lower the music')).toBeNull()
     expect(parseOnScreenCommand('make it cinematic')).toBeNull()
+    expect(parseOnScreenCommand('Every time person 5 appears, play a gong sound.')).toBeNull()
   })
 })

@@ -160,12 +160,14 @@ class RefineRequest(BaseModel):
 class Export(BaseModel):
     format: Literal['mp4','wav','mp3']='mp4'
     include_video: bool=True
-    # Clockwise quarter turns the editor shows the picture at; the MP4 is turned to match.
     rotation: Literal[0,90,180,270]=0
+    trim: Interval | None = None
+    clips: list[Interval] | None = Field(default=None, min_length=1, max_length=100)
     @model_validator(mode='after')
     def valid_format(self):
         if self.include_video != (self.format=='mp4'): raise ValueError('Use mp4 with video, or wav/mp3 without video')
         if self.rotation and not self.include_video: raise ValueError('Rotation needs an mp4 export')
+        if self.trim and self.clips: raise ValueError('Use trim or clips, not both')
         return self
 class Message(BaseModel):
     project_id: str
@@ -356,6 +358,18 @@ def project_agent(pid: str, body: AgentRequest, authorization: str | None=Header
     import re
     if re.search(r'\b(?:replace|replacing|swap|substitute)\b',body.prompt,re.I) or re.search(r'\b(?:make|turn|change)\b.+\b(?:sound\s+like|into)\b',body.prompt,re.I):
         return {'kind':'clarify','description':None,'remove':False,'actions':[],'message':'To replace a sound, refresh the editor and use the sound replacement workflow.'}
+    # A browser tab left open across an editor update may still send sound
+    # generation requests to this older planning route. Never let its generic
+    # planner incorrectly say that the configured generator cannot add sounds.
+    if re.search(r'\b(?:add|play|insert|place|generate|put|trigger|cue|overlay)\b',body.prompt,re.I) and re.search(r'\b(?:sound|sounds|effect|sfx|when|whenever|time|word)\b',body.prompt,re.I):
+        from .replacement import parse_replacement
+        try: addition=parse_replacement(body.prompt,body.duration)
+        except ValueError:
+            from .sound_intent import resolve
+            try: addition=resolve(body.prompt,body.duration)
+            except ValueError: addition=None
+        if addition and addition.get('mode') in ('add','replace'):
+            return {'kind':'clarify','description':None,'remove':False,'actions':[], 'message':'Refresh the editor to enable this sound-generation request, then submit it again.'}
     from .effect_group_commands import plan_group_command
     group_plan=plan_group_command(body.prompt,rows)
     if group_plan is not None:return group_plan
@@ -622,14 +636,22 @@ def automatic_replacement(pid: str, body: AutoReplacementRequest, authorization:
         selected=resolve_layer(layer_name,rows) if layer_name else next((r for r in rows if r['id']==body.source_stem_id),None)
         if body.source_stem_id and not selected:raise HTTPException(404,'Source layer not found in this project.')
         if body.source_stem_id and selected and selected['id']!=body.source_stem_id:raise HTTPException(422,'The named layer and selected layer do not match.')
-        plan=parse_replacement(request,probe(source)['duration'])
+        try: plan=parse_replacement(request,probe(source)['duration'])
+        except ValueError:
+            from .sound_intent import resolve
+            plan=resolve(request,probe(source)['duration'])
+        visual_snapshot={}
+        if plan.get('object_track_id') is not None:
+            from .object_selection import appearances
+            found=appearances(p,plan['object_track_id'],plan['object_label'])
+            visual_snapshot={'visual_analysis_id':found['analysis_id'],'visual_source_sha256':found['source_sha256']}
         if selected and plan.get('mode')=='add':raise HTTPException(422,'A source layer is only used when replacing a sound.')
         if selected and plan.get('time') is not None and not selected['start_offset']<=plan['time']<selected['start_offset']+selected['duration']:raise HTTPException(422,'The timestamp is outside the selected source layer.')
         known=matching_effects(rows,plan['source']) if plan.get('mode')!='add' else []
         if plan.get('mode')!='add' and not selected and not known and rows and not any(r.get('role')=='effect' for r in rows) and len([r for r in rows if r['name'].lower()=='residual' and r['start_offset']==0])!=1: raise HTTPException(409,'I need one unshifted residual layer to replace sounds. Choose a source layer or try a fresh project.')
-        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows}}
+        snapshot={'rows':rows,'source':str(source),'source_sha256':file_sha256(source),'project_audio':p['audio'],'stem_hashes':{r['id']:file_sha256(safe_path(pid,r['path'])) for r in rows},**visual_snapshot}
     except (ValueError,OSError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None}),'status':'queued'}
+    return {'candidate_id':start(pid,'candidate',{'_auto_replacement':True,'_candidate':snapshot,'request':request,'original_request':body.request,'source_stem_id':selected['id'] if selected else None,'_resolved_plan':plan}),'status':'queued'}
 
 class LayerEffectsRequest(BaseModel):
     stem_id: str | None = Field(default=None,max_length=100)
@@ -905,6 +927,11 @@ def delete_stem(pid: str,sid: str,fold: bool=True,expected_revision: int | None=
         if fold:
             residual=db.execute("SELECT * FROM stems WHERE project_id=? AND (lower(name)='residual' OR role='residual') ORDER BY lower(name)='residual' DESC",(pid,)).fetchone()
             if not residual: raise HTTPException(422,'There is no residual layer to fold this one into. Remove its sound instead.')
+            # Raw samples can only be added without changing the audible mix
+            # when both layers have neutral, identical playback settings.
+            # In particular, folding a muted target would bring its audio back.
+            if any(float(layer['volume'])!=1 or layer['muted'] or json.loads(layer['automation']) or json.loads(layer['mute_ranges']) for layer in (row,residual)) or db.execute('SELECT 1 FROM stems WHERE project_id=? AND solo=1 LIMIT 1',(pid,)).fetchone():
+                raise HTTPException(409,'Folding needs both layers at unity gain with no mutes or automation and no soloed layers. Reset those edits, or remove the layer without folding.')
             try:
                 (a,rate),(b,rate_b)=read_wav(residual['path']),read_wav(row['path'])
             except (OSError,ValueError) as exc: raise HTTPException(500,f'Could not read the layer audio: {exc}') from exc
@@ -962,8 +989,10 @@ def audio(pid: str,sid: str,authorization: str | None=Header(None)):
 @app.post('/api/projects/{pid}/export',status_code=202)
 def create_export(pid: str,body: Export,authorization: str | None=Header(None)):
     p=auth(pid,authorization)
-    if not p['original'] or not list_stems(pid,authorization): raise HTTPException(409,'Processed stems required')
+    if not p['original'] or not p['audio']: raise HTTPException(409,'Upload media first')
     if body.include_video and not json.loads(p['metadata'])['has_video']: raise HTTPException(422,'Original has no video')
+    if body.trim and body.trim.end > json.loads(p['metadata'])['duration'] + 1e-6: raise HTTPException(422,'Trim extends beyond the media duration')
+    if body.clips and any(c.end > json.loads(p['metadata'])['duration'] + 1e-6 for c in body.clips): raise HTTPException(422,'Clip extends beyond the media duration')
     return {'export_id':start(pid,'export',body.model_dump()),'status':'queued'}
 
 @app.get('/api/exports/{eid}')

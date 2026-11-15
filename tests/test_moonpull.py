@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -144,27 +145,23 @@ def test_moonpull_validation_and_auth(client, tmp_path):
     assert client.post(base + '/echo', headers=h, json={'source_stem_id': 'missing', 'times': [1]}).status_code == 404
 
 
-def test_transcript_route_uses_openai_and_caches(client, tmp_path, monkeypatch):
+def test_transcript_route_uses_local_runtime_without_persisting_full_text(client, tmp_path, monkeypatch):
+    import app.censorship as local
     pid, h, stems = project_with_layers(client, tmp_path)
     sid = next(iter(stems.values()))['id']
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     calls = []
-
-    class Response:
-        status_code = 200; is_error = False
-        def json(self): return {'text': 'Here I am.', 'segments': [{'start': 0.2, 'end': 1.1, 'text': 'Here I am.'}], 'words': [{'start': 0.2, 'end': 0.5, 'word': 'Here'}]}
-
-    def fake_post(url, **kwargs):
-        calls.append((url, kwargs['data']))
-        return Response()
-    monkeypatch.setattr(mp.httpx, 'post', fake_post)
+    def fake_transcribe(path,duration):
+        calls.append(path)
+        return ([{'start':0.2,'end':0.5,'word':'Here'},{'start':0.5,'end':0.7,'word':'I'},{'start':0.7,'end':1.1,'word':'am.'}], 'en')
+    monkeypatch.setattr(local,'transcribe',fake_transcribe)
     url = f'/api/projects/{pid}/stems/{sid}/moonpull/transcript'
     r = client.post(url, headers=h); assert r.status_code == 200, r.text
     assert r.json()['lines'] == [{'start': 0.2, 'end': 1.1, 'text': 'Here I am.'}]
-    assert calls[0][0].endswith('/audio/transcriptions') and calls[0][1]['response_format'] == 'verbose_json'
-    assert client.post(url, headers=h).status_code == 200 and len(calls) == 1
+    assert calls and not Path(str(calls[0])+'.transcript.json').exists()
+    assert client.post(url, headers=h).status_code == 200 and len(calls) == 2
 
-    monkeypatch.delenv('OPENAI_API_KEY')
+    def unavailable(*args): raise ValueError('Local transcription is not configured.')
+    monkeypatch.setattr(local,'transcribe',unavailable)
     other = [s for s in stems.values() if s['id'] != sid][0]['id']
     r = client.post(f'/api/projects/{pid}/stems/{other}/moonpull/transcript', headers=h)
     assert r.status_code == 503 and 'not configured' in r.json()['detail']

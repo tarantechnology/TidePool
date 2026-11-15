@@ -30,7 +30,14 @@ Open **http://localhost:5173**. The API documentation is at http://localhost:800
 1. Choose an MP4, MOV, WAV or MP3 to upload it. Copy the project ID and access token shown in the project panel; they are needed to restore the project later.
 2. Enter comma-separated sound descriptions and start processing. The backend sends the request to the configured AudioSep service. For explicit UI-only development, set `INFERENCE_ADAPTER=fake`; that mode copies audio and performs no separation.
 3. Play and edit the layers, then choose MP4, WAV or MP3 and export. For video object selection, run visual analysis, pause the video, and click a detected object. A sound prompt is still required.
-4. The local message panel can test commands such as `Mute the dog` or `Mute the dog from 1 to 2 seconds`. It is a local webhook and outbox, not a messaging delivery service.
+
+The project timeline displays clips in edited playback order. Drag a range across a waveform and press Delete/Backspace to remove that time from video and audio together; the gap closes immediately. Click a clip to select it, or use R for range selection and A for clip selection. All audio layers follow the same video cuts. The original upload is retained.
+
+With focus in the timeline, Space plays/pauses the edited sequence; Cmd/Ctrl-B splits at the playhead; Cmd/Ctrl-C/X/V copies/cuts/pastes the selected range; Cmd/Ctrl-Z undoes and Shift-Cmd/Ctrl-Z redoes. I/O marks range boundaries at the playhead, arrow keys step the playhead (Shift for one second), Alt-arrow moves the selected clip, and Cmd/Ctrl-E exports. The context menu also exposes copy, cut, paste, delete, split and trim. **Trim to selection** keeps only the highlighted range. The main transport displays edited time while the video follows the corresponding source frames. Clip edits use the same sequence for playback and export.
+
+Current understands “trim from 3 seconds to 4 seconds” in edited timeline time, followed by “export the video”, or “trim 3 to 4 seconds and export as MP4”. A microphone button appears in browsers that support speech recognition and requires microphone permission. Clip arrangements and export trim settings are saved locally in this browser for the project and restored when it is resumed; undo history and the internal clip clipboard last only until refresh. Browser data clearing removes that local arrangement. They are not synchronized to another device.
+
+The advanced **Trim and export** panel still offers MP4/WAV/MP3 and a clip list. Once clips exist, that sequence takes precedence over the legacy source trim fields. Audio-layer faders, mute/solo, and natural-language layer editing remain available; independent movement of audio to a separate layer is not yet supported.
 
 ### Without Docker
 
@@ -88,7 +95,7 @@ FastAPI serves `/docs` and `/openapi.json`. Project media and edits require `Aut
 
 With Python 3.11+, FFmpeg and ffprobe installed, run backend tests using `pip install -r requirements.txt pytest` and `pytest -q`. Run editor checks with `cd frontend && npm ci && npm run verify`. Vision's optional tests are documented in [vision/README.md](vision/README.md). An optional Playwright browser smoke test is in `tests/test_editor_browser.py`; point `SOUNDCANVAS_BROWSER_URL` at a running editor configured with fake inference and install Playwright plus Chromium to run it.
 
-The embedded SQLite worker is intended for one backend process and one replica. Jobs can be retried by submitting a new request after failure; interrupted work is recovered on startup. Video export copies the video stream where the MP4 container supports it and encodes audio as AAC. Incompatible video codecs may cause export failure. Automation and remote mute ranges use timeline seconds.
+The embedded SQLite worker is intended for one backend process and one replica. Jobs can be retried by submitting a new request after failure; interrupted work is recovered on startup. Untrimmed video export copies the video stream where the MP4 container supports it; trimmed and assembled video is re-encoded to H.264 for accurate boundaries. Audio is encoded as AAC. Incompatible video codecs may cause untrimmed export failure. Automation and remote mute ranges use timeline seconds.
 
 This is a development MVP. Keep project tokens and uploaded media private; use a trusted SSH tunnel or a properly secured HTTPS deployment with authentication, access controls and rate limits. Photon integration is a placeholder pending an identified provider and verified API; local notifications do not send messages to a phone.
 
@@ -149,6 +156,11 @@ within a processed range, and compare peak and attack alignment. On apply, each 
 effect becomes a separate layer. Muting an effect layer later does not restore the
 original sound reduction; use Undo to restore the previous mix. See
 [repeated-event integration and model setup](INTEGRATION.md#experimental-repeated-event-discovery-and-editing).
+
+After **Find objects**, try **“Every time person 5 appears, play a gong sound”**, using the
+number shown in the object list. The preview places a sound at each detected
+appearance. Object tracking may miss or switch identities, and the current scan
+covers only the first 30 seconds, so check the placements before applying.
 
 Follow up with **“Replace all quacks with loud gongs”** to replace matching effect
 layers at their current positions, without another audio separation. The preview

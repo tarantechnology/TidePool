@@ -19,6 +19,19 @@ def wait(c,cid,h):
         time.sleep(.05)
     pytest.fail('timed out')
 
+def test_progress_ticker_preserves_explicit_stage(client,monkeypatch):
+    from app.core import connect
+    from app import worker
+    pid=client.post('/api/projects').json()['project_id']
+    jid=worker.enqueue(pid,'candidate',{})
+    with connect() as db: db.execute("UPDATE jobs SET status='processing' WHERE id=?",(jid,))
+    monkeypatch.setattr(worker,'TICK_SECONDS',.02)
+    with worker.ticking(jid,'separating',1):
+        worker.set_stage(jid,'generating',35)
+        time.sleep(.08)
+        with connect() as db: row=db.execute('SELECT stage,progress FROM jobs WHERE id=?',(jid,)).fetchone()
+        assert row['stage']=='generating' and row['progress']>=35
+
 def test_upload_preview_replace_undo_and_validation(client,tmp_path):
     p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
     audio=tmp_path/'audio.wav';fx=tmp_path/'fx.wav'
@@ -97,6 +110,11 @@ def test_parse_replacement_and_vague_requests():
     assert 'quack sounds' not in __import__('app.replacement',fromlist=['effect_request']).effect_request('quack sounds')['prompt']
     assert parse_replacement('can you make every punch sound like a quack?',10)=={'source':'punch','effect':'quack','time':None}
     assert parse_replacement('add a quack at 4 seconds',10)=={'source':'','effect':'quack','time':4,'mode':'add'}
+    assert parse_replacement('Add a gong sound after the word "quant" has been said.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','spoken_word':'quant'}
+    assert parse_replacement('add a gong whenever the word quant is said',10)=={'source':'','effect':'gong','time':None,'mode':'add','spoken_word':'quant'}
+    assert parse_replacement('Add a gong every time we see person 5',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
+    assert parse_replacement('Every time person 5 appears, play a gong sound.',10)=={'source':'','effect':'gong sound','time':None,'mode':'add','object_label':'person','object_track_id':5}
+    assert parse_replacement('play a gong whenever person #5 shows up',10)=={'source':'','effect':'gong','time':None,'mode':'add','object_label':'person','object_track_id':5}
     assert parse_replacement('replace the punch at 4 seconds with a quack',10)=={'source':'punch','effect':'quack','time':4}
     assert parse_replacement('Replace all knife chopping sounds with a quack; use the sound at 4 seconds as an example',10)=={'source':'knife chopping sounds','effect':'quack','time':4,'all_occurrences':True}
     assert parse_replacement('replace every punch with a gong, using that sound around 3.5s as an example.',10)=={'source':'punch','effect':'gong','time':3.5,'all_occurrences':True}
@@ -104,6 +122,122 @@ def test_parse_replacement_and_vague_requests():
     with pytest.raises(ValueError):parse_replacement('replace punch with something',10)
     with pytest.raises(ValueError):parse_replacement('replace the punch at 15s with a quack',10)
     with pytest.raises(ValueError):parse_replacement('replace punch with quack at 4s and add music',10)
+
+
+def test_add_generated_sound_after_spoken_word(client,tmp_path,monkeypatch):
+    import app.censorship as transcription
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    monkeypatch.setattr(transcription,'transcribe',lambda *a: ([{'word':'quant,','start':.5,'end':.7},{'word':'quant','start':2.,'end':2.2},{'word':'quantity','start':3.,'end':3.4}],'en'))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    url=f'/api/projects/{pid}/automatic-replacement'
+    assert client.post(url,json={'request':'Add a gong sound after the word "quant" has been said.'}).status_code==401
+    response=client.post(url,headers=h,json={'request':'Add a gong sound after the word "quant" has been said.'});assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['alignment']=='onset'
+    assert job['provenance']['peak_times']==pytest.approx([.7,2.2])
+    assert job['provenance']['detection']['method']=='local-word-transcription'
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    stems=client.get(f'/api/projects/{pid}/stems',headers=h).json()
+    effects=[s for s in stems if s['role']=='effect'];assert len(effects)==2 and effects[0]['effect_group_id']==effects[1]['effect_group_id']
+    assert client.post(f'/api/candidates/{cid}/undo',headers=h).status_code==200
+    assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
+    missing=client.post(url,headers=h,json={'request':'Add a gong after the word "missing" is said.'})
+    assert missing.status_code==202,missing.text
+    failed=wait(client,missing.json()['candidate_id'],h)
+    assert failed['status']=='failed' and "couldn't find" in failed['error']
+    assert client.get(f'/api/projects/{pid}/stems',headers=h).json()==[]
+
+
+def test_add_effect_at_tracked_object_appearances_and_reject_stale_analysis(client,tmp_path,monkeypatch):
+    import json
+    from app.core import connect
+    from app.visual import file_sha256
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f:assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Add a gong every time we see person 5','stems':[],'tracks':[],'duration':5})
+    assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
+    old_client=client.post(f'/api/projects/{pid}/agent',headers=h,json={'prompt':'Every time person 5 appears, play a gong sound.','stems':[],'tracks':[],'duration':5})
+    assert old_client.status_code==200 and old_client.json()['kind']=='clarify' and 'Refresh' in old_client.json()['message']
+    url=f'/api/projects/{pid}/automatic-replacement';body={'request':'Every time person 5 appears, play a gong sound.'}
+    assert client.post(url,json=body).status_code==401
+    assert client.post(url,headers=h,json=body).status_code==422
+    with connect() as db:
+        original=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original']
+        frames=[{'timestamp_seconds':t,'objects':[{'track_id':5,'label':'person','mask':{'encoding':'rle'}}]} for t in (.2,.3,.4,2.2,2.3,2.4,3.5)]
+        visual={'selection_only':True,'video_id':pid,'analysis_id':'analysis-a','original_source_sha256':file_sha256(original),'fps':10,'processed_duration_seconds':4,'discovery_mode':'automatic','frames':frames}
+        db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    wrong=client.post(url,headers=h,json={'request':'Add a gong whenever we see dog 5'})
+    assert wrong.status_code==422 and 'labeled person' in wrong.text
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];job=wait(client,cid,h);assert job['status']=='completed',job
+    assert job['provenance']['peak_times']==pytest.approx([.2,2.2])
+    assert job['provenance']['alignment']=='onset' and job['provenance']['detection']['track_id']==5
+    assert any('first 4.0 seconds' in w and 'Tracking' in w for w in job['inference']['warnings'])
+    with connect() as db:
+        visual['analysis_id']='analysis-b';db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==409
+    response=client.post(url,headers=h,json=body);assert response.status_code==202,response.text
+    cid=response.json()['candidate_id'];assert wait(client,cid,h)['status']=='completed'
+    assert client.post(f'/api/candidates/{cid}/apply',headers=h).status_code==200
+    effects=[s for s in client.get(f'/api/projects/{pid}/stems',headers=h).json() if s['role']=='effect']
+    assert len(effects)==2 and effects[0]['effect_group_id']==effects[1]['effect_group_id']
+    assert client.post(f'/api/candidates/{cid}/undo',headers=h).status_code==200
+
+
+def test_langchain_sound_intent_is_grounded_and_supports_pan_proxy(client,tmp_path,monkeypatch):
+    import json
+    import app.sound_intent as si
+    from app.core import connect
+    from app.visual import file_sha256
+    utterance='Every time you see person 5, whenever it pans to person 5, we should play the gong sound.'
+    parsed=si.SoundIntent(action='add',trigger='object',effect='gong',object_label='person',object_track_id=5)
+    monkeypatch.setattr(si,'interpret',lambda _:parsed)
+    assert si.resolve(utterance,5)['pan_approximation'] is True
+    with pytest.raises(ValueError): si.validate(parsed.model_copy(update={'object_track_id':6}),utterance,5)
+    with pytest.raises(ValueError): si.validate(parsed,'Play a gong when person 5 and person 6 appear',5)
+    with pytest.raises(ValueError): si.validate(si.SoundIntent(action='add',trigger='time',effect='gong',time=3),'Add a gong at 2 seconds',5)
+    with pytest.raises(ValueError): si.validate(si.SoundIntent(action='add',trigger='word',effect='gong',word='cat'),'Add a gong after dog is said',5)
+    def unavailable(_):raise si.SoundIntentUnavailable('offline')
+    monkeypatch.setattr(si,'interpret',unavailable)
+    assert si.resolve(utterance,5)['object_track_id']==5
+    with pytest.raises(ValueError):si.resolve('Play a gong whenever you see person 5 or person 6',5)
+    monkeypatch.setattr(si,'interpret',lambda _:parsed)
+    fake=tmp_path/'stable-audio';fake.write_text('#!/bin/sh\nfor last do :; done\nffmpeg -v error -y -f lavfi -i sine=frequency=700:duration=0.5 -c:a pcm_f32le "$last"\n');fake.chmod(0o755)
+    monkeypatch.setenv('SOUNDCANVAS_SFX_CLI',str(fake))
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    audio=tmp_path/'audio.wav';subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=5','-ac','2','-ar','48000',str(audio)],check=True)
+    with audio.open('rb') as f: assert client.post(f'/api/projects/{pid}/upload',headers=h,files={'file':('a.wav',f)}).status_code==200
+    with connect() as db:
+        original=db.execute('SELECT original FROM projects WHERE id=?',(pid,)).fetchone()['original']
+        visual={'selection_only':True,'video_id':pid,'analysis_id':'analysis-a','original_source_sha256':file_sha256(original),'fps':10,'processed_duration_seconds':4,'discovery_mode':'automatic','frames':[{'timestamp_seconds':t,'objects':[{'track_id':5,'label':'person','mask':{'encoding':'rle'}}]} for t in (.2,.3,.4)]}
+        db.execute('UPDATE projects SET visual=? WHERE id=?',(json.dumps(visual),pid))
+    r=client.post(f'/api/projects/{pid}/automatic-replacement',headers=h,json={'request':utterance});assert r.status_code==202,r.text
+    job=wait(client,r.json()['candidate_id'],h);assert job['status']=='completed',job
+    assert job['provenance']['detection']['track_id']==5 and job['provenance']['peak_times']==pytest.approx([.2])
+    assert any('Camera pans are not detected' in w for w in job['inference']['warnings'])
+
+
+def test_general_planner_can_route_unusual_sound_requests(client,monkeypatch):
+    import json
+    import app.agent as agent
+    monkeypatch.setenv('OPENAI_API_KEY','not-a-real-key')
+    output={'kind':'sound_effect','description':None,'remove':False,'actions':[],'message':'Prepare a sound preview.'}
+    class Response:
+        is_error=False
+        def json(self):return {'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(output)}]}]}
+    monkeypatch.setattr(agent.httpx,'post',lambda *args,**kwargs:Response())
+    p=client.post('/api/projects').json();pid=p['project_id'];h={'Authorization':'Bearer '+p['access_token']}
+    body={'prompt':'I want a gong whenever person 5 comes into frame','stems':[],'tracks':[],'duration':10}
+    r=client.post(f'/api/projects/{pid}/agent',headers=h,json=body)
+    assert r.status_code==200 and r.json()['kind']=='sound_effect'
+    output['actions']=[{'type':'set_mute','stemId':'invented','muted':True}]
+    assert client.post(f'/api/projects/{pid}/agent',headers=h,json=body).status_code==502
 
 
 def test_automatic_replacement_finds_generates_and_previews(client,tmp_path,monkeypatch):

@@ -20,6 +20,7 @@ import { Splitter } from './components/Splitter'
 import { DropLoader } from './components/DropLoader'
 import { PromptBar } from './components/PromptBar'
 import { Timeline } from './components/Timeline'
+import { SequenceTimeline } from './components/SequenceTimeline'
 import { Transport } from './components/Transport'
 import { VideoPanel } from './components/VideoPanel'
 import { applyAction, initialTracks } from './edits'
@@ -32,6 +33,7 @@ import { createEditorState, mergeKinds, setKindOverride } from './state/kinds'
 import type { EditorState } from './state/kinds'
 import type { EditAction, Stem, StemKind, TrackState } from './types'
 import type { SourceClip } from './state/clipSequence'
+import { lengthOf } from './state/timeline'
 
 type Status = 'loading' | 'ready' | 'error'
 
@@ -72,6 +74,9 @@ export default function Editor() {
   const [hasLocalVideo,setHasLocalVideo]=useState(false)
   const [working, setWorking] = useState<string | null>(null)
   const [clipSequence, setClipSequence] = useState<{clips:SourceClip[];canUndo:boolean;canRedo:boolean}>({clips:[],canUndo:false,canRedo:false})
+  const [editDomain,setEditDomain]=useState<'clips'|'layers'>('layers')
+  const receiveClipSequence=useCallback((next:{clips:SourceClip[];canUndo:boolean;canRedo:boolean})=>{setClipSequence(next);if(next.canUndo||next.canRedo)setEditDomain('clips')},[])
+  useEffect(() => { engine?.setSequence(projectStems.projectId ? clipSequence.clips : []) }, [engine,projectStems.projectId,clipSequence.clips,baseStems])
   const videoUploadInProgress = useRef(false)
   const [videoAspect, setVideoAspect] = useState<number | null>(null)
   const portrait = videoSrc !== null && videoAspect !== null && videoAspect < 0.9
@@ -256,11 +261,13 @@ export default function Editor() {
   }
 
   const dispatch = useCallback((action: EditAction, coalesceKey?: string) => {
+    setEditDomain('layers')
     const now = Date.now()
     setHistory((h) => commit(h, { ...h.present, tracks: applyAction(h.present.tracks, action) }, { coalesceKey, now }))
   }, [])
 
   const setKind = useCallback((stemId: string, kind: StemKind) => {
+    setEditDomain('layers')
     setHistory((h) => commit(h, { ...h.present, kinds: setKindOverride(h.present.kinds, stemId, kind) }))
   }, [])
 
@@ -309,6 +316,7 @@ export default function Editor() {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
       if (isTextEntry(e.target as HTMLElement)) return
       e.preventDefault()
+      if(editDomain==='clips'){if(e.shiftKey)projectPanel.current?.redoClipEdit();else projectPanel.current?.undoClipEdit();return}
       setHistory((h) => {
         if (e.shiftKey) return canRedo(h) ? redo(h) : h
         return canUndo(h) ? undo(h) : h
@@ -316,9 +324,13 @@ export default function Editor() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [editDomain])
 
   const duration = engine?.duration ?? 0
+  const undoAvailable=editDomain==='clips'?clipSequence.canUndo:canUndo(history)
+  const redoAvailable=editDomain==='clips'?clipSequence.canRedo:canRedo(history)
+  const doUndo=()=>{if(editDomain==='clips')projectPanel.current?.undoClipEdit();else setHistory(h=>undo(h))}
+  const doRedo=()=>{if(editDomain==='clips')projectPanel.current?.redoClipEdit();else setHistory(h=>redo(h))}
   const hasLayers = stems.length > 0
   const statusText = status === 'loading' ? 'Loading layers' : status === 'error' ? 'Load failed' : chipErrors[0] || (showsMockBadge(projectStems, stemsLabel) || stemsLabel === MOCK_LABEL ? 'Demo layers' : stemsLabel)
 
@@ -347,7 +359,7 @@ export default function Editor() {
           <Logo />
         </a>
         <div className="flex min-w-0 flex-1 items-center justify-center gap-3">
-          <Transport engine={engine} playing={playing} duration={duration} />
+          <Transport engine={engine} playing={playing} duration={projectStems.projectId && clipSequence.clips.length ? lengthOf(clipSequence.clips) : duration} />
           {originalSrc && stemsLabel === 'Project stems' && (
             <div className="flex rounded-full border border-line bg-surface p-0.5 text-[11px]" role="group" aria-label="Listen to">
               {([false, true] as const).map((orig) => (
@@ -366,10 +378,10 @@ export default function Editor() {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <input ref={picker} type="file" accept="audio/*" multiple hidden onChange={onPick} />
-          <IconButton label="Undo (⌘Z)" disabled={!canUndo(history)} onClick={() => setHistory((h) => undo(h))}>
+          <IconButton label="Undo (⌘Z)" disabled={!undoAvailable} onClick={doUndo}>
             <path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" />
           </IconButton>
-          <IconButton label="Redo (⇧⌘Z)" disabled={!canRedo(history)} onClick={() => setHistory((h) => redo(h))}>
+          <IconButton label="Redo (⇧⌘Z)" disabled={!redoAvailable} onClick={doRedo}>
             <path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />
           </IconButton>
           <span
@@ -426,7 +438,15 @@ export default function Editor() {
               )}
           <div className="shadow-card relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             {engine && status === 'ready' && hasLayers ? (
-              <Timeline
+              projectStems.projectId ? <SequenceTimeline
+                key={projectStems.projectId}
+                engine={engine} stems={stems} tracks={tracks} clips={clipSequence.clips}
+                onExport={() => void projectPanel.current?.exportTimeline()}
+                onChange={clips => projectPanel.current?.setTimelineClips(clips)}
+                onUndo={doUndo} onRedo={doRedo}
+                canUndo={undoAvailable} canRedo={redoAvailable}
+                onAction={dispatch} onKindChange={setKind}
+              /> : <Timeline
                 key={`${projectStems.projectId ?? 'local'}:${stems.map(s => s.id).join('|')}:${duration}`}
                 engine={engine}
                 stems={stems}
@@ -479,7 +499,7 @@ export default function Editor() {
             onDrag={(x) => setPanel(window.innerWidth - x - 12)} onStep={(d) => setPanel(layout.panel - d)} onReset={() => setLayout((l) => ({ ...l, panel: DEFAULT_LAYOUT.panel }))} />
           {/* Right: the four steps, the full height of the window so nothing in them is cut off. */}
           <div className="flex min-h-0 shrink-0 flex-col pb-3" style={{ width: layout.panel }}>
-            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onClipSequence={setClipSequence} onBusy={setWorking} />
+            <ProjectPanel ref={projectPanel} baseUrl={API_BASE_URL} readyToRestore={Boolean(engine)} onLoadStems={loadStems} onVideo={url => { originalVideo.current=null; setHasLocalVideo(false); setVideoSrc(url) }} onProjectState={setProjectStems} onOriginalAudio={url=>{setCompareOriginal(false);setOriginalSrc(url)}} flush={flush} onVisual={setVisual} visual={visual} selectedVisual={visualSelection} onClearSelection={() => setVisualSelection(null)} onSelectVisual={setVisualSelection} onSeek={seekVideo} getPlayhead={() => engine?.getTime() ?? 0} onClipSequence={receiveClipSequence} onBusy={setWorking} />
           </div>
         </main>
       )}

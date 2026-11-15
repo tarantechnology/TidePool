@@ -19,6 +19,7 @@ import { addMuteRange, describeRouting, getRoute, splitTracks, toRouting, getCap
 import { jobProgressMessage, pollJob, toJobStatus } from '../api/jobs'
 import { canUndo, canRedo, commit, createHistory, undo, redo } from '../state/history'
 import { mediaCommand } from '../mediaCommand'
+import { lengthOf, sliceTimeline } from '../state/timeline'
 import { cutSelection, splitSelection } from '../state/clipSequence'
 import type { SourceClip } from '../state/clipSequence'
 
@@ -75,6 +76,8 @@ export interface ProjectPanelHandle {
   cutRange: (start:number, end:number) => string
   undoClipEdit: () => void
   redoClipEdit: () => void
+  setTimelineClips: (clips:SourceClip[]) => void
+  exportTimeline: () => Promise<void>
 }
 
 /** The project token stays in this browser tab and is sent only as a bearer header. */
@@ -99,8 +102,28 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
   const [clipClipboard,setClipClipboard] = useState<{start:number;end:number}|null>(null)
   const [selectedClip,setSelectedClip] = useState<number|null>(null)
   const clips = clipHistory.present
-  useEffect(() => { onClipSequence({clips,canUndo:canUndo(clipHistory),canRedo:canRedo(clipHistory)}) }, [clipHistory,clips,onClipSequence])
+  useEffect(() => {
+    const end=trimEnd.trim()?Number(trimEnd):project?.metadata?.duration, start=Number(trimStart)
+    const visible=clips.length ? clips : end !== undefined && Number.isFinite(start) && Number.isFinite(end) && end>start && (start>0 || trimEnd.trim()) ? [{start,end}] : project?.metadata?.duration ? [{start:0,end:project.metadata.duration}] : []
+    onClipSequence({clips:visible,canUndo:canUndo(clipHistory),canRedo:canRedo(clipHistory)})
+  }, [clipHistory,clips,onClipSequence,trimStart,trimEnd,project?.metadata?.duration])
   const changeClips = (next: {start:number;end:number}[]) => setClipHistory(h => commit(h,next))
+  useEffect(() => {
+    if (!project?.metadata) return
+    try { localStorage.setItem(`tidepool-timeline:${baseUrl}:${project.project_id}`,JSON.stringify({clips,trimStart,trimEnd})) } catch { /* Editing still works without browser storage. */ }
+  }, [clips,trimStart,trimEnd,baseUrl,project?.project_id,project?.metadata])
+  const restoreTimeline = (info:ProjectInfo) => {
+    let saved:SourceClip[]=[]; let start='0',end=''
+    try {
+      const value=JSON.parse(localStorage.getItem(`tidepool-timeline:${baseUrl}:${info.project_id}`)||'null')
+      const duration=info.metadata?.duration||0
+      if(value && Array.isArray(value.clips) && value.clips.length<=100 && value.clips.every((c:SourceClip)=>Number.isFinite(c.start)&&Number.isFinite(c.end)&&c.start>=0&&c.end>c.start&&c.end<=duration+1e-6)) {
+        saved=value.clips
+        if(typeof value.trimStart==='string' && typeof value.trimEnd==='string' && Number.isFinite(Number(value.trimStart)) && Number(value.trimStart)>=0 && (!value.trimEnd || Number(value.trimEnd)>Number(value.trimStart)&&Number(value.trimEnd)<=duration)) {start=value.trimStart;end=value.trimEnd}
+      }
+    } catch { /* Ignore invalid or unavailable saved data. */ }
+    setClipHistory(createHistory(saved));setTrimStart(start);setTrimEnd(end)
+  }
   const effectiveClips = (duration:number):SourceClip[] => {
     if (clips.length) return clips
     const start=Number(trimStart), end=trimEnd.trim() ? Number(trimEnd) : duration
@@ -256,7 +279,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
     await flush()
     const cfg = {baseUrl, token:credential.trim()}
     const info = await getProject(cfg, id.trim())
-    setTrimStart('0'); setTrimEnd(''); setClipHistory(createHistory([])); setClipClipboard(null); setSelectedClip(null)
+    restoreTimeline(info); setClipClipboard(null); setSelectedClip(null)
     attachedVideo.current = null; setFile(null)
     setUndoId(info.latest_undoable_candidate_id || ''); setCandidateId(''); setCandidateUrl(''); setMixUrl(''); setCurrentUrl(''); setRetryStems([]); setAnchors([]); setRouting(null); setSuggestion(null)
 
@@ -434,7 +457,17 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       setMessage('Rendering your export…'); await new Promise(resolve => setTimeout(resolve,1000))
     }
   }
-  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, undoClipEdit: () => {setClipHistory(h => undo(h)); setSelectedClip(null)}, redoClipEdit: () => {setClipHistory(h => redo(h)); setSelectedClip(null)}, cutRange: (start,end) => {
+  useImperativeHandle(ref, () => ({ uploadMedia, splitSong, exportTimeline: () => run(async () => {
+    if (!project?.metadata) throw new Error('Upload media first.')
+    await flush()
+    const sequence=effectiveClips(project.metadata.duration)
+    const id=await startExport(config,project.project_id,format,undefined,sequence.length?sequence:undefined)
+    await finishExport(id,format)
+  }), setTimelineClips: next => {
+    const duration=project?.metadata?.duration
+    if (!duration || !next.length || next.length>100 || next.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end<=c.start||c.end>duration+1e-6)) throw new Error('Invalid timeline clips.')
+    changeClips(next);setSelectedClip(null)
+  }, undoClipEdit: () => {setClipHistory(h => undo(h)); setSelectedClip(null)}, redoClipEdit: () => {setClipHistory(h => redo(h)); setSelectedClip(null)}, cutRange: (start,end) => {
     if (!project?.metadata) throw new Error('Upload media before cutting.')
     const duration=project.metadata.duration
     const next=cutSelection(effectiveClips(duration),duration,Number(start.toFixed(3)),Math.min(Number(end.toFixed(3)),duration))
@@ -476,7 +509,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
       const created=await createProject(baseUrl)
       if (!created.access_token) throw new Error('Project token was not returned.')
       const cfg={baseUrl,token:created.access_token}
-      setProject(created); setToken(cfg.token); rememberProject(created.project_id, cfg.token);
+      setProject(created); setClipHistory(createHistory([]));setTrimStart('0');setTrimEnd(''); setToken(cfg.token); rememberProject(created.project_id, cfg.token);
       setJobId(''); setSettingsStems([]); setMessages([]); onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
       await uploadProject(cfg,created.project_id,video)
       attachedVideo.current=video
@@ -496,7 +529,7 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         if (!created.access_token) throw new Error('Project token was not returned.')
         currentToken=created.access_token
         const cfg={baseUrl,token:currentToken}
-        setProject(created); setToken(currentToken); rememberProject(created.project_id, currentToken);
+        setProject(created); setClipHistory(createHistory([]));setTrimStart('0');setTrimEnd(''); setToken(currentToken); rememberProject(created.project_id, currentToken);
         setJobId(''); currentJob=''; setSettingsStems([]); setMessages([])
         onVisual(null); onClearSelection(); setSelection(null); setSelectionName(''); setVisualName('')
         setMessage('Uploading video…')
@@ -511,14 +544,16 @@ export const ProjectPanel = forwardRef<ProjectPanelHandle, Props>(function Proje
         const selectedFormat=(media.kind === 'trim' ? media.exportFormat : media.format) ?? format
         if (selectedFormat === 'mp4' && !current.metadata?.has_video) throw new Error('This project has no video. Export as WAV or MP3 instead.')
         if (media.kind === 'trim') {
-          if (!current.metadata || media.end > current.metadata.duration + 1e-6) throw new Error(`That range extends beyond the ${current.metadata?.duration.toFixed(2) ?? 'unknown'}-second media duration.`)
-          setTrimStart(String(media.start)); setTrimEnd(String(media.end)); setOpenStep('export')
-          if (clips.length) { changeClips([]); setSelectedClip(null) }
+          if (!current.metadata) throw new Error('Upload media first.')
+          const base=effectiveClips(current.metadata.duration), sequence=base.length?base:[{start:0,end:current.metadata.duration}]
+          if (media.end > lengthOf(sequence)+1e-6) throw new Error('That range extends beyond the edited timeline.')
+          const trimmed=sliceTimeline(sequence,media.start,media.end)
+          changeClips(trimmed);setSelectedClip(null)
           if (media.exportFormat) setFormat(media.exportFormat)
-          const description=`Keeping ${media.start}–${media.end} seconds for export.${clips.length ? ' The clip list was cleared; use Undo clip edit to restore it.' : ''}`
+          const description=`Keeping timeline ${media.start}–${media.end} seconds. Undo restores the previous edit.`
           if (!media.download) { setMessage(description); return {kind:'media',message:description} }
           setMessage('Rendering your export…')
-          const id=await startExport(cfg,current.project_id,selectedFormat,{start:media.start,end:media.end})
+          const id=await startExport(cfg,current.project_id,selectedFormat,undefined,trimmed)
           await finishExport(id,selectedFormat)
           return {kind:'media',message:`Exported ${media.start}–${media.end} seconds as ${selectedFormat.toUpperCase()}.`}
         }

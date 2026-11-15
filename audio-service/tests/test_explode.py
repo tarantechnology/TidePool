@@ -82,3 +82,80 @@ def test_explode_endpoint_mock(client, tmp_path, monkeypatch):
     assert any(w.startswith('Explode recipe:') for w in body['warnings'])
     caps = client.get('/capabilities').json()
     assert caps['prompting_modes']['explode'] is True and caps['explode']['crossover_hz'] == 200.0
+
+
+class _PitchEncoder:
+    """Stand-in voice model: the embedding is which of two pitches dominates the window."""
+    same = 0.7
+
+    def embed(self, windows):
+        out = []
+        for w in windows:
+            spec = np.abs(np.fft.rfft(w))
+            low, high = spec[150:250].sum(), spec[550:650].sum()  # 100-ish Hz bins vs 400-ish Hz (1.5 s windows)
+            v = np.array([low, high, 0.05 * (low + high)])
+            out.append(v / np.linalg.norm(v))
+        return np.array(out, dtype=np.float32)
+
+
+def _turns(sr, plan):
+    t = np.arange(int(sr * sum(d for d, _ in plan))) / sr
+    x = np.zeros_like(t)
+    at = 0
+    for dur, hz in plan:
+        n = int(dur * sr)
+        x[at:at + n] = 0.3 * np.sin(2 * np.pi * hz * t[at:at + n])
+        at += n
+    return x[None].astype(np.float32)
+
+
+def test_speakers_split_by_turns_and_sum_exactly():
+    from sam_audio_service.speakers import split_speakers
+    sr = 16000
+    x = _turns(sr, [(4, 110), (0.5, 0), (4, 400), (0.5, 0), (4, 110), (4, 400)])
+    out = split_speakers(x, sr, _PitchEncoder())
+    assert len(out.layers) == 2
+    assert np.max(np.abs(sum(out.layers) - x)) < 1e-5
+    p1, p2 = out.layers
+    energy = lambda a, s, e: float(np.mean(a[0, int(s * sr):int(e * sr)] ** 2))  # noqa: E731
+    # Person 1 speaks first (low voice); the middles of each turn belong wholly to one person.
+    assert energy(p1, 1, 3) > 100 * energy(p2, 1, 3)
+    assert energy(p2, 5.5, 7.5) > 100 * energy(p1, 5.5, 7.5)
+    assert energy(p1, 10, 12) > 100 * energy(p2, 10, 12)
+    assert energy(p2, 14, 16) > 100 * energy(p1, 14, 16)
+    assert [s for *_, s in out.turns][:4] == [0, 1, 0, 1]
+
+
+def test_one_speaker_stays_whole():
+    from sam_audio_service.speakers import split_speakers
+    sr = 16000
+    x = _turns(sr, [(4, 110), (0.5, 0), (6, 110)])
+    out = split_speakers(x, sr, _PitchEncoder())
+    assert len(out.layers) == 1 and out.layers[0] is not None and np.allclose(out.layers[0], x)
+
+
+def test_explode_names_people_and_keeps_the_sum():
+    rng = np.random.default_rng(1)
+    mix = rng.standard_normal((2, 4800)).astype(np.float32) * 0.1
+
+    def two_people(d):
+        return [d * 0.7, d * 0.3]
+
+    out = explode(mix, 48000, ['people talking', 'heavy rain'], _fake_separate([]), lambda a: (a * 0.5).astype(np.float32),
+                  speakers=two_people)
+    assert [l.name for l in out.layers] == ['person 1', 'person 2', 'heavy rain']
+    assert [l.prompt for l in out.layers[:2]] == ['people talking', 'people talking']
+    assert np.max(np.abs(out.layers[0].samples + out.layers[1].samples - mix * 0.5)) < 1e-5
+    assert np.max(np.abs(sum(l.samples for l in out.layers) + out.residual - mix)) < 1e-5
+
+
+def test_explode_keeps_dialogue_when_speakers_fail_or_one_person():
+    mix = np.ones((1, 100), dtype=np.float32)
+
+    def boom(d):
+        raise RuntimeError('no model')
+
+    out = explode(mix, 48000, ['people talking'], _fake_separate([]), lambda a: a * 0.5, speakers=boom)
+    assert [l.name for l in out.layers] == ['dialogue'] and any('one layer' in w for w in out.warnings)
+    out = explode(mix, 48000, ['people talking'], _fake_separate([]), lambda a: a * 0.5, speakers=lambda d: [d])
+    assert [l.name for l in out.layers] == ['dialogue'] and not out.warnings

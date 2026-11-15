@@ -6,8 +6,10 @@ with any order):
 1. Voices: a dialogue specialist, Demucs (``htdemucs_ft``, two stems, ``vocals``),
    on the full mix. The rest is mix minus vocals, so nothing is lost. Measured on the
    Batman v Superman clip: speech 0.65 / music 0.06 against 0.14 / 0.37 for AudioSep's
-   "people talking". Only one voice layer is possible this way; more voices merge
-   into the first. Without Demucs installed, voices fall back to AudioSep, last.
+   "people talking". More voice prompts merge into the first. When the speaker model finds
+   two or more people (speakers.py), the dialogue is cut by turns into "person 1",
+   "person 2", ... summing to it exactly. Without Demucs installed, voices fall back to
+   AudioSep, last, and are not split by speaker.
 2. Weather: AudioSep cannot tell rain from thunder when they overlap; whichever goes
    first takes both. So one "storm" pass, then a crossover: rain is the storm
    high-passed at 200 Hz (two 2-pole stages), thunder is the storm minus rain, the
@@ -181,12 +183,15 @@ def explode(mix: np.ndarray, sample_rate: int, prompts: list[str],
             vocals: Callable[[np.ndarray], np.ndarray] | None,
             storm_prompt: str | None = None, crossover_hz: float | None = None,
             split_music: Callable[[np.ndarray], dict[str, np.ndarray]] | None = None,
-            quiet_db: float = -35.0) -> ExplodeResult:
+            quiet_db: float = -35.0,
+            speakers: Callable[[np.ndarray], list[np.ndarray]] | None = None) -> ExplodeResult:
     """Run the recipe. ``separate(audio, prompt)`` returns the AudioSep target for ``audio``;
     ``vocals(audio)`` returns Demucs vocals, or is None when Demucs is unavailable.
     ``split_music(audio)`` returns instrument stems that sum to ``audio``; music layers are
     replaced by their audible instruments (quieter than ``quiet_db`` below the loudest fold
-    into the loudest, so the sum is unchanged)."""
+    into the loudest, so the sum is unchanged). ``speakers(dialogue)`` returns one array per
+    speaker summing to the dialogue; with two or more the dialogue becomes "person 1",
+    "person 2", ... (one speaker keeps the single "dialogue" layer)."""
     storm_prompt = storm_prompt or os.getenv("AUDIO_STORM_PROMPT", "rain")
     crossover_hz = crossover_hz or float(os.getenv("AUDIO_STORM_CROSSOVER_HZ", "200"))
     remaining = np.asarray(mix, dtype=np.float32).copy()
@@ -212,9 +217,14 @@ def explode(mix: np.ndarray, sample_rate: int, prompts: list[str],
                 warnings.append("Dialogue model (Demucs) is not installed; voices were separated by text last.")
                 continue
             v = vocals(remaining)
-            # Every voice lands in this one layer, so it is named for what it is, not for the first prompt.
-            layers.append(Layer("dialogue", v, prompt, "demucs"))
             remaining = remaining - v
+            people = _speakers(v, speakers, warnings)
+            if len(people) > 1:
+                # Same prompt on every person, so they stay dialogue-kind layers in the editor.
+                layers.extend(Layer(f"person {i + 1}", p, prompt, "demucs+speakers") for i, p in enumerate(people))
+            else:
+                # Every voice lands in this one layer, so it is named for what it is, not for the first prompt.
+                layers.append(Layer("dialogue", v, prompt, "demucs"))
         elif kind in ("rain", "thunder"):
             if weather_done:
                 continue
@@ -244,6 +254,25 @@ def explode(mix: np.ndarray, sample_rate: int, prompts: list[str],
     return ExplodeResult(layers, residual, warnings)
 
 
+def _speakers(dialogue: np.ndarray, speakers: Callable[[np.ndarray], list[np.ndarray]] | None,
+              warnings: list[str]) -> list[np.ndarray]:
+    if speakers is None:
+        return [dialogue]
+    try:
+        parts = [np.asarray(p, dtype=np.float32) for p in speakers(dialogue)]
+    except Exception as exc:  # the dialogue stays whole rather than failing the Explode
+        log.exception("speaker split failed")
+        warnings.append(f"Dialogue was kept as one layer: telling the speakers apart failed ({exc}).")
+        return [dialogue]
+    if len(parts) < 2:
+        return [dialogue]
+    # Exact: the people sum to the dialogue layer.
+    parts[-1] = parts[-1] + (dialogue - sum(parts))
+    warnings.append(f"Dialogue split into {len(parts)} people by who speaks when. Where two talk at once, "
+                    "that moment goes to whoever is louder.")
+    return parts
+
+
 def _instruments(prompt: str, music: np.ndarray, split_music: Callable[[np.ndarray], dict[str, np.ndarray]],
                  quiet_db: float, warnings: list[str]) -> list[Layer]:
     try:
@@ -270,4 +299,5 @@ def _instruments(prompt: str, music: np.ndarray, split_music: Callable[[np.ndarr
 
 def recipe_info() -> dict[str, Any]:
     return {"storm_prompt": os.getenv("AUDIO_STORM_PROMPT", "rain"), "crossover_hz": float(os.getenv("AUDIO_STORM_CROSSOVER_HZ", "200")),
-            "dialogue_model": os.getenv("AUDIO_DEMUCS_MODEL", "htdemucs_ft")}
+            "dialogue_model": os.getenv("AUDIO_DEMUCS_MODEL", "htdemucs_ft"),
+            "speaker_model": os.getenv("AUDIO_SPEAKER_MODEL", "speechbrain/spkrec-ecapa-voxceleb")}

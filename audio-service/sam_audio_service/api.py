@@ -39,7 +39,8 @@ from .contracts import ModelInfo, RouteInfo, RouteResponse, SeparationMetadata, 
 from .engine import Engine, write_stem_file
 from .errors import ERROR_CODES, AudioServiceError, InvalidMedia, InvalidRequest, StorageFailure
 from .media import resolve_ref, to_file_ref
-from .explode import DemucsVocals, explode as run_explode, recipe_info
+from .explode import DemucsVocals, explode as run_explode, kind_of, recipe_info
+from .speakers import VoiceEncoder
 from .stems import STEM_ALIASES
 from .stems.vocabulary import requestable
 
@@ -63,6 +64,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app = FastAPI(title="SoundCanvas Audio Inference Service", version=__version__, lifespan=lifespan, description=__doc__)
     app.state.settings, app.state.engine = settings, engine
     demucs = DemucsVocals()
+    voice_encoder = VoiceEncoder()
     from .objects import register
     register(app, engine)
 
@@ -110,7 +112,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                 "tagging": backend.supports_tagging,
                 "explode": True,
             },
-            "explode": {**recipe_info(), "dialogue_model_installed": demucs.available},
+            "explode": {**recipe_info(), "dialogue_model_installed": demucs.available,
+                        "speaker_model_installed": voice_encoder.available},
             "input": {"sample_rate": backend.sample_rate, "accepted": "any FFmpeg-decodable audio or video; WAV PCM preferred", "max_duration_seconds": settings.max_duration_seconds, "max_input_bytes": settings.max_input_bytes, "max_prompts": settings.max_prompts},
             "output": {"format": "wav/pcm_f32le (default), wav/pcm_s16le (lossy)", "sample_rate": backend.sample_rate, "channels": "matches source (1 or 2)", "residual_modes": ["mixture_minus_targets", "model", "none"], "return_modes": ["base64", "file"]},
             "defaults": {"predict_spans": settings.predict_spans, "reranking_candidates": settings.reranking_candidates, "stereo_mode": settings.stereo_mode, "chunk_seconds": settings.chunk_seconds, "chunk_batch": settings.chunk_batch, "chunk_workers": settings.chunk_batch, "passes": 1,
@@ -287,6 +290,13 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                 return next(s.samples for s in result.stems if s.role == "target")
 
             vocals = None
+            people = None
+            if os.getenv("AUDIO_EXPLODE_SPEAKERS", "1") != "0":
+                if voice_encoder.available:
+                    from .speakers import split_speakers
+                    people = lambda samples: split_speakers(samples, decoded.sample_rate, voice_encoder).layers  # noqa: E731
+                elif any(kind_of(p) == "voice" for p in prompts):
+                    notes.append("Dialogue was kept as one layer: the speaker model (speechbrain) is not installed.")
             if demucs.available and os.getenv("AUDIO_EXPLODE_DEMUCS", "1") != "0":
                 vocals = lambda samples: demucs.vocals(samples, decoded.sample_rate)  # noqa: E731
             splitter = None
@@ -311,7 +321,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
                         parts = {k: np.pad(v, ((0, 0), (0, max(0, n - v.shape[-1]))))[:, :n].astype(np.float32) for k, v in parts.items()}
                         parts = {k: v for k, v in parts.items() if k in engine.splitter.stems}
                         return mixture_consistency(np.asarray(samples, dtype=np.float32), parts)
-            done = run_explode(decoded.samples, decoded.sample_rate, prompts, separate, vocals, split_music=splitter)
+            done = run_explode(decoded.samples, decoded.sample_rate, prompts, separate, vocals, split_music=splitter,
+                               speakers=people)
         from .engine import EngineResult, StemArrays
         stems = [StemArrays(layer.name, "target", layer.samples, layer.prompt, layer.name, None) for layer in done.layers]
         stems.append(StemArrays(options.residual_name, "residual", done.residual, None, "background", None))
